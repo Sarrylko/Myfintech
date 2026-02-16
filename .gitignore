@@ -1,0 +1,39 @@
+# ─── Environment & secrets ─────────────────────
+.env
+*.pem
+*.key
+
+# ─── Python ────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# ─── Node / Next.js ───────────────────────────
+node_modules/
+.next/
+out/
+frontend/.next/
+frontend/node_modules/
+
+# ─── Docker volumes (local) ───────────────────
+pgdata/
+redisdata/
+
+# ─── IDE ───────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS ────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Backups ───────────────────────────────────
+backups/
+*.sql.gz
