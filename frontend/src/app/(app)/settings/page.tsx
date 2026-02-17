@@ -208,7 +208,7 @@ export default function SettingsPage() {
                   <input
                     type="number"
                     min="0"
-                    step="1000"
+                    step="any"
                     value={form.purchase_price ?? ""}
                     onChange={(e) => numField("purchase_price", e)}
                     className="border border-gray-300 rounded-lg pl-7 pr-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
@@ -225,7 +225,7 @@ export default function SettingsPage() {
                   <input
                     type="number"
                     min="0"
-                    step="1000"
+                    step="any"
                     value={form.current_value ?? ""}
                     onChange={(e) => numField("current_value", e)}
                     className="border border-gray-300 rounded-lg pl-7 pr-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
@@ -263,7 +263,7 @@ export default function SettingsPage() {
                   <input
                     type="number"
                     min="0"
-                    step="50"
+                    step="any"
                     value={form.monthly_rent ?? ""}
                     onChange={(e) => numField("monthly_rent", e)}
                     className="border border-gray-300 rounded-lg pl-7 pr-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
@@ -283,7 +283,7 @@ export default function SettingsPage() {
                     <input
                       type="number"
                       min="0"
-                      step="50"
+                      step="any"
                       value={form.mortgage_monthly ?? ""}
                       onChange={(e) => numField("mortgage_monthly", e)}
                       className="border border-gray-300 rounded-lg pl-7 pr-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
@@ -298,7 +298,7 @@ export default function SettingsPage() {
                     <input
                       type="number"
                       min="0"
-                      step="10"
+                      step="any"
                       value={form.hoa_monthly ?? ""}
                       onChange={(e) => numField("hoa_monthly", e)}
                       className="border border-gray-300 rounded-lg pl-7 pr-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
@@ -313,7 +313,7 @@ export default function SettingsPage() {
                     <input
                       type="number"
                       min="0"
-                      step="10"
+                      step="any"
                       value={form.maintenance_monthly ?? ""}
                       onChange={(e) => numField("maintenance_monthly", e)}
                       className="border border-gray-300 rounded-lg pl-7 pr-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
@@ -335,7 +335,7 @@ export default function SettingsPage() {
                     <input
                       type="number"
                       min="0"
-                      step="100"
+                      step="any"
                       value={form.property_tax_annual ?? ""}
                       onChange={(e) => numField("property_tax_annual", e)}
                       className="border border-gray-300 rounded-lg pl-7 pr-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
@@ -352,7 +352,7 @@ export default function SettingsPage() {
                     <input
                       type="number"
                       min="0"
-                      step="100"
+                      step="any"
                       value={form.insurance_annual ?? ""}
                       onChange={(e) => numField("insurance_annual", e)}
                       className="border border-gray-300 rounded-lg pl-7 pr-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
