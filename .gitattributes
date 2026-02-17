@@ -1,0 +1,10 @@
+# Force LF line endings for all text files in the repo
+* text=auto eol=lf
+
+# Ensure shell scripts are always LF
+*.sh text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.ico binary
