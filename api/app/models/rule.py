@@ -17,6 +17,7 @@ class CategorizationRule(Base):
     household_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("households.id"), index=True
     )
+    name: Mapped[str] = mapped_column(String(255))
     category_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("categories.id"), nullable=True
     )
