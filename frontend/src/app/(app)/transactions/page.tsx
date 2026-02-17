@@ -12,6 +12,47 @@ import {
   Transaction,
 } from "@/lib/api";
 
+// ─── Category Taxonomy ────────────────────────────────────────────────────────
+
+const TAXONOMY: { category: string; subcategories: string[] }[] = [
+  { category: "Housing", subcategories: ["Mortgage / Rent", "Property Tax", "HOA Fees", "Home Insurance", "Maintenance & Repairs", "Furnishings", "Cleaning Services", "Lawn / Snow Care", "Security Systems"] },
+  { category: "Utilities", subcategories: ["Electricity", "Water & Sewer", "Gas Utility", "Trash / Recycling", "Internet", "Cable / Streaming TV", "Mobile Phone"] },
+  { category: "Food & Dining", subcategories: ["Groceries", "Restaurants", "Coffee Shops", "Fast Food", "Food Delivery", "Alcohol & Bars"] },
+  { category: "Transportation", subcategories: ["Fuel", "Parking", "Tolls", "Public Transit", "Rideshare (Uber/Lyft)", "Car Payment", "Car Insurance", "Vehicle Maintenance", "DMV / Registration"] },
+  { category: "Health & Medical", subcategories: ["Doctor Visits", "Dental", "Vision", "Pharmacy", "Health Insurance", "Therapy / Mental Health", "Medical Equipment", "Fitness / Gym"] },
+  { category: "Shopping", subcategories: ["General Merchandise", "Clothing", "Electronics", "Home Improvement", "Gifts", "Personal Care Products", "Kids Items"] },
+  { category: "Education", subcategories: ["Tuition", "School Supplies", "Courses / Training", "Books", "Kids Activities", "College Savings (529)"] },
+  { category: "Kids & Family", subcategories: ["Childcare / Daycare", "Allowance", "Activities / Sports", "Camps", "Babysitting"] },
+  { category: "Income", subcategories: ["Salary", "Bonus", "Interest Income", "Dividends", "Rental Income", "Side Hustle", "Refunds", "Transfers In"] },
+  { category: "Savings & Investments", subcategories: ["Brokerage Contributions", "Retirement Contributions (401k / IRA)", "529 Contributions", "Emergency Fund", "Transfers Out"] },
+  { category: "Financial", subcategories: ["Bank Fees", "Loan Payments", "Credit Card Payments", "Interest Paid", "Tax Payments", "Tax Refund"] },
+  { category: "Travel", subcategories: ["Flights", "Hotels", "Vacation Rentals", "Car Rental", "Travel Insurance", "Attractions", "Travel Dining"] },
+  { category: "Entertainment", subcategories: ["Movies", "Events / Concerts", "Streaming Services", "Gaming", "Hobbies", "Subscriptions"] },
+  { category: "Personal Care", subcategories: ["Salon / Spa", "Haircuts", "Cosmetics", "Massage", "Wellness"] },
+  { category: "Insurance", subcategories: ["Life Insurance", "Disability Insurance", "Umbrella Insurance"] },
+  { category: "Business / Work", subcategories: ["Business Expenses", "Professional Fees", "Software", "Office Supplies", "Travel (Work)"] },
+  { category: "Taxes", subcategories: ["Federal Tax", "State Tax", "Local Tax", "Estimated Payments"] },
+  { category: "Transfers", subcategories: ["Internal Transfer", "Credit Card Payment", "Account Transfer"] },
+  { category: "Miscellaneous", subcategories: ["Cash Withdrawal", "Uncategorized", "Adjustment"] },
+];
+
+/** Parse a stored "Category > Subcategory" string back into parts. */
+function parseCategory(raw: string | null): { group: string; item: string } {
+  if (!raw) return { group: "", item: "" };
+  if (raw.includes(" > ")) {
+    const idx = raw.indexOf(" > ");
+    return { group: raw.slice(0, idx).trim(), item: raw.slice(idx + 3).trim() };
+  }
+  // Check if it matches a known subcategory
+  for (const { category, subcategories } of TAXONOMY) {
+    if (subcategories.includes(raw)) return { group: category, item: raw };
+    if (category === raw) return { group: raw, item: "" };
+  }
+  return { group: "", item: "" };
+}
+
+// ─── CSV Template ─────────────────────────────────────────────────────────────
+
 const CSV_TEMPLATE =
   `date,description,amount,merchant,category,notes\n` +
   `2024-01-15,Grocery Store,85.50,Whole Foods,Food & Drink,Weekly groceries\n` +
@@ -44,17 +85,25 @@ function EditModal({ txn, accounts, onSave, onClose }: {
   onSave: (updated: Transaction) => void;
   onClose: () => void;
 }) {
+  const parsed = parseCategory(txn.plaid_category);
   const [form, setForm] = useState({
     name: txn.name,
     merchant_name: txn.merchant_name ?? "",
     amount: parseFloat(txn.amount).toFixed(2),
     date: txn.date.slice(0, 10),
-    plaid_category: txn.plaid_category ?? "",
+    categoryGroup: parsed.group,
+    categoryItem: parsed.item,
     notes: txn.notes ?? "",
     pending: txn.pending,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const subcategories = TAXONOMY.find((t) => t.category === form.categoryGroup)?.subcategories ?? [];
+
+  function handleGroupChange(group: string) {
+    setForm((p) => ({ ...p, categoryGroup: group, categoryItem: "" }));
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -64,6 +113,10 @@ function EditModal({ txn, accounts, onSave, onClose }: {
     const amtNum = parseFloat(form.amount);
     if (isNaN(amtNum)) { setError("Amount must be a number"); return; }
 
+    const plaid_category = form.categoryGroup && form.categoryItem
+      ? `${form.categoryGroup} > ${form.categoryItem}`
+      : form.categoryGroup || undefined;
+
     setSaving(true); setError("");
     try {
       const updated = await updateTransaction(txn.id, {
@@ -71,7 +124,7 @@ function EditModal({ txn, accounts, onSave, onClose }: {
         merchant_name: form.merchant_name || undefined,
         amount: amtNum,
         date: form.date ? new Date(form.date + "T00:00:00Z").toISOString() : undefined,
-        plaid_category: form.plaid_category || undefined,
+        plaid_category,
         notes: form.notes || undefined,
         pending: form.pending,
       }, token);
@@ -87,8 +140,8 @@ function EditModal({ txn, accounts, onSave, onClose }: {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100 sticky top-0 bg-white">
           <h3 className="font-semibold text-lg">Edit Transaction</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
@@ -132,13 +185,36 @@ function EditModal({ txn, accounts, onSave, onClose }: {
               className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
           </div>
 
+          {/* Category two-level dropdowns */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-            <input type="text" value={form.plaid_category}
-              onChange={(e) => setForm((p) => ({ ...p, plaid_category: e.target.value }))}
-              placeholder="e.g. Food & Drink, Utilities"
-              className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            <select
+              value={form.categoryGroup}
+              onChange={(e) => handleGroupChange(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+            >
+              <option value="">— Select category —</option>
+              {TAXONOMY.map((t) => (
+                <option key={t.category} value={t.category}>{t.category}</option>
+              ))}
+            </select>
           </div>
+
+          {form.categoryGroup && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Subcategory</label>
+              <select
+                value={form.categoryItem}
+                onChange={(e) => setForm((p) => ({ ...p, categoryItem: e.target.value }))}
+                className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+              >
+                <option value="">— Select subcategory —</option>
+                {subcategories.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
@@ -304,6 +380,7 @@ export default function TransactionsPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [selectedAccount, setSelectedAccount] = useState("all");
+  const [selectedCategory, setSelectedCategory] = useState("all");
   const [editTxn, setEditTxn] = useState<Transaction | null>(null);
   const [showImport, setShowImport] = useState(false);
 
@@ -331,13 +408,15 @@ export default function TransactionsPage() {
 
   const filtered = transactions.filter((t) => {
     const matchAccount = selectedAccount === "all" || t.account_id === selectedAccount;
+    const matchCategory = selectedCategory === "all" ||
+      (t.plaid_category ?? "").toLowerCase().startsWith(selectedCategory.toLowerCase());
     const q = search.toLowerCase();
     const matchSearch = !q ||
       t.name.toLowerCase().includes(q) ||
       (t.merchant_name ?? "").toLowerCase().includes(q) ||
       (t.plaid_category ?? "").toLowerCase().includes(q) ||
       (t.notes ?? "").toLowerCase().includes(q);
-    return matchAccount && matchSearch;
+    return matchAccount && matchCategory && matchSearch;
   });
 
   const totalExpenses = filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending).reduce((s, t) => s + parseFloat(t.amount), 0);
@@ -410,9 +489,19 @@ export default function TransactionsPage() {
           className="border border-gray-300 rounded-lg px-4 py-2 text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
         />
         <select
+          value={selectedCategory}
+          onChange={(e) => setSelectedCategory(e.target.value)}
+          className="border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-52 bg-white"
+        >
+          <option value="all">All Categories</option>
+          {TAXONOMY.map((t) => (
+            <option key={t.category} value={t.category}>{t.category}</option>
+          ))}
+        </select>
+        <select
           value={selectedAccount}
           onChange={(e) => setSelectedAccount(e.target.value)}
-          className="border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-56"
+          className="border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-52 bg-white"
         >
           <option value="all">All Accounts</option>
           {accounts.map((a) => (
@@ -471,11 +560,26 @@ export default function TransactionsPage() {
                     {txn.notes && <div className="text-xs text-gray-400 italic truncate">{txn.notes}</div>}
                   </td>
                   <td className="px-5 py-3 hidden md:table-cell">
-                    {txn.plaid_category ? (
-                      <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
-                        {txn.plaid_category.includes(",") ? txn.plaid_category.split(",").pop()?.trim() : txn.plaid_category}
-                      </span>
-                    ) : (
+                    {txn.plaid_category ? (() => {
+                      const parts = parseCategory(txn.plaid_category);
+                      return (
+                        <div className="flex flex-col gap-0.5">
+                          {parts.group && (
+                            <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium w-fit">
+                              {parts.group}
+                            </span>
+                          )}
+                          {parts.item && (
+                            <span className="text-xs text-gray-500 pl-1">{parts.item}</span>
+                          )}
+                          {!parts.group && (
+                            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full w-fit">
+                              {txn.plaid_category}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })() : (
                       <span className="text-xs text-gray-400">—</span>
                     )}
                   </td>
