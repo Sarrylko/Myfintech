@@ -34,6 +34,9 @@ redisdata/
 .DS_Store
 Thumbs.db
 
+# ─── Local runtime ────────────────────────────
+.local-pids
+
 # ─── Backups ───────────────────────────────────
 backups/
 *.sql.gz
