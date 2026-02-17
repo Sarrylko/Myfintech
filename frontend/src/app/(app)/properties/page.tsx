@@ -70,6 +70,7 @@ function hasFinancials(p: Property): boolean {
 }
 
 interface FinancialForm {
+  mortgage_balance: string;
   monthly_rent: string;
   mortgage_monthly: string;
   property_tax_annual: string;
@@ -80,6 +81,7 @@ interface FinancialForm {
 
 function toFinancialForm(p: Property): FinancialForm {
   return {
+    mortgage_balance: p.mortgage_balance ? String(Number(p.mortgage_balance)) : "",
     monthly_rent: p.monthly_rent ? String(Number(p.monthly_rent)) : "",
     mortgage_monthly: p.mortgage_monthly ? String(Number(p.mortgage_monthly)) : "",
     property_tax_annual: p.property_tax_annual ? String(Number(p.property_tax_annual)) : "",
@@ -137,8 +139,8 @@ export default function PropertiesPage() {
   // Financial edit state
   const [editingFinancials, setEditingFinancials] = useState<string | null>(null);
   const [financialForm, setFinancialForm] = useState<FinancialForm>({
-    monthly_rent: "", mortgage_monthly: "", property_tax_annual: "",
-    insurance_annual: "", hoa_monthly: "", maintenance_monthly: "",
+    mortgage_balance: "", monthly_rent: "", mortgage_monthly: "",
+    property_tax_annual: "", insurance_annual: "", hoa_monthly: "", maintenance_monthly: "",
   });
   const [savingFinancials, setSavingFinancials] = useState(false);
 
@@ -193,6 +195,7 @@ export default function PropertiesPage() {
       const updated = await updateProperty(
         id,
         {
+          mortgage_balance: financialForm.mortgage_balance ? Number(financialForm.mortgage_balance) : undefined,
           monthly_rent: financialForm.monthly_rent ? Number(financialForm.monthly_rent) : undefined,
           mortgage_monthly: financialForm.mortgage_monthly ? Number(financialForm.mortgage_monthly) : undefined,
           property_tax_annual: financialForm.property_tax_annual ? Number(financialForm.property_tax_annual) : undefined,
@@ -406,12 +409,41 @@ export default function PropertiesPage() {
                 )}
               </div>
 
+              {/* ── Equity bar ── */}
+              {p.current_value && p.mortgage_balance && (() => {
+                const value = Number(p.current_value);
+                const balance = Number(p.mortgage_balance);
+                const equity = value - balance;
+                const equityPct = Math.max(0, Math.min(100, (equity / value) * 100));
+                return (
+                  <div className="mt-4">
+                    <div className="flex justify-between text-xs text-gray-400 mb-1">
+                      <span>Equity <span className={equity >= 0 ? "text-green-600 font-medium" : "text-red-500 font-medium"}>{fmt(equity)} ({equityPct.toFixed(1)}%)</span></span>
+                      <span>Mortgage balance <span className="text-gray-600 font-medium">{fmt(balance)}</span></span>
+                    </div>
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-green-500 rounded-full transition-all duration-500"
+                        style={{ width: `${equityPct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* ── Financial section ── */}
               {editingFinancials === p.id ? (
                 /* Edit form */
                 <div className="mt-5 pt-4 border-t border-gray-100">
                   <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Edit Financials</p>
                   <div className="space-y-3">
+                    <CurrencyInput
+                      label="Mortgage Balance Remaining"
+                      sublabel="(for equity tracking)"
+                      value={financialForm.mortgage_balance}
+                      onChange={(v) => setFinancialForm((f) => ({ ...f, mortgage_balance: v }))}
+                      placeholder="280000"
+                    />
                     <CurrencyInput
                       label="Monthly Rent Income"
                       sublabel="(leave blank if owner-occupied)"

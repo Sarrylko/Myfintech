@@ -26,6 +26,7 @@ const DEFAULT_FORM: PropertyCreate = {
   purchase_price: undefined,
   current_value: undefined,
   notes: "",
+  mortgage_balance: undefined,
   monthly_rent: undefined,
   mortgage_monthly: undefined,
   property_tax_annual: undefined,
@@ -65,6 +66,7 @@ export default function SettingsPage() {
           ...form,
           purchase_price: form.purchase_price || undefined,
           current_value: form.current_value || undefined,
+          mortgage_balance: form.mortgage_balance || undefined,
           monthly_rent: form.monthly_rent || undefined,
           mortgage_monthly: form.mortgage_monthly || undefined,
           property_tax_annual: form.property_tax_annual || undefined,
@@ -252,6 +254,26 @@ export default function SettingsPage() {
             {/* ── Financial Details ───────────────────────────────── */}
             <div className="pt-2 border-t border-gray-100">
               <p className="text-sm font-semibold text-gray-700 mb-3">Financial Details <span className="font-normal text-gray-400">(optional)</span></p>
+
+              {/* Mortgage Balance */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Mortgage Balance Remaining
+                </label>
+                <div className="relative max-w-xs">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={form.mortgage_balance ?? ""}
+                    onChange={(e) => numField("mortgage_balance", e)}
+                    className="border border-gray-300 rounded-lg pl-7 pr-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    placeholder="280,000"
+                  />
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">Used to calculate equity %. Leave blank if paid off or no mortgage.</p>
+              </div>
 
               {/* Rental Income */}
               <div className="mb-4">

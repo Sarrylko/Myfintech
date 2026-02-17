@@ -28,6 +28,7 @@ class Property(Base):
     current_value: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     last_valuation_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
+    mortgage_balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     monthly_rent: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     mortgage_monthly: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     property_tax_annual: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))

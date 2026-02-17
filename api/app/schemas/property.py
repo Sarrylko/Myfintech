@@ -15,6 +15,7 @@ class PropertyCreate(BaseModel):
     purchase_date: datetime | None = None
     current_value: Decimal | None = None
     notes: str | None = None
+    mortgage_balance: Decimal | None = None
     monthly_rent: Decimal | None = None
     mortgage_monthly: Decimal | None = None
     property_tax_annual: Decimal | None = None
@@ -33,6 +34,7 @@ class PropertyUpdate(BaseModel):
     purchase_date: datetime | None = None
     current_value: Decimal | None = None
     notes: str | None = None
+    mortgage_balance: Decimal | None = None
     monthly_rent: Decimal | None = None
     mortgage_monthly: Decimal | None = None
     property_tax_annual: Decimal | None = None
@@ -55,6 +57,7 @@ class PropertyResponse(BaseModel):
     current_value: Decimal | None
     last_valuation_date: datetime | None
     notes: str | None
+    mortgage_balance: Decimal | None
     monthly_rent: Decimal | None
     mortgage_monthly: Decimal | None
     property_tax_annual: Decimal | None

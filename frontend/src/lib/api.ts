@@ -97,6 +97,7 @@ export interface Property {
   current_value: string | null;
   last_valuation_date: string | null;
   notes: string | null;
+  mortgage_balance: string | null;
   monthly_rent: string | null;
   mortgage_monthly: string | null;
   property_tax_annual: string | null;
@@ -115,6 +116,7 @@ export interface PropertyCreate {
   purchase_price?: number;
   current_value?: number;
   notes?: string;
+  mortgage_balance?: number;
   monthly_rent?: number;
   mortgage_monthly?: number;
   property_tax_annual?: number;
