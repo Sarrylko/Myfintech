@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eu
 
 # Run Alembic migrations inside the API container
 docker compose exec api alembic upgrade head

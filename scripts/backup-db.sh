@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eu
 
 # Daily database backup — run from host or via cron
 BACKUP_DIR="./backups"
