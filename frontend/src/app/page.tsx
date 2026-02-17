@@ -1,55 +1,216 @@
-export default function Dashboard() {
+export default function LandingPage() {
   return (
-    <div>
-      <h2 className="text-2xl font-bold mb-6">Dashboard</h2>
+    <div className="min-h-screen bg-white">
+      {/* Nav */}
+      <header className="border-b border-gray-100">
+        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+          <span className="text-xl font-bold text-gray-900">MyFintech</span>
+          <a
+            href="/dashboard"
+            className="bg-primary-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition"
+          >
+            Open App
+          </a>
+        </div>
+      </header>
 
-      {/* Net Worth Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <SummaryCard title="Net Worth" value="—" />
-        <SummaryCard title="Cash" value="—" />
-        <SummaryCard title="Investments" value="—" />
-        <SummaryCard title="Real Estate" value="—" />
-      </div>
-
-      {/* Placeholder sections */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg shadow p-6 border border-gray-100">
-          <h3 className="font-semibold text-lg mb-4">Net Worth Over Time</h3>
-          <div className="h-64 flex items-center justify-center text-gray-400">
-            Chart will render here after account linking
-          </div>
+      {/* Hero */}
+      <section className="max-w-6xl mx-auto px-6 py-24 text-center">
+        <h1 className="text-5xl font-bold text-gray-900 leading-tight mb-6">
+          Your entire financial life,
+          <br />
+          <span className="text-primary-600">in one place.</span>
+        </h1>
+        <p className="text-xl text-gray-500 max-w-2xl mx-auto mb-10">
+          MyFintech connects your bank accounts, investments, and real estate to
+          give you a clear picture of your net worth — updated automatically.
+        </p>
+        <div className="flex gap-4 justify-center">
+          <a
+            href="/dashboard"
+            className="bg-primary-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-primary-700 transition text-lg"
+          >
+            Get Started
+          </a>
+          <a
+            href="#features"
+            className="border border-gray-300 text-gray-700 px-8 py-3 rounded-lg font-semibold hover:bg-gray-50 transition text-lg"
+          >
+            Learn More
+          </a>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6 border border-gray-100">
-          <h3 className="font-semibold text-lg mb-4">Monthly Spending</h3>
-          <div className="h-64 flex items-center justify-center text-gray-400">
-            Connect accounts to see spending data
+        {/* Hero visual */}
+        <div className="mt-16 bg-gray-900 rounded-2xl p-8 text-left max-w-3xl mx-auto shadow-2xl">
+          <div className="flex items-center gap-2 mb-6">
+            <div className="w-3 h-3 rounded-full bg-red-500" />
+            <div className="w-3 h-3 rounded-full bg-yellow-500" />
+            <div className="w-3 h-3 rounded-full bg-green-500" />
+            <span className="ml-2 text-gray-400 text-sm">Dashboard</span>
+          </div>
+          <div className="grid grid-cols-4 gap-3 mb-6">
+            {[
+              { label: "Net Worth", value: "$284,500" },
+              { label: "Cash", value: "$42,100" },
+              { label: "Investments", value: "$198,400" },
+              { label: "Real Estate", value: "$44,000" },
+            ].map((card) => (
+              <div key={card.label} className="bg-gray-800 rounded-lg p-4">
+                <p className="text-gray-400 text-xs mb-1">{card.label}</p>
+                <p className="text-white font-bold text-lg">{card.value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="bg-gray-800 rounded-lg p-4 h-24 flex items-center justify-center">
+            <div className="flex gap-1 items-end h-12">
+              {[40, 55, 45, 60, 50, 70, 65, 80, 75, 90, 85, 100].map(
+                (h, i) => (
+                  <div
+                    key={i}
+                    className="w-4 bg-primary-500 rounded-sm opacity-80"
+                    style={{ height: `${h}%` }}
+                  />
+                )
+              )}
+            </div>
+            <span className="ml-6 text-gray-400 text-sm">Net Worth Growth</span>
           </div>
         </div>
+      </section>
 
-        <div className="bg-white rounded-lg shadow p-6 border border-gray-100">
-          <h3 className="font-semibold text-lg mb-4">Recent Transactions</h3>
-          <div className="h-64 flex items-center justify-center text-gray-400">
-            No transactions yet
+      {/* Features */}
+      <section id="features" className="bg-gray-50 py-24">
+        <div className="max-w-6xl mx-auto px-6">
+          <h2 className="text-3xl font-bold text-gray-900 text-center mb-4">
+            Everything you need to manage your wealth
+          </h2>
+          <p className="text-gray-500 text-center max-w-xl mx-auto mb-16">
+            One dashboard for all your accounts, with the data you need to make
+            smart financial decisions.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {features.map((f) => (
+              <div
+                key={f.title}
+                className="bg-white rounded-xl p-6 border border-gray-100 shadow-sm"
+              >
+                <div className="text-3xl mb-4">{f.icon}</div>
+                <h3 className="font-semibold text-lg text-gray-900 mb-2">
+                  {f.title}
+                </h3>
+                <p className="text-gray-500 text-sm leading-relaxed">
+                  {f.description}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
+      </section>
 
-        <div className="bg-white rounded-lg shadow p-6 border border-gray-100">
-          <h3 className="font-semibold text-lg mb-4">Budget Status</h3>
-          <div className="h-64 flex items-center justify-center text-gray-400">
-            Set up budgets to track progress
+      {/* How it works */}
+      <section className="py-24">
+        <div className="max-w-6xl mx-auto px-6">
+          <h2 className="text-3xl font-bold text-gray-900 text-center mb-16">
+            Up and running in minutes
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
+            {steps.map((step, i) => (
+              <div key={step.title} className="text-center">
+                <div className="w-12 h-12 bg-primary-100 text-primary-700 rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-4">
+                  {i + 1}
+                </div>
+                <h3 className="font-semibold text-gray-900 mb-2">
+                  {step.title}
+                </h3>
+                <p className="text-gray-500 text-sm">{step.description}</p>
+              </div>
+            ))}
           </div>
         </div>
-      </div>
+      </section>
+
+      {/* CTA */}
+      <section className="bg-primary-600 py-20">
+        <div className="max-w-2xl mx-auto px-6 text-center">
+          <h2 className="text-3xl font-bold text-white mb-4">
+            Ready to take control?
+          </h2>
+          <p className="text-primary-100 mb-8">
+            Open the app and link your first account in under two minutes.
+          </p>
+          <a
+            href="/dashboard"
+            className="bg-white text-primary-700 px-8 py-3 rounded-lg font-semibold hover:bg-primary-50 transition text-lg inline-block"
+          >
+            Open MyFintech
+          </a>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t border-gray-100 py-8">
+        <div className="max-w-6xl mx-auto px-6 flex items-center justify-between text-sm text-gray-400">
+          <span>MyFintech &copy; {new Date().getFullYear()}</span>
+          <span>Your data. Your control.</span>
+        </div>
+      </footer>
     </div>
   );
 }
 
-function SummaryCard({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="bg-white rounded-lg shadow p-5 border border-gray-100">
-      <p className="text-sm text-gray-500 mb-1">{title}</p>
-      <p className="text-2xl font-bold">{value}</p>
-    </div>
-  );
-}
+const features = [
+  {
+    icon: "🏦",
+    title: "Automatic Bank Sync",
+    description:
+      "Connect your checking, savings, and credit accounts via Plaid. Transactions sync automatically so your data is always current.",
+  },
+  {
+    icon: "📊",
+    title: "Net Worth Tracking",
+    description:
+      "See your total net worth across all assets — cash, investments, and real estate — with historical snapshots over time.",
+  },
+  {
+    icon: "💸",
+    title: "Budget Management",
+    description:
+      "Set monthly spending limits by category and get alerts when you're approaching them. Stay on top of where your money goes.",
+  },
+  {
+    icon: "📈",
+    title: "Investment Portfolio",
+    description:
+      "Track your brokerage holdings, cost basis, and unrealized gains in one unified view across all your accounts.",
+  },
+  {
+    icon: "🏠",
+    title: "Real Estate",
+    description:
+      "Add your properties and track their estimated valuations as part of your total net worth calculation.",
+  },
+  {
+    icon: "🔒",
+    title: "Private & Secure",
+    description:
+      "Your data stays on your own infrastructure. Bank tokens are encrypted at rest. No data is ever sold or shared.",
+  },
+];
+
+const steps = [
+  {
+    title: "Open the app",
+    description:
+      "Create your account and log in to the MyFintech dashboard on any device.",
+  },
+  {
+    title: "Link your accounts",
+    description:
+      "Connect your bank, credit cards, and brokerages securely via Plaid with read-only access.",
+  },
+  {
+    title: "See your full picture",
+    description:
+      "Your net worth, transactions, budgets, and investments update automatically from that point on.",
+  },
+];
