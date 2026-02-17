@@ -33,7 +33,45 @@ docker compose up -d
 open http://localhost
 ```
 
-## Development
+## Running Without Docker
+
+You only need **PostgreSQL** and **Redis** installed on your machine (or use managed/cloud instances).
+
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+
+- PostgreSQL 16
+- Redis 7
+
+### Setup
+
+```bash
+# 1. Install deps + generate .env (points to localhost)
+bash scripts/setup-local.sh
+
+# 2. Create the Postgres user + database
+sudo -u postgres psql -c "CREATE USER myfintech WITH PASSWORD 'your_password';"
+sudo -u postgres psql -c "CREATE DATABASE myfintech OWNER myfintech;"
+
+# 3. Run database migrations
+cd api && .venv/bin/alembic upgrade head && cd ..
+
+# 4. Start all services (API + worker + scheduler + frontend)
+bash scripts/start-local.sh
+```
+
+This starts four processes in the foreground — press **Ctrl+C** to stop all of them.
+
+| Service    | URL                            |
+|------------|--------------------------------|
+| Frontend   | http://localhost:3000           |
+| API        | http://localhost:8000           |
+| API docs   | http://localhost:8000/docs      |
+
+To stop from another terminal: `bash scripts/stop-local.sh`
+
+## Development (Docker)
 
 ```bash
 # Start with dev tools (includes Adminer at :8080)
