@@ -30,6 +30,23 @@ async def list_accounts(
     return result.scalars().all()
 
 
+@router.get("/transactions", response_model=list[TransactionResponse])
+async def list_all_transactions(
+    limit: int = 100,
+    offset: int = 0,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Transaction)
+        .where(Transaction.household_id == user.household_id)
+        .order_by(Transaction.date.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return result.scalars().all()
+
+
 @router.get("/{account_id}", response_model=AccountResponse)
 async def get_account(
     account_id: uuid.UUID,

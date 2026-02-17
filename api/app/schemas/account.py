@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 class AccountResponse(BaseModel):
     id: uuid.UUID
+    plaid_item_id: uuid.UUID
     name: str
     official_name: str | None
     type: str

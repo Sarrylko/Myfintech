@@ -1,16 +1,23 @@
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.core.security import encrypt_value
-from app.models.account import PlaidItem
+from app.core.security import decrypt_value, encrypt_value
+from app.models.account import Account, PlaidItem, Transaction
 from app.models.user import User
 
 router = APIRouter(prefix="/plaid", tags=["plaid"])
 
+
+# ─── Schemas ───────────────────────────────────────────────────────────────
 
 class LinkTokenResponse(BaseModel):
     link_token: str
@@ -22,25 +29,28 @@ class PublicTokenExchange(BaseModel):
     institution_name: str | None = None
 
 
-class ItemResponse(BaseModel):
+class PlaidItemResponse(BaseModel):
+    id: str
     item_id: str
     institution_name: str | None
+    last_synced_at: datetime | None
+    account_count: int = 0
 
 
-@router.post("/link-token", response_model=LinkTokenResponse)
-async def create_link_token(
-    user: User = Depends(get_current_user),
-):
-    """Create a Plaid Link token for the frontend."""
+class SyncResponse(BaseModel):
+    status: str
+    accounts: int
+    transactions_added: int
+
+
+# ─── Helpers ───────────────────────────────────────────────────────────────
+
+def _build_plaid_client():
     if not settings.plaid_client_id or not settings.plaid_secret:
         raise HTTPException(status_code=503, detail="Plaid not configured")
 
     import plaid
     from plaid.api import plaid_api
-    from plaid.model.link_token_create_request import LinkTokenCreateRequest
-    from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
-    from plaid.model.products import Products
-    from plaid.model.country_code import CountryCode
 
     configuration = plaid.Configuration(
         host=getattr(plaid.Environment, settings.plaid_env.capitalize()),
@@ -49,8 +59,121 @@ async def create_link_token(
             "secret": settings.plaid_secret,
         },
     )
-    api_client = plaid.ApiClient(configuration)
-    client = plaid_api.PlaidApi(api_client)
+    return plaid_api.PlaidApi(plaid.ApiClient(configuration))
+
+
+async def _sync_item(item: PlaidItem, client, db: AsyncSession) -> dict:
+    """Pull accounts and new transactions from Plaid and upsert into DB."""
+    from plaid.model.accounts_get_request import AccountsGetRequest
+    from plaid.model.transactions_sync_request import TransactionsSyncRequest
+
+    access_token = decrypt_value(item.encrypted_access_token)
+
+    # ── 1. Sync accounts ─────────────────────────────────────────────
+    accts_resp = client.accounts_get(AccountsGetRequest(access_token=access_token))
+    account_count = 0
+
+    for pa in accts_resp.accounts:
+        result = await db.execute(
+            select(Account).where(Account.plaid_account_id == pa.account_id)
+        )
+        acct = result.scalar_one_or_none()
+        curr_bal = Decimal(str(pa.balances.current)) if pa.balances.current is not None else None
+        avail_bal = Decimal(str(pa.balances.available)) if pa.balances.available is not None else None
+
+        if acct:
+            acct.current_balance = curr_bal
+            acct.available_balance = avail_bal
+        else:
+            type_str = pa.type.value if hasattr(pa.type, "value") else str(pa.type)
+            sub_str = pa.subtype.value if pa.subtype and hasattr(pa.subtype, "value") else (str(pa.subtype) if pa.subtype else None)
+            acct = Account(
+                plaid_item_id=item.id,
+                household_id=item.household_id,
+                plaid_account_id=pa.account_id,
+                name=pa.name,
+                official_name=pa.official_name,
+                type=type_str,
+                subtype=sub_str,
+                mask=pa.mask,
+                current_balance=curr_bal,
+                available_balance=avail_bal,
+                currency_code=pa.balances.iso_currency_code or "USD",
+            )
+            db.add(acct)
+        account_count += 1
+
+    await db.flush()
+
+    # ── 2. Sync transactions (cursor-based) ───────────────────────────
+    has_more = True
+    cursor = item.cursor
+    added_count = 0
+
+    while has_more:
+        if cursor:
+            sync_req = TransactionsSyncRequest(access_token=access_token, cursor=cursor)
+        else:
+            sync_req = TransactionsSyncRequest(access_token=access_token)
+
+        sync_resp = client.transactions_sync(sync_req)
+
+        for pt in sync_resp.added:
+            acct_result = await db.execute(
+                select(Account).where(Account.plaid_account_id == pt.account_id)
+            )
+            acct = acct_result.scalar_one_or_none()
+            if not acct:
+                continue
+
+            existing = await db.execute(
+                select(Transaction).where(
+                    Transaction.plaid_transaction_id == pt.transaction_id
+                )
+            )
+            if existing.scalar_one_or_none():
+                continue
+
+            # Plaid returns date objects, convert to aware datetime
+            d = pt.date
+            txn_dt = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+
+            txn = Transaction(
+                account_id=acct.id,
+                household_id=item.household_id,
+                plaid_transaction_id=pt.transaction_id,
+                amount=Decimal(str(pt.amount)),
+                date=txn_dt,
+                name=pt.name,
+                merchant_name=pt.merchant_name,
+                pending=pt.pending,
+                plaid_category=", ".join(pt.category) if pt.category else None,
+                plaid_category_id=pt.category_id,
+            )
+            db.add(txn)
+            added_count += 1
+
+        cursor = sync_resp.next_cursor
+        has_more = sync_resp.has_more
+
+    item.cursor = cursor
+    item.last_synced_at = datetime.now(timezone.utc)
+    item.error_code = None
+    await db.flush()
+
+    return {"accounts": account_count, "transactions_added": added_count}
+
+
+# ─── Endpoints ─────────────────────────────────────────────────────────────
+
+@router.post("/link-token", response_model=LinkTokenResponse)
+async def create_link_token(user: User = Depends(get_current_user)):
+    client = _build_plaid_client()
+
+    from plaid.model.link_token_create_request import LinkTokenCreateRequest
+    from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
+    from plaid.model.products import Products
+    from plaid.model.country_code import CountryCode
 
     request = LinkTokenCreateRequest(
         user=LinkTokenCreateRequestUser(client_user_id=str(user.id)),
@@ -63,31 +186,44 @@ async def create_link_token(
     return LinkTokenResponse(link_token=response.link_token)
 
 
-@router.post("/exchange-token", response_model=ItemResponse)
+@router.get("/items", response_model=list[PlaidItemResponse])
+async def list_items(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(PlaidItem).where(
+            PlaidItem.household_id == user.household_id,
+            PlaidItem.is_active == True,
+        )
+    )
+    items = result.scalars().all()
+
+    out = []
+    for item in items:
+        acct_result = await db.execute(
+            select(Account).where(Account.plaid_item_id == item.id)
+        )
+        account_count = len(acct_result.scalars().all())
+        out.append(PlaidItemResponse(
+            id=str(item.id),
+            item_id=item.item_id,
+            institution_name=item.institution_name,
+            last_synced_at=item.last_synced_at,
+            account_count=account_count,
+        ))
+    return out
+
+
+@router.post("/exchange-token", response_model=PlaidItemResponse)
 async def exchange_public_token(
     payload: PublicTokenExchange,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Exchange a Plaid public token for an access token and store it."""
-    if not settings.plaid_client_id or not settings.plaid_secret:
-        raise HTTPException(status_code=503, detail="Plaid not configured")
+    client = _build_plaid_client()
 
-    import plaid
-    from plaid.api import plaid_api
-    from plaid.model.item_public_token_exchange_request import (
-        ItemPublicTokenExchangeRequest,
-    )
-
-    configuration = plaid.Configuration(
-        host=getattr(plaid.Environment, settings.plaid_env.capitalize()),
-        api_key={
-            "clientId": settings.plaid_client_id,
-            "secret": settings.plaid_secret,
-        },
-    )
-    api_client = plaid.ApiClient(configuration)
-    client = plaid_api.PlaidApi(api_client)
+    from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
 
     request = ItemPublicTokenExchangeRequest(public_token=payload.public_token)
     response = client.item_public_token_exchange(request)
@@ -101,8 +237,48 @@ async def exchange_public_token(
     )
     db.add(plaid_item)
     await db.flush()
+    await db.refresh(plaid_item)
 
-    return ItemResponse(
+    # Immediately sync accounts + transactions
+    try:
+        await _sync_item(plaid_item, client, db)
+    except Exception as e:
+        # Don't fail the whole link if sync errors; user can sync manually
+        plaid_item.error_code = str(e)[:100]
+
+    acct_result = await db.execute(
+        select(Account).where(Account.plaid_item_id == plaid_item.id)
+    )
+    account_count = len(acct_result.scalars().all())
+    await db.commit()
+
+    return PlaidItemResponse(
+        id=str(plaid_item.id),
         item_id=response.item_id,
         institution_name=payload.institution_name,
+        last_synced_at=plaid_item.last_synced_at,
+        account_count=account_count,
     )
+
+
+@router.post("/items/{item_id}/sync", response_model=SyncResponse)
+async def sync_item(
+    item_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(PlaidItem).where(
+            PlaidItem.id == item_id,
+            PlaidItem.household_id == user.household_id,
+            PlaidItem.is_active == True,
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Institution not found")
+
+    client = _build_plaid_client()
+    stats = await _sync_item(item, client, db)
+    await db.commit()
+    return SyncResponse(status="ok", **stats)

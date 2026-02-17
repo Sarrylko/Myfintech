@@ -132,6 +132,89 @@ export async function changePassword(
   });
 }
 
+// ─── Plaid / Accounts ──────────────────────────────────────────────────────
+
+export interface PlaidItem {
+  id: string;
+  item_id: string;
+  institution_name: string | null;
+  last_synced_at: string | null;
+  account_count: number;
+}
+
+export interface Account {
+  id: string;
+  plaid_item_id: string;
+  name: string;
+  official_name: string | null;
+  type: string;
+  subtype: string | null;
+  mask: string | null;
+  current_balance: string | null;
+  available_balance: string | null;
+  currency_code: string;
+  is_hidden: boolean;
+  created_at: string;
+}
+
+export interface Transaction {
+  id: string;
+  account_id: string;
+  amount: string;
+  date: string;
+  name: string;
+  merchant_name: string | null;
+  pending: boolean;
+  plaid_category: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export async function getLinkToken(token: string): Promise<{ link_token: string }> {
+  return apiFetch("/api/v1/plaid/link-token", { method: "POST", token });
+}
+
+export async function exchangePublicToken(
+  public_token: string,
+  institution_id: string | null,
+  institution_name: string | null,
+  token: string
+): Promise<PlaidItem> {
+  return apiFetch("/api/v1/plaid/exchange-token", {
+    method: "POST",
+    body: JSON.stringify({ public_token, institution_id, institution_name }),
+    token,
+  });
+}
+
+export async function listPlaidItems(token: string): Promise<PlaidItem[]> {
+  return apiFetch("/api/v1/plaid/items", { token });
+}
+
+export async function syncPlaidItem(itemId: string, token: string): Promise<void> {
+  return apiFetch(`/api/v1/plaid/items/${itemId}/sync`, { method: "POST", token });
+}
+
+export async function listAccounts(token: string): Promise<Account[]> {
+  return apiFetch("/api/v1/accounts/", { token });
+}
+
+export async function listAllTransactions(
+  token: string,
+  limit = 100,
+  offset = 0
+): Promise<Transaction[]> {
+  return apiFetch(`/api/v1/accounts/transactions?limit=${limit}&offset=${offset}`, { token });
+}
+
+export async function listAccountTransactions(
+  accountId: string,
+  token: string,
+  limit = 50
+): Promise<Transaction[]> {
+  return apiFetch(`/api/v1/accounts/${accountId}/transactions?limit=${limit}`, { token });
+}
+
 // ─── Properties ────────────────────────────────────────────────────────────
 
 export interface Property {
