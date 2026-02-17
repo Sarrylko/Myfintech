@@ -17,12 +17,15 @@ class CategorizationRule(Base):
     household_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("households.id"), index=True
     )
-    category_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("categories.id")
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("categories.id"), nullable=True
     )
-    match_field: Mapped[str] = mapped_column(String(50))  # name, merchant_name
-    match_type: Mapped[str] = mapped_column(String(20))   # contains, exact, regex
+    # String-based category matching plaid_category field (e.g. "Food & Dining > Groceries")
+    category_string: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    match_field: Mapped[str] = mapped_column(String(50))  # name, merchant_name, account_type
+    match_type: Mapped[str] = mapped_column(String(20))   # contains, exact
     match_value: Mapped[str] = mapped_column(String(500))
+    negate_amount: Mapped[bool] = mapped_column(Boolean, default=False)
     priority: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

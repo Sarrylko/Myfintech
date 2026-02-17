@@ -352,3 +352,98 @@ export async function deleteProperty(id: string, token: string): Promise<void> {
     token,
   });
 }
+
+// ─── Categorization Rules ───────────────────────────────────────────────────
+
+export interface Rule {
+  id: string;
+  name: string;
+  match_field: string;       // "name" | "merchant_name" | "account_type"
+  match_type: string;        // "contains" | "exact"
+  match_value: string;
+  category_string: string | null;
+  negate_amount: boolean;
+  priority: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface RuleCreate {
+  name: string;
+  match_field: string;
+  match_type: string;
+  match_value: string;
+  category_string?: string;
+  negate_amount?: boolean;
+  priority?: number;
+}
+
+export async function listRules(token: string): Promise<Rule[]> {
+  return apiFetch<Rule[]>("/api/v1/rules/", { token });
+}
+
+export async function createRule(data: RuleCreate, token: string): Promise<Rule> {
+  return apiFetch<Rule>("/api/v1/rules/", {
+    method: "POST",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function updateRule(
+  id: string,
+  data: Partial<RuleCreate & { is_active: boolean }>,
+  token: string
+): Promise<Rule> {
+  return apiFetch<Rule>(`/api/v1/rules/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function deleteRule(id: string, token: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/rules/${id}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export async function applyRules(token: string): Promise<{ applied: number }> {
+  return apiFetch<{ applied: number }>("/api/v1/rules/apply", {
+    method: "POST",
+    token,
+  });
+}
+
+// ─── Custom Categories ──────────────────────────────────────────────────────
+
+export interface CustomCategory {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  is_income: boolean;
+  created_at: string;
+}
+
+export async function listCustomCategories(token: string): Promise<CustomCategory[]> {
+  return apiFetch<CustomCategory[]>("/api/v1/categories/", { token });
+}
+
+export async function createCustomCategory(
+  data: { name: string; parent_id?: string; is_income?: boolean },
+  token: string
+): Promise<CustomCategory> {
+  return apiFetch<CustomCategory>("/api/v1/categories/", {
+    method: "POST",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function deleteCustomCategory(id: string, token: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/categories/${id}`, {
+    method: "DELETE",
+    token,
+  });
+}

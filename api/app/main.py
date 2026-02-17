@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import auth, accounts, categories, health, plaid, properties, users
+from app.routers import auth, accounts, categories, health, plaid, properties, rules, users
 
 logging.basicConfig(
     level=getattr(logging, settings.api_log_level.upper()),
@@ -39,5 +39,6 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(accounts.router, prefix="/api/v1")
 app.include_router(categories.router, prefix="/api/v1")
 app.include_router(plaid.router, prefix="/api/v1")
+app.include_router(rules.router, prefix="/api/v1")
 app.include_router(properties.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")

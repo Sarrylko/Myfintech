@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.account import Account, Transaction
+from app.models.rule import CategorizationRule
 from app.models.user import User
 from app.schemas.account import (
     AccountResponse,
@@ -182,8 +183,20 @@ async def import_csv_transactions(
     for h in reader.fieldnames:
         col_map[h.lower().strip()] = h
 
+    # Load active rules once for the whole import
+    rules_result = await db.execute(
+        select(CategorizationRule)
+        .where(
+            CategorizationRule.household_id == user.household_id,
+            CategorizationRule.is_active == True,  # noqa: E712
+        )
+        .order_by(CategorizationRule.priority.desc())
+    )
+    rules = rules_result.scalars().all()
+
     errors = []
     imported = 0
+    i = 1  # track last row number for total_rows calculation
 
     for i, raw_row in enumerate(reader, start=2):  # row 1 = header
         row = {k.lower().strip(): v.strip() for k, v in raw_row.items() if k}
@@ -226,6 +239,12 @@ async def import_csv_transactions(
             plaid_category=category,
             notes=notes,
         )
+
+        # Apply categorization rules (rules can override category and flip sign)
+        if rules:
+            from app.routers.rules import apply_rules_to_txn
+            apply_rules_to_txn(txn, account.type, rules)
+
         db.add(txn)
         imported += 1
 

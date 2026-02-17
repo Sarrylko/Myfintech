@@ -6,10 +6,13 @@ import {
   getToken,
   listAllTransactions,
   listAccounts,
+  listCustomCategories,
   importCsv,
   updateTransaction,
+  createRule,
   Account,
   Transaction,
+  CustomCategory,
 } from "@/lib/api";
 
 // ─── Category Taxonomy ────────────────────────────────────────────────────────
@@ -79,10 +82,11 @@ function fmtAmt(amount: string): { display: string; isExpense: boolean } {
   return { display: n > 0 ? `-${abs}` : `+${abs}`, isExpense: n > 0 };
 }
 
-function EditModal({ txn, accounts, onSave, onClose }: {
+function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
   txn: Transaction;
   accounts: Account[];
-  onSave: (updated: Transaction) => void;
+  customTaxonomy: { category: string; subcategories: string[] }[];
+  onSave: (updated: Transaction, newCategory: string | undefined, prevCategory: string | null) => void;
   onClose: () => void;
 }) {
   const parsed = parseCategory(txn.plaid_category);
@@ -99,7 +103,8 @@ function EditModal({ txn, accounts, onSave, onClose }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const subcategories = TAXONOMY.find((t) => t.category === form.categoryGroup)?.subcategories ?? [];
+  const allTaxonomy = [...TAXONOMY, ...customTaxonomy];
+  const subcategories = allTaxonomy.find((t) => t.category === form.categoryGroup)?.subcategories ?? [];
 
   function handleGroupChange(group: string) {
     setForm((p) => ({ ...p, categoryGroup: group, categoryItem: "" }));
@@ -128,7 +133,7 @@ function EditModal({ txn, accounts, onSave, onClose }: {
         notes: form.notes || undefined,
         pending: form.pending,
       }, token);
-      onSave(updated);
+      onSave(updated, plaid_category, txn.plaid_category);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -197,6 +202,13 @@ function EditModal({ txn, accounts, onSave, onClose }: {
               {TAXONOMY.map((t) => (
                 <option key={t.category} value={t.category}>{t.category}</option>
               ))}
+              {customTaxonomy.length > 0 && (
+                <optgroup label="── Custom ──">
+                  {customTaxonomy.map((t) => (
+                    <option key={t.category} value={t.category}>{t.category}</option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
 
@@ -376,6 +388,7 @@ export default function TransactionsPage() {
   const router = useRouter();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -383,17 +396,24 @@ export default function TransactionsPage() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [editTxn, setEditTxn] = useState<Transaction | null>(null);
   const [showImport, setShowImport] = useState(false);
+  // "Save as Rule" prompt state
+  const [rulePrompt, setRulePrompt] = useState<{
+    category: string; merchantHint: string; nameHint: string;
+  } | null>(null);
+  const [ruleSaving, setRuleSaving] = useState(false);
 
   const loadData = useCallback(async () => {
     const token = getToken();
     if (!token) { router.replace("/login"); return; }
     try {
-      const [txns, accts] = await Promise.all([
+      const [txns, accts, customCats] = await Promise.all([
         listAllTransactions(token, 300),
         listAccounts(token),
+        listCustomCategories(token),
       ]);
       setTransactions(txns);
       setAccounts(accts);
+      setCustomCategories(customCats);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load transactions");
     } finally {
@@ -403,8 +423,20 @@ export default function TransactionsPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Build custom taxonomy from DB categories (parent → children)
+  const customTaxonomy: { category: string; subcategories: string[] }[] = [];
+  const parentCats = customCategories.filter((c) => !c.parent_id);
+  for (const parent of parentCats) {
+    const children = customCategories
+      .filter((c) => c.parent_id === parent.id)
+      .map((c) => c.name);
+    customTaxonomy.push({ category: parent.name, subcategories: children });
+  }
+
   const accountMap: Record<string, Account> = {};
   for (const a of accounts) accountMap[a.id] = a;
+
+  const allCategories = [...TAXONOMY.map((t) => t.category), ...parentCats.map((c) => c.name)];
 
   const filtered = transactions.filter((t) => {
     const matchAccount = selectedAccount === "all" || t.account_id === selectedAccount;
@@ -422,18 +454,80 @@ export default function TransactionsPage() {
   const totalExpenses = filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending).reduce((s, t) => s + parseFloat(t.amount), 0);
   const totalIncome = filtered.filter((t) => parseFloat(t.amount) < 0 && !t.pending).reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0);
 
-  function onTransactionSaved(updated: Transaction) {
+  function onTransactionSaved(updated: Transaction, newCategory: string | undefined, prevCategory: string | null) {
     setTransactions((prev) => prev.map((t) => t.id === updated.id ? updated : t));
     setEditTxn(null);
+    // Prompt to create a rule if category changed
+    if (newCategory && newCategory !== prevCategory) {
+      const txn = updated;
+      setRulePrompt({
+        category: newCategory,
+        merchantHint: txn.merchant_name || "",
+        nameHint: txn.name || "",
+      });
+    }
+  }
+
+  async function handleCreateRule(matchField: string, matchValue: string) {
+    const token = getToken();
+    if (!token || !rulePrompt) return;
+    setRuleSaving(true);
+    try {
+      await createRule({
+        name: `${rulePrompt.category} — ${matchValue}`,
+        match_field: matchField,
+        match_type: "contains",
+        match_value: matchValue,
+        category_string: rulePrompt.category,
+      }, token);
+    } finally {
+      setRuleSaving(false);
+      setRulePrompt(null);
+    }
   }
 
   return (
     <div>
+      {/* Save-as-Rule prompt banner */}
+      {rulePrompt && (
+        <div className="fixed bottom-6 right-6 z-50 bg-white border border-indigo-200 shadow-xl rounded-xl p-4 w-80">
+          <div className="flex items-start justify-between mb-2">
+            <p className="text-sm font-semibold text-gray-800">Create auto-categorization rule?</p>
+            <button onClick={() => setRulePrompt(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none ml-2">✕</button>
+          </div>
+          <p className="text-xs text-gray-500 mb-3">
+            Category set to <span className="font-medium text-indigo-700">{rulePrompt.category}</span>. Save as a rule so future matching transactions are auto-categorized.
+          </p>
+          <div className="space-y-1.5">
+            {rulePrompt.merchantHint && (
+              <button
+                onClick={() => handleCreateRule("merchant_name", rulePrompt.merchantHint)}
+                disabled={ruleSaving}
+                className="w-full text-left text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-800 px-3 py-2 rounded-lg border border-indigo-100 disabled:opacity-50"
+              >
+                Match merchant: <strong>"{rulePrompt.merchantHint}"</strong>
+              </button>
+            )}
+            <button
+              onClick={() => handleCreateRule("name", rulePrompt.nameHint.split(" ").slice(0, 3).join(" "))}
+              disabled={ruleSaving}
+              className="w-full text-left text-xs bg-gray-50 hover:bg-gray-100 text-gray-800 px-3 py-2 rounded-lg border border-gray-200 disabled:opacity-50"
+            >
+              Match description: <strong>"{rulePrompt.nameHint.split(" ").slice(0, 3).join(" ")}"</strong>
+            </button>
+            <button onClick={() => setRulePrompt(null)} className="w-full text-xs text-gray-400 hover:text-gray-600 px-3 py-1.5 text-center">
+              Skip
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Modals */}
       {editTxn && (
         <EditModal
           txn={editTxn}
           accounts={accounts}
+          customTaxonomy={customTaxonomy}
           onSave={onTransactionSaved}
           onClose={() => setEditTxn(null)}
         />
@@ -495,6 +589,9 @@ export default function TransactionsPage() {
         >
           <option value="all">All Categories</option>
           {TAXONOMY.map((t) => (
+            <option key={t.category} value={t.category}>{t.category}</option>
+          ))}
+          {customTaxonomy.map((t) => (
             <option key={t.category} value={t.category}>{t.category}</option>
           ))}
         </select>
