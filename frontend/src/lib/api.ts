@@ -47,6 +47,26 @@ export interface UserResponse {
   email: string;
   full_name: string;
   role: string;
+  household_id: string;
+  is_active: boolean;
+  phone: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  zip_code: string | null;
+  created_at: string;
+}
+
+export interface UserProfileUpdate {
+  full_name?: string;
+  email?: string;
+  phone?: string;
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
 }
 
 export function getToken(): string | null {
@@ -80,6 +100,35 @@ export async function register(
   return apiFetch<UserResponse>("/api/v1/auth/register", {
     method: "POST",
     body: JSON.stringify({ email, password, full_name, household_name }),
+  });
+}
+
+// ─── User Profile ───────────────────────────────────────────────────────────
+
+export async function getProfile(token: string): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/users/me", { token });
+}
+
+export async function updateProfile(
+  data: UserProfileUpdate,
+  token: string
+): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/users/me", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function changePassword(
+  current_password: string,
+  new_password: string,
+  token: string
+): Promise<void> {
+  return apiFetch<void>("/api/v1/users/me/change-password", {
+    method: "POST",
+    body: JSON.stringify({ current_password, new_password }),
+    token,
   });
 }
 

@@ -1,11 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   getToken,
   createProperty,
   PropertyCreate,
+  getProfile,
+  updateProfile,
+  changePassword,
+  UserResponse,
+  UserProfileUpdate,
 } from "@/lib/api";
 
 const PROPERTY_TYPES = [
@@ -35,8 +40,42 @@ const DEFAULT_FORM: PropertyCreate = {
   maintenance_monthly: undefined,
 };
 
+function InputField({
+  label,
+  type = "text",
+  value,
+  onChange,
+  placeholder,
+  required,
+}: {
+  label: string;
+  type?: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  required?: boolean;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="border border-gray-300 rounded-lg px-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+        required={required}
+      />
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const router = useRouter();
+
+  // ── Property form ──────────────────────────────────────────────────
   const [form, setForm] = useState<PropertyCreate>(DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -86,35 +125,249 @@ export default function SettingsPage() {
     }
   }
 
+  // ── Profile form ───────────────────────────────────────────────────
+  const [profile, setProfile] = useState<UserResponse | null>(null);
+  const [profileForm, setProfileForm] = useState<UserProfileUpdate>({});
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSuccess, setProfileSuccess] = useState(false);
+  const [profileError, setProfileError] = useState("");
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) { router.replace("/login"); return; }
+    getProfile(token).then((u) => {
+      setProfile(u);
+      setProfileForm({
+        full_name: u.full_name ?? "",
+        email: u.email ?? "",
+        phone: u.phone ?? "",
+        address_line1: u.address_line1 ?? "",
+        address_line2: u.address_line2 ?? "",
+        city: u.city ?? "",
+        state: u.state ?? "",
+        zip_code: u.zip_code ?? "",
+      });
+    }).catch(() => router.replace("/login"));
+  }, [router]);
+
+  function updateProfile_field(field: keyof UserProfileUpdate, value: string) {
+    setProfileForm((prev) => ({ ...prev, [field]: value }));
+    setProfileSuccess(false);
+    setProfileError("");
+  }
+
+  async function handleSaveProfile(e: React.FormEvent) {
+    e.preventDefault();
+    const token = getToken();
+    if (!token) { router.replace("/login"); return; }
+
+    // Only send changed fields (non-empty or explicitly changed)
+    const payload: UserProfileUpdate = {};
+    const keys: (keyof UserProfileUpdate)[] = [
+      "full_name", "email", "phone", "address_line1", "address_line2", "city", "state", "zip_code",
+    ];
+    for (const k of keys) {
+      const v = profileForm[k];
+      if (v !== undefined) payload[k] = v as string;
+    }
+
+    setProfileSaving(true);
+    setProfileError("");
+    try {
+      const updated = await updateProfile(payload, token);
+      setProfile(updated);
+      setProfileSuccess(true);
+      setTimeout(() => setProfileSuccess(false), 4000);
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : "Failed to update profile");
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  // ── Password change ────────────────────────────────────────────────
+  const [pwForm, setPwForm] = useState({ current: "", next: "", confirm: "" });
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwSuccess, setPwSuccess] = useState(false);
+  const [pwError, setPwError] = useState("");
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    const token = getToken();
+    if (!token) { router.replace("/login"); return; }
+
+    if (pwForm.next !== pwForm.confirm) {
+      setPwError("New passwords do not match.");
+      return;
+    }
+    if (pwForm.next.length < 8) {
+      setPwError("New password must be at least 8 characters.");
+      return;
+    }
+
+    setPwSaving(true);
+    setPwError("");
+    try {
+      await changePassword(pwForm.current, pwForm.next, token);
+      setPwSuccess(true);
+      setPwForm({ current: "", next: "", confirm: "" });
+      setTimeout(() => setPwSuccess(false), 4000);
+    } catch (err) {
+      setPwError(err instanceof Error ? err.message : "Failed to change password");
+    } finally {
+      setPwSaving(false);
+    }
+  }
+
   return (
     <div>
       <h2 className="text-2xl font-bold mb-6">Settings</h2>
 
       <div className="space-y-6">
-        {/* Profile */}
+
+        {/* ── Profile ──────────────────────────────────────────────── */}
         <section className="bg-white rounded-lg shadow border border-gray-100 p-6">
           <h3 className="font-semibold text-lg mb-4">Profile</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-gray-500 mb-1">Full Name</label>
-              <input
-                type="text"
-                className="border border-gray-300 rounded-lg px-4 py-2 w-full"
-                placeholder="Your name"
+
+          <form onSubmit={handleSaveProfile} className="space-y-4">
+            {/* Name & Email */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <InputField
+                label="Full Name"
+                value={profileForm.full_name ?? ""}
+                onChange={(v) => updateProfile_field("full_name", v)}
+                placeholder="Jane Smith"
               />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-500 mb-1">Email</label>
-              <input
+              <InputField
+                label="Email"
                 type="email"
-                className="border border-gray-300 rounded-lg px-4 py-2 w-full"
+                value={profileForm.email ?? ""}
+                onChange={(v) => updateProfile_field("email", v)}
                 placeholder="you@example.com"
               />
             </div>
-          </div>
+
+            {/* Phone */}
+            <div className="max-w-xs">
+              <InputField
+                label="Phone Number"
+                type="tel"
+                value={profileForm.phone ?? ""}
+                onChange={(v) => updateProfile_field("phone", v)}
+                placeholder="+1 (555) 000-0000"
+              />
+            </div>
+
+            {/* Address */}
+            <div>
+              <InputField
+                label="Address Line 1"
+                value={profileForm.address_line1 ?? ""}
+                onChange={(v) => updateProfile_field("address_line1", v)}
+                placeholder="123 Main St"
+              />
+            </div>
+            <div>
+              <InputField
+                label="Address Line 2"
+                value={profileForm.address_line2 ?? ""}
+                onChange={(v) => updateProfile_field("address_line2", v)}
+                placeholder="Apt 4B (optional)"
+              />
+            </div>
+
+            {/* City / State / ZIP */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <InputField
+                label="City"
+                value={profileForm.city ?? ""}
+                onChange={(v) => updateProfile_field("city", v)}
+                placeholder="Austin"
+              />
+              <InputField
+                label="State"
+                value={profileForm.state ?? ""}
+                onChange={(v) => updateProfile_field("state", v)}
+                placeholder="TX"
+              />
+              <InputField
+                label="ZIP Code"
+                value={profileForm.zip_code ?? ""}
+                onChange={(v) => updateProfile_field("zip_code", v)}
+                placeholder="78701"
+              />
+            </div>
+
+            {profileError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+                {profileError}
+              </div>
+            )}
+            {profileSuccess && (
+              <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
+                Profile updated successfully.
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={profileSaving || !profile}
+              className="bg-primary-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:opacity-50"
+            >
+              {profileSaving ? "Saving..." : "Save Profile"}
+            </button>
+          </form>
         </section>
 
-        {/* Properties */}
+        {/* ── Change Password ───────────────────────────────────────── */}
+        <section className="bg-white rounded-lg shadow border border-gray-100 p-6">
+          <h3 className="font-semibold text-lg mb-4">Change Password</h3>
+
+          <form onSubmit={handleChangePassword} className="space-y-4 max-w-md">
+            <InputField
+              label="Current Password"
+              type="password"
+              value={pwForm.current}
+              onChange={(v) => { setPwForm((p) => ({ ...p, current: v })); setPwError(""); setPwSuccess(false); }}
+              placeholder="Your current password"
+            />
+            <InputField
+              label="New Password"
+              type="password"
+              value={pwForm.next}
+              onChange={(v) => { setPwForm((p) => ({ ...p, next: v })); setPwError(""); setPwSuccess(false); }}
+              placeholder="At least 8 characters"
+            />
+            <InputField
+              label="Confirm New Password"
+              type="password"
+              value={pwForm.confirm}
+              onChange={(v) => { setPwForm((p) => ({ ...p, confirm: v })); setPwError(""); setPwSuccess(false); }}
+              placeholder="Repeat new password"
+            />
+
+            {pwError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+                {pwError}
+              </div>
+            )}
+            {pwSuccess && (
+              <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
+                Password changed successfully.
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={pwSaving}
+              className="bg-primary-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:opacity-50"
+            >
+              {pwSaving ? "Updating..." : "Change Password"}
+            </button>
+          </form>
+        </section>
+
+        {/* ── Add Property ─────────────────────────────────────────── */}
         <section className="bg-white rounded-lg shadow border border-gray-100 p-6">
           <div className="flex items-center justify-between mb-1">
             <h3 className="font-semibold text-lg">Add Property</h3>

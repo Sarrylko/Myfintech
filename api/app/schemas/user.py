@@ -23,9 +23,31 @@ class UserResponse(BaseModel):
     role: str
     household_id: uuid.UUID
     is_active: bool
+    phone: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    zip_code: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class UserProfileUpdate(BaseModel):
+    full_name: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    zip_code: str | None = None
+
+
+class UserPasswordChange(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class TokenResponse(BaseModel):

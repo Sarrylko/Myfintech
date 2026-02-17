@@ -34,6 +34,12 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(50), default="member")  # owner | member
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    phone: Mapped[str | None] = mapped_column(String(50))
+    address_line1: Mapped[str | None] = mapped_column(String(255))
+    address_line2: Mapped[str | None] = mapped_column(String(255))
+    city: Mapped[str | None] = mapped_column(String(100))
+    state: Mapped[str | None] = mapped_column(String(50))
+    zip_code: Mapped[str | None] = mapped_column(String(20))
     household_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("households.id")
     )
