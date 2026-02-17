@@ -37,33 +37,35 @@ class PlaidItem(Base):
 
 
 class Account(Base):
-    """A bank, credit, brokerage, or loan account."""
+    """A bank, credit, brokerage, or loan account (Plaid-linked or manual)."""
     __tablename__ = "accounts"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    plaid_item_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("plaid_items.id"), index=True
+    plaid_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plaid_items.id"), index=True, nullable=True
     )
     household_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("households.id"), index=True
     )
-    plaid_account_id: Mapped[str] = mapped_column(String(255), unique=True)
+    plaid_account_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     name: Mapped[str] = mapped_column(String(255))
     official_name: Mapped[str | None] = mapped_column(String(255))
+    institution_name: Mapped[str | None] = mapped_column(String(255))  # for manual accounts
     type: Mapped[str] = mapped_column(String(50))          # depository, credit, loan, investment
     subtype: Mapped[str | None] = mapped_column(String(50))
-    mask: Mapped[str | None] = mapped_column(String(10))
+    mask: Mapped[str | None] = mapped_column(String(10))   # last 4 digits
     current_balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     available_balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     currency_code: Mapped[str] = mapped_column(String(3), default="USD")
     is_hidden: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_manual: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
 
-    plaid_item: Mapped["PlaidItem"] = relationship(back_populates="accounts")
+    plaid_item: Mapped["PlaidItem | None"] = relationship(back_populates="accounts")
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="account")
 
 

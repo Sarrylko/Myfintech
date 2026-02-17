@@ -144,9 +144,10 @@ export interface PlaidItem {
 
 export interface Account {
   id: string;
-  plaid_item_id: string;
+  plaid_item_id: string | null;
   name: string;
   official_name: string | null;
+  institution_name: string | null;
   type: string;
   subtype: string | null;
   mask: string | null;
@@ -154,7 +155,18 @@ export interface Account {
   available_balance: string | null;
   currency_code: string;
   is_hidden: boolean;
+  is_manual: boolean;
   created_at: string;
+}
+
+export interface ManualAccountCreate {
+  name: string;
+  institution_name?: string;
+  type: string;
+  subtype?: string;
+  mask?: string;
+  current_balance?: number;
+  currency_code?: string;
 }
 
 export interface Transaction {
@@ -197,6 +209,56 @@ export async function syncPlaidItem(itemId: string, token: string): Promise<void
 
 export async function listAccounts(token: string): Promise<Account[]> {
   return apiFetch("/api/v1/accounts/", { token });
+}
+
+export async function createManualAccount(
+  data: ManualAccountCreate,
+  token: string
+): Promise<Account> {
+  return apiFetch("/api/v1/accounts/", {
+    method: "POST",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function importCsv(
+  accountId: string,
+  file: File,
+  token: string
+): Promise<{ imported: number; errors: { row: number; error: string }[]; total_rows: number }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/v1/accounts/${accountId}/import-csv`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Import error: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateTransaction(
+  id: string,
+  data: Partial<{
+    name: string;
+    merchant_name: string;
+    amount: number;
+    date: string;
+    plaid_category: string;
+    notes: string;
+    pending: boolean;
+  }>,
+  token: string
+): Promise<Transaction> {
+  return apiFetch(`/api/v1/accounts/transactions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    token,
+  });
 }
 
 export async function listAllTransactions(

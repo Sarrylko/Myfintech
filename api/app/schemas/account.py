@@ -7,9 +7,10 @@ from pydantic import BaseModel
 
 class AccountResponse(BaseModel):
     id: uuid.UUID
-    plaid_item_id: uuid.UUID
+    plaid_item_id: uuid.UUID | None
     name: str
     official_name: str | None
+    institution_name: str | None
     type: str
     subtype: str | None
     mask: str | None
@@ -17,9 +18,20 @@ class AccountResponse(BaseModel):
     available_balance: Decimal | None
     currency_code: str
     is_hidden: bool
+    is_manual: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ManualAccountCreate(BaseModel):
+    name: str
+    institution_name: str | None = None
+    type: str  # depository | credit | loan | investment | other
+    subtype: str | None = None
+    mask: str | None = None  # last 4 digits of account number
+    current_balance: Decimal | None = None
+    currency_code: str = "USD"
 
 
 class TransactionResponse(BaseModel):
@@ -40,8 +52,14 @@ class TransactionResponse(BaseModel):
 
 
 class TransactionUpdate(BaseModel):
+    name: str | None = None
+    merchant_name: str | None = None
+    amount: Decimal | None = None
+    date: datetime | None = None
+    plaid_category: str | None = None
     custom_category_id: uuid.UUID | None = None
     notes: str | None = None
+    pending: bool | None = None
 
 
 class CategoryCreate(BaseModel):
