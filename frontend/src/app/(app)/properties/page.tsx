@@ -458,6 +458,40 @@ export default function PropertiesPage() {
                       />
                     </div>
                   </div>
+                  {/* Live preview */}
+                  {(financialForm.monthly_rent || financialForm.mortgage_monthly || financialForm.property_tax_annual || financialForm.insurance_annual || financialForm.hoa_monthly || financialForm.maintenance_monthly) && (() => {
+                    const previewRent = Number(financialForm.monthly_rent || 0);
+                    const previewExp =
+                      Number(financialForm.mortgage_monthly || 0) +
+                      Number(financialForm.property_tax_annual || 0) / 12 +
+                      Number(financialForm.insurance_annual || 0) / 12 +
+                      Number(financialForm.hoa_monthly || 0) +
+                      Number(financialForm.maintenance_monthly || 0);
+                    const previewNet = previewRent - previewExp;
+                    return (
+                      <div className="mt-4 p-3 bg-gray-50 rounded-lg flex flex-wrap gap-6 items-center">
+                        <p className="text-xs text-gray-400 uppercase tracking-wide w-full mb-1">Preview</p>
+                        {previewRent > 0 && (
+                          <div>
+                            <p className="text-xs text-gray-400">Rent Income</p>
+                            <p className="text-sm font-medium text-green-600">+{fmt(previewRent)}</p>
+                          </div>
+                        )}
+                        {previewExp > 0 && (
+                          <div>
+                            <p className="text-xs text-gray-400">Total Expenses</p>
+                            <p className="text-sm font-medium text-gray-700">{fmt(previewExp)}</p>
+                          </div>
+                        )}
+                        <div className="pl-4 border-l border-gray-300">
+                          <p className="text-xs text-gray-400">Net / Month</p>
+                          <p className={`text-sm font-bold ${previewNet >= 0 ? "text-green-600" : "text-red-600"}`}>
+                            {previewNet >= 0 ? "+" : ""}{fmt(previewNet)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <div className="flex gap-3 mt-4">
                     <button
                       onClick={() => saveFinancials(p.id)}
