@@ -107,6 +107,7 @@ async def _property_metrics(
     year: int,
     month: int,
     db: AsyncSession,
+    include_lifetime: bool = False,
 ) -> dict:
     """Compute all report metrics for one property."""
     m_start, m_end = _parse_month(f"{year:04d}-{month:02d}")
@@ -403,9 +404,54 @@ async def _property_metrics(
 
         irr_value = _irr(cf_list)
 
+    # ── LIFETIME (since acquisition) ──
+    lifetime_data: dict | None = None
+    if include_lifetime:
+        if prop.purchase_date:
+            lt_start = prop.purchase_date.date() if hasattr(prop.purchase_date, "date") else prop.purchase_date
+        else:
+            # Fall back to earliest rent charge date
+            earliest_result = await db.execute(
+                select(func.min(RentCharge.charge_date)).where(
+                    RentCharge.lease_id.in_(lease_ids) if lease_ids else False
+                )
+            )
+            lt_start = earliest_result.scalar() or date(year, 1, 1)
+        lt_end = date.today()
+        lt_months = max(1, ((lt_end.year - lt_start.year) * 12 + lt_end.month - lt_start.month) + 1)
+
+        lt_charged = await rent_charged(lt_start, lt_end)
+        lt_collected = await rent_collected(lt_start, lt_end)
+        lt_opex_m = await maintenance_opex(lt_start, lt_end)
+        lt_capex = await maintenance_capex(lt_start, lt_end)
+        lt_fixed = monthly_fixed_costs * lt_months
+        lt_opex = lt_opex_m + lt_fixed
+        lt_debt = monthly_debt_service * lt_months
+        lt_noi = lt_collected - lt_opex
+        lt_cash_flow = lt_noi - lt_debt
+
+        lifetime_data = {
+            "start_date": lt_start.isoformat(),
+            "months": lt_months,
+            "rent_charged": round(lt_charged, 2),
+            "rent_collected": round(lt_collected, 2),
+            "delinquency": round(lt_charged - lt_collected, 2),
+            "opex": round(lt_opex, 2),
+            "capex": round(lt_capex, 2),
+            "noi": round(lt_noi, 2),
+            "debt_service": round(lt_debt, 2),
+            "cash_flow": round(lt_cash_flow, 2),
+            "avg_monthly_noi": round(lt_noi / lt_months, 2),
+            "avg_monthly_cash_flow": round(lt_cash_flow / lt_months, 2),
+            "cap_rate": round(cap_rate, 2) if cap_rate is not None else None,
+            "irr": irr_value,
+            "current_equity": round(current_equity, 2),
+            "total_equity_invested": round(total_equity_invested, 2),
+        }
+
     quarter_num = (month - 1) // 3 + 1
 
-    return {
+    result: dict = {
         "property_id": str(property_id),
         "property_address": prop.address,
         "year": year,
@@ -454,6 +500,9 @@ async def _property_metrics(
             "current_equity": round(current_equity, 2),
         },
     }
+    if lifetime_data is not None:
+        result["lifetime"] = lifetime_data
+    return result
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -462,7 +511,8 @@ async def _property_metrics(
 async def property_report(
     property_id: uuid.UUID,
     year: int = Query(default=None),
-    month: str = Query(default=None),  # YYYY-MM
+    month: str = Query(default=None),    # YYYY-MM
+    period: str = Query(default="default"),  # "default" | "ltd"
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -488,7 +538,7 @@ async def property_report(
     if not prop_result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Property not found")
 
-    return await _property_metrics(property_id, year, month, db)
+    return await _property_metrics(property_id, year, month, db, include_lifetime=(period == "ltd"))
 
 
 @router.get("/reports/portfolio")

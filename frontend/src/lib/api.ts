@@ -455,6 +455,18 @@ export interface LeaseCreate {
   notes?: string;
 }
 
+export interface LeaseUpdate {
+  tenant_id?: string;
+  lease_start?: string;
+  lease_end?: string | null;
+  move_in_date?: string | null;
+  move_out_date?: string | null;
+  monthly_rent?: number;
+  deposit?: number | null;
+  status?: string;
+  notes?: string | null;
+}
+
 export interface RentCharge {
   id: string;
   lease_id: string;
@@ -530,7 +542,7 @@ export async function listUnitLeases(unitId: string, token: string): Promise<Lea
 export async function createLease(data: LeaseCreate, token: string): Promise<Lease> {
   return apiFetch<Lease>("/api/v1/leases/", { method: "POST", body: JSON.stringify(data), token });
 }
-export async function updateLease(id: string, data: Partial<LeaseCreate>, token: string): Promise<Lease> {
+export async function updateLease(id: string, data: LeaseUpdate, token: string): Promise<Lease> {
   return apiFetch<Lease>(`/api/v1/leases/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
 }
 export async function deleteLease(id: string, token: string): Promise<void> {
@@ -880,6 +892,25 @@ export interface AnnualReport {
   current_equity: number;
 }
 
+export interface LifetimeReport {
+  start_date: string;          // ISO date of acquisition / first charge
+  months: number;              // total months tracked
+  rent_charged: number;
+  rent_collected: number;
+  delinquency: number;
+  opex: number;
+  capex: number;
+  noi: number;
+  debt_service: number;
+  cash_flow: number;
+  avg_monthly_noi: number;
+  avg_monthly_cash_flow: number;
+  cap_rate: number | null;
+  irr: number | null;
+  current_equity: number;
+  total_equity_invested: number;
+}
+
 export interface PropertyReport {
   property_id: string;
   property_address: string;
@@ -889,6 +920,7 @@ export interface PropertyReport {
   monthly: MonthlyReport;
   quarterly: QuarterlyReport;
   annual: AnnualReport;
+  lifetime?: LifetimeReport;   // only present when period=ltd
 }
 
 export interface PortfolioReport {
@@ -905,10 +937,13 @@ export async function getPropertyReport(
   propertyId: string,
   year: number,
   month: string, // YYYY-MM
-  token: string
+  token: string,
+  period?: string, // "default" | "ltd"
 ): Promise<PropertyReport> {
+  const params = new URLSearchParams({ year: String(year), month });
+  if (period) params.set("period", period);
   return apiFetch<PropertyReport>(
-    `/api/v1/reports/property/${propertyId}?year=${year}&month=${month}`,
+    `/api/v1/reports/property/${propertyId}?${params}`,
     { token }
   );
 }

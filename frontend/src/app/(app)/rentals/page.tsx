@@ -33,6 +33,7 @@ import {
   UnitCreate,
   TenantCreate,
   LeaseCreate,
+  LeaseUpdate,
   PaymentCreate,
   CapitalEvent,
   CapitalEventCreate,
@@ -332,6 +333,12 @@ function UnitsLeasesTab({
   const [leaseForm, setLeaseForm] = useState<Partial<LeaseCreate>>({});
   const [savingLease, setSavingLease] = useState(false);
 
+  // Lease editing — use a loose form type to avoid TS strictness on numeric | undefined
+  const [editLeaseId, setEditLeaseId] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [editLeaseForm, setEditLeaseForm] = useState<Record<string, any>>({});
+  const [savingLeaseEdit, setSavingLeaseEdit] = useState(false);
+
   useEffect(() => {
     if (selectedPropId) loadUnits(selectedPropId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -392,12 +399,55 @@ function UnitsLeasesTab({
 
   async function handleEndLease(lease: Lease) {
     const today = new Date().toISOString().split("T")[0];
-    const updated = await updateLease(lease.id, { status: "ended", move_out_date: today }, token);
+    const updated = await updateLease(lease.id, { status: "ended", move_out_date: today } as LeaseUpdate, token);
     setUnitLeases((prev) => ({
       ...prev,
       [lease.unit_id]: (prev[lease.unit_id] ?? []).map((l) => l.id === updated.id ? updated : l),
     }));
     setAllLeases((prev) => prev.map((l) => l.id === updated.id ? updated : l));
+  }
+
+  function openEditLease(l: Lease) {
+    setEditLeaseId(l.id);
+    setEditLeaseForm({
+      tenant_id:     l.tenant_id,
+      monthly_rent:  l.monthly_rent,
+      deposit:       l.deposit ?? "",
+      lease_start:   l.lease_start,
+      lease_end:     l.lease_end ?? "",
+      move_in_date:  l.move_in_date ?? "",
+      move_out_date: l.move_out_date ?? "",
+      status:        l.status,
+      notes:         l.notes ?? "",
+    });
+  }
+
+  async function handleSaveLeaseEdit(leaseId: string, unitId: string) {
+    setSavingLeaseEdit(true);
+    try {
+      const f = editLeaseForm;
+      const payload: LeaseUpdate = {
+        tenant_id:     f.tenant_id,
+        lease_start:   f.lease_start,
+        monthly_rent:  f.monthly_rent ? Number(f.monthly_rent) : undefined,
+        deposit:       f.deposit ? Number(f.deposit) : null,
+        lease_end:     f.lease_end || null,
+        move_in_date:  f.move_in_date || null,
+        move_out_date: f.move_out_date || null,
+        status:        f.status,
+        notes:         f.notes || null,
+      };
+
+      const updated = await updateLease(leaseId, payload, token);
+      setUnitLeases((prev) => ({
+        ...prev,
+        [unitId]: (prev[unitId] ?? []).map((l) => l.id === updated.id ? updated : l),
+      }));
+      setAllLeases((prev) => prev.map((l) => l.id === updated.id ? updated : l));
+      setEditLeaseId(null);
+      setEditLeaseForm({});
+    } catch { /* ignore */ }
+    finally { setSavingLeaseEdit(false); }
   }
 
   if (properties.length === 0) {
@@ -518,26 +568,131 @@ function UnitsLeasesTab({
                         <div className="space-y-3 mb-4">
                           {leases.map((l) => {
                             const t = tenants.find((x) => x.id === l.tenant_id);
+                            const isEditing = editLeaseId === l.id;
+
+                            if (isEditing) {
+                              return (
+                                <div key={l.id} className="border border-primary-200 rounded-lg p-4 bg-primary-50 space-y-3">
+                                  <p className="text-xs font-semibold text-primary-700 uppercase tracking-wide">Edit Lease</p>
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div>
+                                      <label className="block text-xs font-medium text-gray-600 mb-1">Tenant *</label>
+                                      <select
+                                        value={editLeaseForm.tenant_id ?? ""}
+                                        onChange={(e) => setEditLeaseForm((f) => ({ ...f, tenant_id: e.target.value }))}
+                                        className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                      >
+                                        {tenants.map((t) => (
+                                          <option key={t.id} value={t.id}>{t.name}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <CurrencyInput
+                                      label="Monthly Rent *"
+                                      value={String(editLeaseForm.monthly_rent ?? "")}
+                                      onChange={(v) => setEditLeaseForm((f) => ({ ...f, monthly_rent: v ? Number(v) : undefined }))}
+                                      placeholder="1500"
+                                    />
+                                    <TextInput
+                                      label="Lease Start *"
+                                      type="date"
+                                      value={editLeaseForm.lease_start ?? ""}
+                                      onChange={(v) => setEditLeaseForm((f) => ({ ...f, lease_start: v }))}
+                                    />
+                                    <TextInput
+                                      label="Lease End"
+                                      type="date"
+                                      value={editLeaseForm.lease_end ?? ""}
+                                      onChange={(v) => setEditLeaseForm((f) => ({ ...f, lease_end: v || undefined }))}
+                                    />
+                                    <CurrencyInput
+                                      label="Deposit"
+                                      value={String(editLeaseForm.deposit ?? "")}
+                                      onChange={(v) => setEditLeaseForm((f) => ({ ...f, deposit: v ? Number(v) : undefined }))}
+                                      placeholder="1500"
+                                    />
+                                    <TextInput
+                                      label="Move-in Date"
+                                      type="date"
+                                      value={editLeaseForm.move_in_date ?? ""}
+                                      onChange={(v) => setEditLeaseForm((f) => ({ ...f, move_in_date: v || undefined }))}
+                                    />
+                                    <div>
+                                      <label className="block text-xs font-medium text-gray-600 mb-1">Status</label>
+                                      <select
+                                        value={editLeaseForm.status ?? "active"}
+                                        onChange={(e) => setEditLeaseForm((f) => ({ ...f, status: e.target.value }))}
+                                        className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                      >
+                                        <option value="active">Active</option>
+                                        <option value="ended">Ended</option>
+                                      </select>
+                                    </div>
+                                    {editLeaseForm.status === "ended" && (
+                                      <TextInput
+                                        label="Move-out Date"
+                                        type="date"
+                                        value={editLeaseForm.move_out_date ?? ""}
+                                        onChange={(v) => setEditLeaseForm((f) => ({ ...f, move_out_date: v || undefined }))}
+                                      />
+                                    )}
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+                                    <textarea
+                                      value={editLeaseForm.notes ?? ""}
+                                      onChange={(e) => setEditLeaseForm((f) => ({ ...f, notes: e.target.value || undefined }))}
+                                      rows={2}
+                                      placeholder="Optional notes..."
+                                      className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+                                    />
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleSaveLeaseEdit(l.id, l.unit_id)}
+                                      disabled={savingLeaseEdit || !editLeaseForm.tenant_id || !editLeaseForm.lease_start || !editLeaseForm.monthly_rent}
+                                      className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50"
+                                    >
+                                      {savingLeaseEdit ? "Saving..." : "Save Changes"}
+                                    </button>
+                                    <button
+                                      onClick={() => { setEditLeaseId(null); setEditLeaseForm({}); }}
+                                      className="text-sm text-gray-400 hover:text-gray-600 px-3 py-1.5"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            }
+
                             return (
-                              <div key={l.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                <div>
+                              <div key={l.id} className="flex items-start justify-between p-3 bg-gray-50 rounded-lg gap-3">
+                                <div className="min-w-0">
                                   <p className="text-sm font-medium text-gray-800">{t?.name ?? "—"}</p>
-                                  <p className="text-xs text-gray-400">
+                                  <p className="text-xs text-gray-400 mt-0.5">
                                     {fmtDate(l.lease_start)} – {l.lease_end ? fmtDate(l.lease_end) : "ongoing"}
                                     {" · "}{fmt(l.monthly_rent)}/mo
                                     {l.deposit ? ` · Deposit: ${fmt(l.deposit)}` : ""}
                                   </p>
+                                  {l.notes && <p className="text-xs text-gray-400 mt-0.5 italic">{l.notes}</p>}
                                 </div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 shrink-0">
                                   <span className={`text-xs px-2 py-0.5 rounded-full ${l.status === "active" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
                                     {l.status}
                                   </span>
+                                  <button
+                                    onClick={() => openEditLease(l)}
+                                    className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                                  >
+                                    Edit
+                                  </button>
                                   {l.status === "active" && (
                                     <button
                                       onClick={() => handleEndLease(l)}
                                       className="text-xs text-red-400 hover:text-red-600 font-medium"
                                     >
-                                      End Lease
+                                      End
                                     </button>
                                   )}
                                 </div>
@@ -755,23 +910,75 @@ const CAPITAL_EVENT_TYPES = [
   "acquisition", "additional_investment", "refi_proceeds", "sale", "other",
 ];
 
+type KpiBenchmark = { label: string; textColor: string; bgColor: string; hint: string };
+
+// ── Industry benchmark evaluators ─────────────────────────────────────────────
+function bmOccupancy(pct: number): KpiBenchmark {
+  if (pct >= 95) return { label: "Best",      textColor: "text-green-700",  bgColor: "bg-green-100",  hint: "95%+ — full occupancy" };
+  if (pct >= 85) return { label: "Good",      textColor: "text-green-600",  bgColor: "bg-green-50",   hint: "Good: 85-95%" };
+  if (pct >= 75) return { label: "Average",   textColor: "text-yellow-700", bgColor: "bg-yellow-50",  hint: "Avg: 75-85%" };
+  if (pct >= 60) return { label: "Low",       textColor: "text-orange-600", bgColor: "bg-orange-50",  hint: "Below avg: 60-75%" };
+  return               { label: "Critical",  textColor: "text-red-600",    bgColor: "bg-red-50",     hint: "Under 60% — high risk" };
+}
+function bmCapRate(pct: number): KpiBenchmark {
+  if (pct >= 9) return  { label: "High Yield", textColor: "text-green-700",  bgColor: "bg-green-100",  hint: "Aggressive: 9%+" };
+  if (pct >= 6) return  { label: "Good",       textColor: "text-green-600",  bgColor: "bg-green-50",   hint: "Strong: 6-9%" };
+  if (pct >= 4) return  { label: "Average",    textColor: "text-yellow-700", bgColor: "bg-yellow-50",  hint: "Avg: 4-6%" };
+  if (pct >= 2) return  { label: "Low",        textColor: "text-orange-600", bgColor: "bg-orange-50",  hint: "Below avg: 2-4%" };
+  return                { label: "Very Low",   textColor: "text-red-600",    bgColor: "bg-red-50",     hint: "Under 2%" };
+}
+function bmIrr(pct: number): KpiBenchmark {
+  if (pct >= 20) return { label: "Excellent",  textColor: "text-green-700",  bgColor: "bg-green-100",  hint: "Top quartile: 20%+" };
+  if (pct >= 15) return { label: "Good",       textColor: "text-green-600",  bgColor: "bg-green-50",   hint: "Strong: 15-20%" };
+  if (pct >= 10) return { label: "Average",    textColor: "text-yellow-700", bgColor: "bg-yellow-50",  hint: "Avg: 10-15%" };
+  if (pct >= 6)  return { label: "Below Avg",  textColor: "text-orange-600", bgColor: "bg-orange-50",  hint: "Below avg: 6-10%" };
+  return                { label: "Poor",       textColor: "text-red-600",    bgColor: "bg-red-50",     hint: "Under 6%" };
+}
+function bmCoc(pct: number): KpiBenchmark {
+  if (pct >= 12) return { label: "Excellent",  textColor: "text-green-700",  bgColor: "bg-green-100",  hint: "Top quartile: 12%+" };
+  if (pct >= 8)  return { label: "Good",       textColor: "text-green-600",  bgColor: "bg-green-50",   hint: "Strong: 8-12%" };
+  if (pct >= 4)  return { label: "Average",    textColor: "text-yellow-700", bgColor: "bg-yellow-50",  hint: "Avg: 4-8%" };
+  if (pct >= 0)  return { label: "Low",        textColor: "text-orange-600", bgColor: "bg-orange-50",  hint: "Below avg: 0-4%" };
+  return                { label: "Negative",   textColor: "text-red-600",    bgColor: "bg-red-50",     hint: "Losing money" };
+}
+function bmDelinquency(pct: number): KpiBenchmark {
+  if (pct === 0)  return { label: "None",     textColor: "text-green-700",  bgColor: "bg-green-100",  hint: "0% — ideal" };
+  if (pct <= 2)   return { label: "Minimal",  textColor: "text-green-600",  bgColor: "bg-green-50",   hint: "Under 2% — healthy" };
+  if (pct <= 5)   return { label: "Average",  textColor: "text-yellow-700", bgColor: "bg-yellow-50",  hint: "Avg: 2-5%" };
+  if (pct <= 10)  return { label: "High",     textColor: "text-orange-600", bgColor: "bg-orange-50",  hint: "Above avg: 5-10%" };
+  return                 { label: "Severe",   textColor: "text-red-600",    bgColor: "bg-red-50",     hint: "Over 10% — critical" };
+}
+function bmTurnover(count: number): KpiBenchmark {
+  if (count === 0) return { label: "Excellent", textColor: "text-green-700",  bgColor: "bg-green-100", hint: "Zero turnover this quarter" };
+  if (count === 1) return { label: "Good",      textColor: "text-green-600",  bgColor: "bg-green-50",  hint: "1 — manageable" };
+  if (count === 2) return { label: "Average",   textColor: "text-yellow-700", bgColor: "bg-yellow-50", hint: "2 — monitor closely" };
+  if (count <= 3)  return { label: "High",      textColor: "text-orange-600", bgColor: "bg-orange-50", hint: "3 — high churn" };
+  return                  { label: "Critical",  textColor: "text-red-600",    bgColor: "bg-red-50",    hint: "4+ — serious issue" };
+}
+function bmNoiMargin(pct: number): KpiBenchmark {
+  if (pct >= 65) return { label: "Excellent",  textColor: "text-green-700",  bgColor: "bg-green-100",  hint: "65%+ NOI margin" };
+  if (pct >= 50) return { label: "Good",       textColor: "text-green-600",  bgColor: "bg-green-50",   hint: "Strong: 50-65%" };
+  if (pct >= 35) return { label: "Average",    textColor: "text-yellow-700", bgColor: "bg-yellow-50",  hint: "Avg: 35-50%" };
+  if (pct >= 20) return { label: "Thin",       textColor: "text-orange-600", bgColor: "bg-orange-50",  hint: "Below avg: 20-35%" };
+  return                { label: "Very Thin",  textColor: "text-red-600",    bgColor: "bg-red-50",     hint: "Under 20% — concern" };
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function KpiCard({
-  label, value, sub, color = "gray", icon, higherIsBetter, numericValue,
+  label, value, sub, color = "gray", icon, higherIsBetter, trend, benchmark,
 }: {
   label: string;
   value: string;
   sub?: string;
   color?: "gray" | "green" | "red" | "blue" | "purple";
   icon?: string;
-  higherIsBetter?: boolean | null;   // null = neutral, no indicator
-  numericValue?: number | null;       // drives arrow direction
+  higherIsBetter?: boolean | null;        // null = no direction hint at all
+  trend?: "up" | "down" | null;           // compared to previous period; null = no comparison available
+  benchmark?: KpiBenchmark | null;        // industry benchmark badge
 }) {
   const valueColors: Record<string, string> = {
-    gray: "text-gray-900",
-    green: "text-green-600",
-    red: "text-red-600",
-    blue: "text-blue-700",
-    purple: "text-purple-700",
+    gray: "text-gray-900", green: "text-green-600", red: "text-red-600",
+    blue: "text-blue-700", purple: "text-purple-700",
   };
 
   let arrowEl: React.ReactNode = null;
@@ -779,23 +986,22 @@ function KpiCard({
 
   if (higherIsBetter !== null && higherIsBetter !== undefined) {
     hintText = higherIsBetter ? "↑ Higher is better" : "↓ Lower is better";
-    if (numericValue !== null && numericValue !== undefined && numericValue !== 0) {
-      const isPositive = numericValue > 0;
-      // For "higher is better": positive value = good (green ↑); negative = bad (red ↓)
-      // For "lower is better":  positive value = bad  (red ↑); negative = good (green ↓)
-      const isGood = higherIsBetter ? isPositive : !isPositive;
+    // Only show arrow when we have actual previous-period comparison
+    if (trend !== null && trend !== undefined) {
+      const isUp = trend === "up";
+      const isGood = higherIsBetter ? isUp : !isUp;
       const arrowColor = isGood ? "text-green-500" : "text-red-500";
       arrowEl = (
         <span className={`${arrowColor} text-sm font-bold leading-none flex-shrink-0`}>
-          {isPositive ? "↑" : "↓"}
+          {isUp ? "↑" : "↓"}
         </span>
       );
     }
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4 flex flex-col">
-      <div className="flex items-start justify-between gap-1 mb-1">
+    <div className="bg-white rounded-lg border border-gray-200 p-4 flex flex-col gap-1">
+      <div className="flex items-start justify-between gap-1">
         <p className="text-xs text-gray-400 uppercase tracking-wide leading-tight">
           {icon && <span className="mr-1">{icon}</span>}
           {label}
@@ -803,9 +1009,15 @@ function KpiCard({
         {arrowEl}
       </div>
       <p className={`text-xl font-bold ${valueColors[color]}`}>{value}</p>
-      {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+      {sub && <p className="text-xs text-gray-400">{sub}</p>}
+      {benchmark && (
+        <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full self-start ${benchmark.bgColor}`}>
+          <span className={`text-[10px] font-bold ${benchmark.textColor}`}>{benchmark.label}</span>
+          <span className="text-[10px] text-gray-400">· {benchmark.hint}</span>
+        </div>
+      )}
       {hintText && (
-        <p className="text-[10px] text-gray-300 mt-auto pt-2 font-medium">{hintText}</p>
+        <p className="text-[10px] text-gray-300 font-medium mt-0.5">{hintText}</p>
       )}
     </div>
   );
@@ -821,6 +1033,8 @@ function fmtPct(n: number | null | undefined, suffix = "%"): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)}${suffix}`;
 }
 
+type PeriodPreset = "MTD" | "YTD" | "LTD" | "LastMonth" | "LastYear" | "Custom";
+
 function ReportsTab({
   properties, token,
 }: { properties: Property[]; token: string }) {
@@ -828,8 +1042,12 @@ function ReportsTab({
   const [selectedPropId, setSelectedPropId] = useState<string>("all");
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1); // 1-based
+  // selectedPreset is independent of year/month so MTD vs YTD can be distinct
+  // and clicking any preset always triggers a fresh fetch via useEffect
+  const [selectedPreset, setSelectedPreset] = useState<PeriodPreset>("MTD");
 
   const [report, setReport] = useState<PropertyReport | null>(null);
+  const [prevReport, setPrevReport] = useState<PropertyReport | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -851,15 +1069,34 @@ function ReportsTab({
     setLoading(true);
     setError("");
     setReport(null);
+    setPrevReport(null);
     setPortfolio(null);
     try {
       if (selectedPropId === "all") {
         const data = await getPortfolioReport(year, monthStr, token);
         setPortfolio(data);
-      } else {
-        const data = await getPropertyReport(selectedPropId, year, monthStr, token);
+      } else if (selectedPreset === "LTD") {
+        // Lifetime: pass period=ltd, no prev-month comparison
+        const [data, events] = await Promise.all([
+          getPropertyReport(selectedPropId, year, monthStr, token, "ltd"),
+          listCapitalEvents(selectedPropId, token),
+        ]);
         setReport(data);
-        const events = await listCapitalEvents(selectedPropId, token);
+        setCapitalEvents(events);
+      } else {
+        // Standard: fetch current period + previous month for trend arrows
+        const prevDate = new Date(year, month - 2, 1);
+        const prevY = prevDate.getFullYear();
+        const prevM = prevDate.getMonth() + 1;
+        const prevMonthStr = `${prevY.toString().padStart(4, "0")}-${prevM.toString().padStart(2, "0")}`;
+
+        const [data, prev, events] = await Promise.all([
+          getPropertyReport(selectedPropId, year, monthStr, token),
+          getPropertyReport(selectedPropId, prevY, prevMonthStr, token).catch(() => null),
+          listCapitalEvents(selectedPropId, token),
+        ]);
+        setReport(data);
+        setPrevReport(prev);
         setCapitalEvents(events);
       }
     } catch (err) {
@@ -872,7 +1109,7 @@ function ReportsTab({
   useEffect(() => {
     if (properties.length > 0) loadReport();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPropId, year, month]);
+  }, [selectedPropId, year, month, selectedPreset]); // selectedPreset ensures MTD↔YTD re-fetches
 
   async function handleAddEvent() {
     if (!selectedPropId || selectedPropId === "all") return;
@@ -908,39 +1145,118 @@ function ReportsTab({
 
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-  function renderSinglePropertyReport(r: PropertyReport) {
+  function renderSinglePropertyReport(r: PropertyReport, prev?: PropertyReport | null, preset?: PeriodPreset) {
     const m = r.monthly;
     const q = r.quarterly;
     const a = r.annual;
+    const lt = r.lifetime;
     const qNum = r.quarter.split("Q")[1];
+    const pm = prev?.monthly;
+    const pq = prev?.quarterly;
+    const pa = prev?.annual;
+
+    // trend: "up" | "down" | null — only shows when previous period data exists
+    function tr(curr: number, prevVal?: number | null): "up" | "down" | null {
+      if (prevVal === null || prevVal === undefined) return null;
+      if (curr > prevVal) return "up";
+      if (curr < prevVal) return "down";
+      return null;
+    }
+
+    // Derived benchmarks
+    const deliqPct = m.rent_charged > 0 ? (m.delinquency / m.rent_charged) * 100 : 0;
+    const noiMarginPct = m.rent_collected > 0 ? (m.noi / m.rent_collected) * 100 : 0;
+
+    // Section header labels depend on preset
+    const monthLabel = preset === "MTD"
+      ? `MTD — ${MONTHS[month - 1]} ${year}`
+      : `Monthly — ${MONTHS[month - 1]} ${year}`;
+    const annualLabel = preset === "YTD"
+      ? `YTD — Jan–${MONTHS[month - 1]} ${year}`
+      : `Annual — ${year}`;
 
     return (
       <div className="space-y-6">
+        {/* Lifetime section (LTD only) */}
+        {preset === "LTD" && lt && (
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
+              LTD — Lifetime to Date
+            </p>
+            <p className="text-xs text-gray-300 mb-3">
+              Since {new Date(lt.start_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })} · {lt.months} months
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <KpiCard icon="🏠" label="Total Rent Roll"    value={fmtM(lt.rent_charged)}  higherIsBetter={true} trend={null} />
+              <KpiCard icon="💰" label="Total Collected"    value={fmtM(lt.rent_collected)} color="green" higherIsBetter={true} trend={null} />
+              <KpiCard icon="⚠️" label="Total Delinquency"  value={fmtM(lt.delinquency)}    color={lt.delinquency > 0 ? "red" : "gray"}
+                higherIsBetter={false} trend={null}
+                benchmark={lt.rent_charged > 0 ? bmDelinquency((lt.delinquency / lt.rent_charged) * 100) : null} />
+              <KpiCard icon="📊" label="Occupancy (now)"    value={`${m.occupancy_pct.toFixed(0)}%`}
+                sub={`${m.occupied_units}/${m.rentable_units} units`}
+                color={m.occupancy_pct >= 95 ? "green" : m.occupancy_pct >= 75 ? "blue" : "red"}
+                higherIsBetter={true} trend={null}
+                benchmark={m.rentable_units > 0 ? bmOccupancy(m.occupancy_pct) : null} />
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+              <KpiCard icon="🔧" label="Total OpEx"         value={fmtM(lt.opex)}          color="red"  higherIsBetter={false} trend={null} />
+              <KpiCard icon="📈" label="Total NOI"          value={fmtM(lt.noi)}           color={lt.noi >= 0 ? "green" : "red"} higherIsBetter={true} trend={null}
+                benchmark={lt.rent_collected > 0 ? bmNoiMargin((lt.noi / lt.rent_collected) * 100) : null} />
+              <KpiCard icon="🏦" label="Total Debt Service" value={fmtM(lt.debt_service)}  higherIsBetter={null} />
+              <KpiCard icon="💵" label="Total Cash Flow"    value={fmtM(lt.cash_flow)}     color={lt.cash_flow >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} />
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+              <KpiCard icon="📅" label="Avg Monthly NOI"    value={fmtM(lt.avg_monthly_noi)}
+                sub="Per month average" color={lt.avg_monthly_noi >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} />
+              <KpiCard icon="💵" label="Avg Monthly CF"     value={fmtM(lt.avg_monthly_cash_flow)}
+                sub="Per month average" color={lt.avg_monthly_cash_flow >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} />
+              <KpiCard icon="🎯" label="Cap Rate (current)" value={lt.cap_rate !== null ? `${lt.cap_rate.toFixed(2)}%` : "—"}
+                color="blue" higherIsBetter={true} trend={null}
+                benchmark={lt.cap_rate !== null ? bmCapRate(lt.cap_rate) : null} />
+              <KpiCard icon="🚀" label="IRR (lifetime)"     value={lt.irr !== null ? `${lt.irr.toFixed(1)}%` : "—"}
+                color={lt.irr !== null && lt.irr > 0 ? "green" : "gray"} higherIsBetter={true} trend={null}
+                benchmark={lt.irr !== null ? bmIrr(lt.irr) : null} />
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-2 gap-3 mt-3">
+              <KpiCard icon="💼" label="Total Equity Invested" value={fmtM(lt.total_equity_invested)}
+                sub="Down pmt + closing costs" higherIsBetter={null} />
+              <KpiCard icon="💎" label="Current Equity"        value={fmtM(lt.current_equity)}
+                sub="Value − loan balances" color={lt.current_equity >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} />
+            </div>
+          </div>
+        )}
+
         {/* Monthly */}
         <div>
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
-            Monthly — {MONTHS[month - 1]} {year}
+            {monthLabel}
+            {prev && preset !== "LTD" && <span className="font-normal text-gray-300 ml-2">vs {MONTHS[(month === 1 ? 12 : month - 1) - 1]}</span>}
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard icon="🏠" label="Rent Roll" value={fmtM(m.rent_charged)}
-              higherIsBetter={true} numericValue={m.rent_charged} />
+              higherIsBetter={true} trend={tr(m.rent_charged, pm?.rent_charged)} />
             <KpiCard icon="💰" label="Collected" value={fmtM(m.rent_collected)} color="green"
-              higherIsBetter={true} numericValue={m.rent_collected} />
-            <KpiCard icon="⚠️" label="Delinquency" value={fmtM(m.delinquency)} color={m.delinquency > 0 ? "red" : "gray"}
-              higherIsBetter={false} numericValue={m.delinquency} />
-            <KpiCard icon="📊" label="Occupancy" value={`${m.occupancy_pct.toFixed(0)}%`} sub={`${m.occupied_units}/${m.rentable_units} units`}
-              color={m.occupancy_pct >= 100 ? "green" : m.occupancy_pct >= 75 ? "blue" : "red"}
-              higherIsBetter={true} numericValue={m.occupancy_pct - 100} />
+              higherIsBetter={true} trend={tr(m.rent_collected, pm?.rent_collected)} />
+            <KpiCard icon="⚠️" label="Delinquency" value={fmtM(m.delinquency)}
+              color={m.delinquency > 0 ? "red" : "gray"}
+              higherIsBetter={false} trend={tr(m.delinquency, pm?.delinquency)}
+              benchmark={m.rent_charged > 0 ? bmDelinquency(deliqPct) : null} />
+            <KpiCard icon="📊" label="Occupancy" value={`${m.occupancy_pct.toFixed(0)}%`}
+              sub={`${m.occupied_units}/${m.rentable_units} units`}
+              color={m.occupancy_pct >= 95 ? "green" : m.occupancy_pct >= 75 ? "blue" : "red"}
+              higherIsBetter={true} trend={tr(m.occupancy_pct, pm?.occupancy_pct)}
+              benchmark={m.rentable_units > 0 ? bmOccupancy(m.occupancy_pct) : null} />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
             <KpiCard icon="🔧" label="OpEx" value={fmtM(m.opex)} color="red"
-              higherIsBetter={false} numericValue={m.opex} />
+              higherIsBetter={false} trend={tr(m.opex, pm?.opex)} />
             <KpiCard icon="📈" label="NOI" value={fmtM(m.noi)} color={m.noi >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={m.noi} />
+              higherIsBetter={true} trend={tr(m.noi, pm?.noi)}
+              benchmark={m.rent_collected > 0 ? bmNoiMargin(noiMarginPct) : null} />
             <KpiCard icon="🏦" label="Debt Service" value={fmtM(m.debt_service)} sub="estimated"
               higherIsBetter={null} />
             <KpiCard icon="💵" label="Cash Flow" value={fmtM(m.cash_flow)} color={m.cash_flow >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={m.cash_flow} />
+              higherIsBetter={true} trend={tr(m.cash_flow, pm?.cash_flow)} />
           </div>
           {m.capex > 0 && (
             <p className="text-xs text-purple-600 mt-2">+ {fmtM(m.capex)} CapEx spend (excluded from NOI)</p>
@@ -956,12 +1272,14 @@ function ReportsTab({
             <KpiCard icon="📊" label="Cash-on-Cash YTD"
               value={q.cash_on_cash_ytd !== null ? `${q.cash_on_cash_ytd.toFixed(1)}%` : "—"}
               color="blue" sub="YTD return on equity"
-              higherIsBetter={true} numericValue={q.cash_on_cash_ytd} />
+              higherIsBetter={true} trend={tr(q.cash_on_cash_ytd ?? 0, pq?.cash_on_cash_ytd)}
+              benchmark={q.cash_on_cash_ytd !== null ? bmCoc(q.cash_on_cash_ytd) : null} />
             <KpiCard icon="🔄" label="Turnover" value={String(q.turnover_count)}
               sub={q.avg_vacancy_days > 0 ? `${q.avg_vacancy_days.toFixed(0)} avg vacancy days` : "No vacancies"}
-              higherIsBetter={false} numericValue={q.turnover_count} />
+              higherIsBetter={false} trend={tr(q.turnover_count, pq?.turnover_count)}
+              benchmark={bmTurnover(q.turnover_count)} />
             <KpiCard icon="📈" label="Q NOI" value={fmtM(q.noi)} color={q.noi >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={q.noi} />
+              higherIsBetter={true} trend={tr(q.noi, pq?.noi)} />
           </div>
           {q.expense_by_category.length > 0 && (
             <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -989,31 +1307,33 @@ function ReportsTab({
         {/* Annual */}
         <div>
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
-            Annual — {year}
+            {annualLabel}
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <KpiCard icon="🎯" label="Cap Rate" value={a.cap_rate !== null ? `${a.cap_rate.toFixed(2)}%` : "—"}
               sub="NOI / Current Value" color="blue"
-              higherIsBetter={true} numericValue={a.cap_rate} />
+              higherIsBetter={true} trend={tr(a.cap_rate ?? 0, pa?.cap_rate)}
+              benchmark={a.cap_rate !== null ? bmCapRate(a.cap_rate) : null} />
             <KpiCard icon="🚀" label="IRR" value={a.irr !== null ? `${a.irr.toFixed(1)}%` : "—"}
               sub="Since acquisition" color={a.irr !== null && a.irr > 0 ? "green" : "gray"}
-              higherIsBetter={true} numericValue={a.irr} />
+              higherIsBetter={true} trend={tr(a.irr ?? 0, pa?.irr)}
+              benchmark={a.irr !== null ? bmIrr(a.irr) : null} />
             <KpiCard icon="📈" label="Annual NOI" value={fmtM(a.noi)} color={a.noi >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={a.noi} />
+              higherIsBetter={true} trend={tr(a.noi, pa?.noi)} />
             <KpiCard icon="📊" label="NOI YoY" value={a.noi_yoy_pct !== null ? fmtPct(a.noi_yoy_pct) : "—"}
               color={a.noi_yoy_pct !== null && a.noi_yoy_pct >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={a.noi_yoy_pct} />
+              higherIsBetter={true} trend={a.noi_yoy_pct !== null ? (a.noi_yoy_pct >= 0 ? "up" : "down") : null} />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard icon="🏛️" label="Property Tax (ann.)" value={fmtM(a.property_tax_annual)}
-              higherIsBetter={false} numericValue={a.property_tax_annual} />
+              higherIsBetter={null} />
             <KpiCard icon="🛡️" label="Insurance (ann.)" value={fmtM(a.insurance_annual)}
-              higherIsBetter={false} numericValue={a.insurance_annual} />
+              higherIsBetter={null} />
             <KpiCard icon="💼" label="Equity Invested" value={fmtM(a.total_equity_invested)}
               sub="Down pmt + closing costs" higherIsBetter={null} />
             <KpiCard icon="💎" label="Current Equity" value={fmtM(a.current_equity)}
               sub="Value − loan balances" color={a.current_equity >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={a.current_equity} />
+              higherIsBetter={true} trend={tr(a.current_equity, pa?.current_equity)} />
           </div>
         </div>
 
@@ -1126,37 +1446,39 @@ function ReportsTab({
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard icon="🏠" label="Rent Roll" value={fmtM(m.rent_charged)}
-              higherIsBetter={true} numericValue={m.rent_charged} />
+              higherIsBetter={true} trend={null} />
             <KpiCard icon="💰" label="Collected" value={fmtM(m.rent_collected)} color="green"
-              higherIsBetter={true} numericValue={m.rent_collected} />
+              higherIsBetter={true} trend={null} />
             <KpiCard icon="⚠️" label="Delinquency" value={fmtM(m.delinquency)} color={m.delinquency > 0 ? "red" : "gray"}
-              higherIsBetter={false} numericValue={m.delinquency} />
+              higherIsBetter={false} trend={null}
+              benchmark={m.rent_charged > 0 ? bmDelinquency((m.delinquency / m.rent_charged) * 100) : null} />
             <KpiCard icon="📊" label="Occupancy" value={`${occ.toFixed(0)}%`} sub={`${m.occupied_units}/${m.rentable_units} units`}
-              color={occ >= 100 ? "green" : occ >= 75 ? "blue" : "red"}
-              higherIsBetter={true} numericValue={occ - 100} />
+              color={occ >= 95 ? "green" : occ >= 75 ? "blue" : "red"}
+              higherIsBetter={true} trend={null}
+              benchmark={m.rentable_units > 0 ? bmOccupancy(occ) : null} />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
             <KpiCard icon="🔧" label="OpEx" value={fmtM(m.opex)} color="red"
-              higherIsBetter={false} numericValue={m.opex} />
+              higherIsBetter={false} trend={null} />
             <KpiCard icon="📈" label="NOI" value={fmtM(m.noi)} color={m.noi >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={m.noi} />
+              higherIsBetter={true} trend={null} />
             <KpiCard icon="🏦" label="Debt Service" value={fmtM(m.debt_service)} sub="estimated"
               higherIsBetter={null} />
             <KpiCard icon="💵" label="Cash Flow" value={fmtM(m.cash_flow)} color={m.cash_flow >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={m.cash_flow} />
+              higherIsBetter={true} trend={null} />
           </div>
         </div>
         <div>
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Annual — {year}</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard icon="📈" label="Annual NOI" value={fmtM(a.noi)} color={a.noi >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={a.noi} />
+              higherIsBetter={true} trend={null} />
             <KpiCard icon="💵" label="Annual Cash Flow" value={fmtM(a.cash_flow)} color={a.cash_flow >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={a.cash_flow} />
+              higherIsBetter={true} trend={null} />
             <KpiCard icon="💼" label="Total Equity Invested" value={fmtM(a.total_equity_invested)}
               higherIsBetter={null} />
             <KpiCard icon="💎" label="Total Current Equity" value={fmtM(a.current_equity)} color={a.current_equity >= 0 ? "green" : "red"}
-              higherIsBetter={true} numericValue={a.current_equity} />
+              higherIsBetter={true} trend={null} />
           </div>
         </div>
         {/* Per-property breakdown */}
@@ -1213,7 +1535,7 @@ function ReportsTab({
         {/* Quick period presets */}
         <div>
           <p className="text-xs font-medium text-gray-600 mb-2">Period</p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
             {(() => {
               const curY = today.getFullYear();
               const curM = today.getMonth() + 1;
@@ -1221,19 +1543,21 @@ function ReportsTab({
               const lmY = lastMonthDate.getFullYear();
               const lmM = lastMonthDate.getMonth() + 1;
 
-              const presets: Array<{ label: string; sublabel: string; y: number; m: number }> = [
-                { label: "MTD", sublabel: `${MONTHS[curM - 1]} ${curY}`, y: curY, m: curM },
-                { label: "YTD", sublabel: `Jan–${MONTHS[curM - 1]} ${curY}`, y: curY, m: curM },
-                { label: "Last Month", sublabel: `${MONTHS[lmM - 1]} ${lmY}`, y: lmY, m: lmM },
-                { label: "Last Year", sublabel: `Full ${curY - 1}`, y: curY - 1, m: 12 },
+              type PresetDef = { key: PeriodPreset; label: string; sublabel: string; y: number; m: number };
+              const presets: PresetDef[] = [
+                { key: "MTD",       label: "MTD",        sublabel: `${MONTHS[curM - 1]} ${curY}`,         y: curY,     m: curM  },
+                { key: "YTD",       label: "YTD",        sublabel: `Jan–${MONTHS[curM - 1]} ${curY}`,     y: curY,     m: curM  },
+                { key: "LTD",       label: "LTD",        sublabel: "Since acquisition",                   y: curY,     m: curM  },
+                { key: "LastMonth", label: "Last Month", sublabel: `${MONTHS[lmM - 1]} ${lmY}`,           y: lmY,      m: lmM   },
+                { key: "LastYear",  label: "Last Year",  sublabel: `Full ${curY - 1}`,                    y: curY - 1, m: 12    },
               ];
 
               return presets.map((p) => {
-                const active = year === p.y && month === p.m;
+                const active = selectedPreset === p.key;
                 return (
                   <button
-                    key={p.label}
-                    onClick={() => { setYear(p.y); setMonth(p.m); }}
+                    key={p.key}
+                    onClick={() => { setSelectedPreset(p.key); setYear(p.y); setMonth(p.m); }}
                     className={`flex flex-col items-center px-4 py-2 rounded-lg border text-xs font-medium transition-colors ${
                       active
                         ? "bg-primary-600 border-primary-600 text-white"
@@ -1247,12 +1571,12 @@ function ReportsTab({
               });
             })()}
 
-            {/* Custom separator */}
-            <div className="flex items-center gap-2 ml-2">
-              <span className="text-xs text-gray-300">or custom:</span>
+            {/* Custom date range */}
+            <div className="flex items-center gap-2 border-l border-gray-200 pl-3 ml-1">
+              <span className="text-xs text-gray-300 shrink-0">Custom:</span>
               <select
                 value={year}
-                onChange={(e) => setYear(Number(e.target.value))}
+                onChange={(e) => { setYear(Number(e.target.value)); setSelectedPreset("Custom"); }}
                 className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 {[today.getFullYear(), today.getFullYear() - 1, today.getFullYear() - 2, today.getFullYear() - 3].map((y) => (
@@ -1261,17 +1585,13 @@ function ReportsTab({
               </select>
               <select
                 value={month}
-                onChange={(e) => setMonth(Number(e.target.value))}
+                onChange={(e) => { setMonth(Number(e.target.value)); setSelectedPreset("Custom"); }}
                 className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 {MONTHS.map((name, i) => (
                   <option key={i + 1} value={i + 1}>{name}</option>
                 ))}
               </select>
-              <button onClick={loadReport} disabled={loading}
-                className="bg-primary-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
-                {loading ? "…" : "Go"}
-              </button>
             </div>
           </div>
         </div>
@@ -1298,7 +1618,7 @@ function ReportsTab({
       {!loading && report && (
         <div className="bg-white rounded-xl shadow border border-gray-100 p-6">
           <h3 className="font-semibold text-gray-900 mb-4">{report.property_address}</h3>
-          {renderSinglePropertyReport(report)}
+          {renderSinglePropertyReport(report, prevReport, selectedPreset)}
         </div>
       )}
 
