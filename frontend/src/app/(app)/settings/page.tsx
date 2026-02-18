@@ -176,6 +176,13 @@ export default function SettingsPage() {
   const [ruleError, setRuleError] = useState("");
   const [applyResult, setApplyResult] = useState<number | null>(null);
   const [applying, setApplying] = useState(false);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [editRuleForm, setEditRuleForm] = useState({
+    name: "", match_field: "name", match_type: "contains", match_value: "",
+    catGroup: "", catItem: "", negate_amount: false, priority: 0,
+  });
+  const [editRuleSaving, setEditRuleSaving] = useState(false);
+  const [editRuleError, setEditRuleError] = useState("");
 
   // ── Custom Categories state ─────────────────────────────────────────
   const [customCats, setCustomCats] = useState<CustomCategory[]>([]);
@@ -322,6 +329,49 @@ export default function SettingsPage() {
     } catch {}
   }
 
+  function startEditRule(rule: Rule) {
+    const parts = rule.category_string?.split(" > ") ?? [];
+    setEditRuleForm({
+      name: rule.name,
+      match_field: rule.match_field,
+      match_type: rule.match_type,
+      match_value: rule.match_value,
+      catGroup: parts[0] ?? "",
+      catItem: parts[1] ?? "",
+      negate_amount: rule.negate_amount,
+      priority: rule.priority,
+    });
+    setEditingRuleId(rule.id);
+    setEditRuleError("");
+  }
+
+  async function handleSaveEditRule(e: React.FormEvent) {
+    e.preventDefault();
+    const token = getToken();
+    if (!token || !editingRuleId) return;
+    const catStr = editRuleForm.catGroup && editRuleForm.catItem
+      ? `${editRuleForm.catGroup} > ${editRuleForm.catItem}`
+      : editRuleForm.catGroup || null;
+    setEditRuleSaving(true); setEditRuleError("");
+    try {
+      const updated = await updateRule(editingRuleId, {
+        name: editRuleForm.name,
+        match_field: editRuleForm.match_field,
+        match_type: editRuleForm.match_type,
+        match_value: editRuleForm.match_value,
+        category_string: catStr,
+        negate_amount: editRuleForm.negate_amount,
+        priority: editRuleForm.priority,
+      }, token);
+      setRules((prev) => prev.map((r) => r.id === updated.id ? updated : r));
+      setEditingRuleId(null);
+    } catch (err) {
+      setEditRuleError(err instanceof Error ? err.message : "Failed to update rule");
+    } finally {
+      setEditRuleSaving(false);
+    }
+  }
+
   async function handleApplyRules() {
     const token = getToken();
     if (!token) return;
@@ -384,6 +434,7 @@ export default function SettingsPage() {
   }
 
   const ruleCatSubcategories = TAXONOMY.find((t) => t.category === ruleForm.catGroup)?.subcategories ?? [];
+  const editRuleCatSubcategories = TAXONOMY.find((t) => t.category === editRuleForm.catGroup)?.subcategories ?? [];
 
   return (
     <div>
@@ -990,42 +1041,148 @@ export default function SettingsPage() {
           ) : (
             <div className="divide-y divide-gray-100">
               {rules.map((rule) => (
-                <div key={rule.id} className="py-3 flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                      <span className="text-sm font-medium text-gray-800">{rule.name}</span>
-                      {!rule.is_active && (
-                        <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">inactive</span>
-                      )}
-                      {rule.negate_amount && (
-                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">flip +</span>
-                      )}
-                      {rule.priority > 0 && (
-                        <span className="text-xs text-gray-400">priority {rule.priority}</span>
-                      )}
+                <div key={rule.id} className="py-3">
+                  {editingRuleId === rule.id ? (
+                    /* ── Inline edit form ── */
+                    <form onSubmit={handleSaveEditRule} className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+                      <p className="text-sm font-semibold text-gray-700">Edit Rule</p>
+
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Rule Name</label>
+                        <input type="text" value={editRuleForm.name}
+                          onChange={(e) => setEditRuleForm((p) => ({ ...p, name: e.target.value }))}
+                          placeholder="Rule name"
+                          className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Match In</label>
+                          <select value={editRuleForm.match_field}
+                            onChange={(e) => setEditRuleForm((p) => ({ ...p, match_field: e.target.value }))}
+                            className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500">
+                            <option value="name">Description</option>
+                            <option value="merchant_name">Merchant</option>
+                            <option value="account_type">Account Type</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Match Type</label>
+                          <select value={editRuleForm.match_type}
+                            onChange={(e) => setEditRuleForm((p) => ({ ...p, match_type: e.target.value }))}
+                            className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500">
+                            <option value="contains">Contains</option>
+                            <option value="exact">Exact Match</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">
+                            {editRuleForm.match_field === "account_type" ? "Account Type (e.g. credit)" : "Keyword"}
+                          </label>
+                          <input type="text" value={editRuleForm.match_value}
+                            onChange={(e) => setEditRuleForm((p) => ({ ...p, match_value: e.target.value }))}
+                            placeholder={editRuleForm.match_field === "account_type" ? "credit" : "e.g. Amazon"}
+                            className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Set Category</label>
+                          <select value={editRuleForm.catGroup}
+                            onChange={(e) => setEditRuleForm((p) => ({ ...p, catGroup: e.target.value, catItem: "" }))}
+                            className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500">
+                            <option value="">— None / keep existing —</option>
+                            {TAXONOMY.map((t) => <option key={t.category} value={t.category}>{t.category}</option>)}
+                          </select>
+                        </div>
+                        {editRuleForm.catGroup && (
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Subcategory</label>
+                            <select value={editRuleForm.catItem}
+                              onChange={(e) => setEditRuleForm((p) => ({ ...p, catItem: e.target.value }))}
+                              className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500">
+                              <option value="">— Select subcategory —</option>
+                              {editRuleCatSubcategories.map((s) => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                          <input type="checkbox" checked={editRuleForm.negate_amount}
+                            onChange={(e) => setEditRuleForm((p) => ({ ...p, negate_amount: e.target.checked }))}
+                            className="rounded border-gray-300" />
+                          Flip amount to positive (for credit card transactions)
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-gray-600">Priority</label>
+                          <input type="number" value={editRuleForm.priority}
+                            onChange={(e) => setEditRuleForm((p) => ({ ...p, priority: Number(e.target.value) }))}
+                            className="border border-gray-300 rounded px-2 py-1 w-20 text-sm" />
+                        </div>
+                      </div>
+
+                      {editRuleError && <p className="text-red-600 text-sm">{editRuleError}</p>}
+
+                      <div className="flex gap-2">
+                        <button type="submit" disabled={editRuleSaving}
+                          className="bg-primary-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+                          {editRuleSaving ? "Saving..." : "Save Changes"}
+                        </button>
+                        <button type="button" onClick={() => setEditingRuleId(null)}
+                          className="border border-gray-300 text-gray-600 px-5 py-2 rounded-lg text-sm font-medium hover:bg-gray-50">
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    /* ── Normal rule display ── */
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                          <span className="text-sm font-medium text-gray-800">{rule.name}</span>
+                          {!rule.is_active && (
+                            <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">inactive</span>
+                          )}
+                          {rule.negate_amount && (
+                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">flip +</span>
+                          )}
+                          {rule.priority > 0 && (
+                            <span className="text-xs text-gray-400">priority {rule.priority}</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          {rule.match_field === "account_type" ? "Account type" : rule.match_field === "merchant_name" ? "Merchant" : "Description"}{" "}
+                          <strong>{rule.match_type}</strong> "{rule.match_value}"
+                          {rule.category_string && (
+                            <> → <span className="text-indigo-700 font-medium">{rule.category_string}</span></>
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => startEditRule(rule)}
+                          className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleToggleRule(rule)}
+                          className={`text-xs px-2 py-1 rounded border ${rule.is_active ? "border-gray-200 text-gray-600 hover:bg-gray-50" : "border-indigo-200 text-indigo-600 hover:bg-indigo-50"}`}
+                        >
+                          {rule.is_active ? "Disable" : "Enable"}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteRule(rule.id)}
+                          className="text-xs text-red-400 hover:text-red-600 px-2 py-1"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-500">
-                      {rule.match_field === "account_type" ? "Account type" : rule.match_field === "merchant_name" ? "Merchant" : "Description"}{" "}
-                      <strong>{rule.match_type}</strong> "{rule.match_value}"
-                      {rule.category_string && (
-                        <> → <span className="text-indigo-700 font-medium">{rule.category_string}</span></>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => handleToggleRule(rule)}
-                      className={`text-xs px-2 py-1 rounded border ${rule.is_active ? "border-gray-200 text-gray-600 hover:bg-gray-50" : "border-indigo-200 text-indigo-600 hover:bg-indigo-50"}`}
-                    >
-                      {rule.is_active ? "Disable" : "Enable"}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteRule(rule.id)}
-                      className="text-xs text-red-400 hover:text-red-600 px-2 py-1"
-                    >
-                      Delete
-                    </button>
-                  </div>
+                  )}
                 </div>
               ))}
             </div>

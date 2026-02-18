@@ -72,6 +72,63 @@ const CSV_NOTES = [
   "notes — optional, any personal notes",
 ];
 
+const PAGE_SIZE = 50;
+
+const DATE_PRESETS = [
+  { value: "all",          label: "All Time" },
+  { value: "ytd",          label: "Year to Date" },
+  { value: "this_month",   label: "This Month" },
+  { value: "last_month",   label: "Last Month" },
+  { value: "last_30_days", label: "Last 30 Days" },
+  { value: "last_90_days", label: "Last 90 Days" },
+  { value: "last_6_months",label: "Last 6 Months" },
+  { value: "last_year",    label: "Last Year" },
+  { value: "custom",       label: "Custom Range…" },
+];
+
+function resolvePresetRange(preset: string): { from: Date | null; to: Date | null } {
+  const now = new Date();
+  switch (preset) {
+    case "ytd":
+      return { from: new Date(now.getFullYear(), 0, 1), to: now };
+    case "this_month":
+      return { from: new Date(now.getFullYear(), now.getMonth(), 1), to: now };
+    case "last_month": {
+      const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const to = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { from, to };
+    }
+    case "last_30_days": {
+      const from = new Date(now); from.setDate(from.getDate() - 30);
+      return { from, to: now };
+    }
+    case "last_90_days": {
+      const from = new Date(now); from.setDate(from.getDate() - 90);
+      return { from, to: now };
+    }
+    case "last_6_months": {
+      const from = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+      return { from, to: now };
+    }
+    case "last_year": {
+      const y = now.getFullYear() - 1;
+      return { from: new Date(y, 0, 1), to: new Date(y, 11, 31, 23, 59, 59) };
+    }
+    default:
+      return { from: null, to: null };
+  }
+}
+
+function getPageNumbers(current: number, total: number): (number | "…")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: (number | "…")[] = [1];
+  if (current > 3) pages.push("…");
+  for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) pages.push(i);
+  if (current < total - 2) pages.push("…");
+  pages.push(total);
+  return pages;
+}
+
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
@@ -394,6 +451,10 @@ export default function TransactionsPage() {
   const [search, setSearch] = useState("");
   const [selectedAccount, setSelectedAccount] = useState("all");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [datePreset, setDatePreset] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [page, setPage] = useState(1);
   const [editTxn, setEditTxn] = useState<Transaction | null>(null);
   const [showImport, setShowImport] = useState(false);
   // "Save as Rule" prompt state
@@ -438,6 +499,11 @@ export default function TransactionsPage() {
 
   const allCategories = [...TAXONOMY.map((t) => t.category), ...parentCats.map((c) => c.name)];
 
+  // Resolve date range from preset or custom inputs
+  const { from: presetFrom, to: presetTo } = datePreset !== "custom" ? resolvePresetRange(datePreset) : { from: null, to: null };
+  const effectiveFrom = datePreset === "custom" ? (dateFrom ? new Date(dateFrom + "T00:00:00") : null) : presetFrom;
+  const effectiveTo   = datePreset === "custom" ? (dateTo   ? new Date(dateTo   + "T23:59:59") : null) : presetTo;
+
   const filtered = transactions.filter((t) => {
     const matchAccount = selectedAccount === "all" || t.account_id === selectedAccount;
     const matchCategory = selectedCategory === "all" ||
@@ -448,11 +514,22 @@ export default function TransactionsPage() {
       (t.merchant_name ?? "").toLowerCase().includes(q) ||
       (t.plaid_category ?? "").toLowerCase().includes(q) ||
       (t.notes ?? "").toLowerCase().includes(q);
-    return matchAccount && matchCategory && matchSearch;
+    const txnDate = new Date(t.date);
+    const matchDate =
+      (!effectiveFrom || txnDate >= effectiveFrom) &&
+      (!effectiveTo   || txnDate <= effectiveTo);
+    return matchAccount && matchCategory && matchSearch && matchDate;
   });
 
   const totalExpenses = filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending).reduce((s, t) => s + parseFloat(t.amount), 0);
   const totalIncome = filtered.filter((t) => parseFloat(t.amount) < 0 && !t.pending).reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paginatedTxns = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  // Reset to page 1 whenever any filter changes
+  useEffect(() => { setPage(1); }, [search, selectedAccount, selectedCategory, datePreset, dateFrom, dateTo]);
 
   function onTransactionSaved(updated: Transaction, newCategory: string | undefined, prevCategory: string | null) {
     setTransactions((prev) => prev.map((t) => t.id === updated.id ? updated : t));
@@ -573,8 +650,8 @@ export default function TransactionsPage() {
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex flex-col md:flex-row gap-3 mb-4">
+      {/* Filters — row 1 */}
+      <div className="flex flex-col md:flex-row gap-3 mb-2">
         <input
           type="text"
           placeholder="Search by name, merchant, category, or notes..."
@@ -582,6 +659,19 @@ export default function TransactionsPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="border border-gray-300 rounded-lg px-4 py-2 text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
         />
+        <select
+          value={datePreset}
+          onChange={(e) => { setDatePreset(e.target.value); setDateFrom(""); setDateTo(""); }}
+          className="border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-44 bg-white"
+        >
+          {DATE_PRESETS.map((p) => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Filters — row 2 */}
+      <div className="flex flex-col md:flex-row gap-3 mb-4">
         <select
           value={selectedCategory}
           onChange={(e) => setSelectedCategory(e.target.value)}
@@ -607,6 +697,20 @@ export default function TransactionsPage() {
             </option>
           ))}
         </select>
+        {datePreset === "custom" && (
+          <>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 whitespace-nowrap">From</label>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 whitespace-nowrap">To</label>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            </div>
+          </>
+        )}
       </div>
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>}
@@ -637,7 +741,7 @@ export default function TransactionsPage() {
                 </td>
               </tr>
             )}
-            {!loading && filtered.map((txn) => {
+            {!loading && paginatedTxns.map((txn) => {
               const acct = accountMap[txn.account_id];
               const { display, isExpense } = fmtAmt(txn.amount);
 
@@ -702,12 +806,50 @@ export default function TransactionsPage() {
         </table>
       </div>
 
-      {filtered.length > 0 && (
-        <p className="text-xs text-gray-400 mt-3 text-center">
-          Showing {filtered.length} of {transactions.length} transactions.
-          {transactions.length >= 300 ? " Load more not yet supported — use filters to narrow down." : ""}
-        </p>
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-1.5 mt-4 flex-wrap">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={safePage === 1}
+            className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-default"
+          >
+            ← Prev
+          </button>
+          {getPageNumbers(safePage, totalPages).map((pg, i) =>
+            pg === "…" ? (
+              <span key={`ellipsis-${i}`} className="px-2 text-gray-400 text-sm select-none">…</span>
+            ) : (
+              <button
+                key={pg}
+                onClick={() => setPage(pg as number)}
+                className={`px-3 py-1.5 text-sm rounded-lg border transition ${
+                  safePage === pg
+                    ? "bg-primary-600 text-white border-primary-600 font-medium"
+                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                {pg}
+              </button>
+            )
+          )}
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={safePage === totalPages}
+            className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-default"
+          >
+            Next →
+          </button>
+        </div>
       )}
+
+      <p className="text-xs text-gray-400 mt-3 text-center">
+        {filtered.length === 0
+          ? ""
+          : totalPages > 1
+          ? `Page ${safePage} of ${totalPages} — ${filtered.length} transactions total`
+          : `${filtered.length} transaction${filtered.length !== 1 ? "s" : ""}`}
+      </p>
     </div>
   );
 }
