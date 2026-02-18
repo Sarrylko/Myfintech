@@ -1,0 +1,566 @@
+"""
+Rental reporting router.
+Endpoints:
+  GET /reports/property/{property_id}?year=2026&month=2026-02
+  GET /reports/portfolio?year=2026&month=2026-02
+"""
+import uuid
+from calendar import monthrange
+from datetime import date
+from math import isfinite
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.core.deps import get_current_user
+from app.models.capital_event import CapitalEvent
+from app.models.property import Property
+from app.models.property_details import Loan, MaintenanceExpense, PropertyCost
+from app.models.rental import Lease, Payment, RentCharge, Unit
+from app.models.user import User
+
+router = APIRouter(tags=["reports"])
+
+
+# ─── IRR (Newton's method) ────────────────────────────────────────────────────
+
+def _irr(cash_flows: list[tuple[date, float]]) -> float | None:
+    """
+    Solve IRR from a list of (date, signed_amount) pairs.
+    Times are expressed as fractional years from the earliest date.
+    Returns annual rate (e.g. 0.125 = 12.5%) or None if no solution found.
+    """
+    if not cash_flows or len(cash_flows) < 2:
+        return None
+    cash_flows = sorted(cash_flows, key=lambda x: x[0])
+    t0 = cash_flows[0][0]
+
+    def year_frac(d: date) -> float:
+        return (d - t0).days / 365.25
+
+    times = [year_frac(d) for d, _ in cash_flows]
+    amounts = [a for _, a in cash_flows]
+
+    # Check signs — need at least one negative and one positive
+    if all(a >= 0 for a in amounts) or all(a <= 0 for a in amounts):
+        return None
+
+    def npv(r: float) -> float:
+        return sum(a / ((1 + r) ** t) for a, t in zip(amounts, times))
+
+    def npv_prime(r: float) -> float:
+        return sum(-t * a / ((1 + r) ** (t + 1)) for a, t in zip(amounts, times))
+
+    r = 0.10  # initial guess
+    for _ in range(100):
+        f = npv(r)
+        fp = npv_prime(r)
+        if abs(fp) < 1e-12:
+            break
+        r_new = r - f / fp
+        if abs(r_new - r) < 1e-8:
+            r = r_new
+            break
+        r = r_new
+        if r <= -1:
+            r = -0.999
+
+    if not isfinite(r) or r <= -1:
+        return None
+    return round(r * 100, 2)  # return as percentage
+
+
+# ─── Date helpers ─────────────────────────────────────────────────────────────
+
+def _parse_month(month_str: str) -> tuple[date, date]:
+    """Return (first_day, last_day) for a YYYY-MM string."""
+    try:
+        year, mon = int(month_str[:4]), int(month_str[5:7])
+    except (ValueError, IndexError):
+        raise HTTPException(status_code=400, detail="month must be YYYY-MM")
+    last = monthrange(year, mon)[1]
+    return date(year, mon, 1), date(year, mon, last)
+
+
+def _quarter_range(year: int, month: int) -> tuple[date, date]:
+    q = (month - 1) // 3
+    q_start_month = q * 3 + 1
+    q_end_month = q_start_month + 2
+    last = monthrange(year, q_end_month)[1]
+    return date(year, q_start_month, 1), date(year, q_end_month, last)
+
+
+def _year_range(year: int) -> tuple[date, date]:
+    return date(year, 1, 1), date(year, 12, 31)
+
+
+def _prior_year_range(year: int) -> tuple[date, date]:
+    return date(year - 1, 1, 1), date(year - 1, 12, 31)
+
+
+# ─── Aggregation helpers ──────────────────────────────────────────────────────
+
+async def _property_metrics(
+    property_id: uuid.UUID,
+    year: int,
+    month: int,
+    db: AsyncSession,
+) -> dict:
+    """Compute all report metrics for one property."""
+    m_start, m_end = _parse_month(f"{year:04d}-{month:02d}")
+    q_start, q_end = _quarter_range(year, month)
+    y_start, y_end = _year_range(year)
+    py_start, py_end = _prior_year_range(year)
+
+    # ── Fetch property ──
+    prop_result = await db.execute(select(Property).where(Property.id == property_id))
+    prop = prop_result.scalar_one_or_none()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    # ── Rentable units ──
+    units_result = await db.execute(
+        select(Unit).where(Unit.property_id == property_id, Unit.is_rentable == True)
+    )
+    rentable_units = list(units_result.scalars().all())
+    unit_ids = [u.id for u in rentable_units]
+
+    # ── Active leases at end of month ──
+    occupied_month = 0
+    if unit_ids:
+        active_leases_result = await db.execute(
+            select(func.count(Lease.id)).where(
+                Lease.unit_id.in_(unit_ids),
+                Lease.status == "active",
+                Lease.lease_start <= m_end,
+            )
+        )
+        occupied_month = active_leases_result.scalar() or 0
+
+    # ── All lease IDs for this property ──
+    all_leases_result = await db.execute(
+        select(Lease.id).where(Lease.unit_id.in_(unit_ids)) if unit_ids
+        else select(Lease.id).where(False)
+    )
+    lease_ids = [r[0] for r in all_leases_result.all()]
+
+    async def rent_charged(d_start: date, d_end: date) -> float:
+        if not lease_ids:
+            return 0.0
+        r = await db.execute(
+            select(func.coalesce(func.sum(RentCharge.amount), 0)).where(
+                RentCharge.lease_id.in_(lease_ids),
+                RentCharge.charge_date >= d_start,
+                RentCharge.charge_date <= d_end,
+            )
+        )
+        return float(r.scalar())
+
+    async def rent_collected(d_start: date, d_end: date) -> float:
+        if not lease_ids:
+            return 0.0
+        r = await db.execute(
+            select(func.coalesce(func.sum(Payment.amount), 0)).where(
+                Payment.lease_id.in_(lease_ids),
+                Payment.payment_date >= d_start,
+                Payment.payment_date <= d_end,
+            )
+        )
+        return float(r.scalar())
+
+    async def maintenance_opex(d_start: date, d_end: date) -> float:
+        r = await db.execute(
+            select(func.coalesce(func.sum(MaintenanceExpense.amount), 0)).where(
+                MaintenanceExpense.property_id == property_id,
+                MaintenanceExpense.is_capex == False,
+                MaintenanceExpense.expense_date >= d_start,
+                MaintenanceExpense.expense_date <= d_end,
+            )
+        )
+        return float(r.scalar())
+
+    async def maintenance_capex(d_start: date, d_end: date) -> float:
+        r = await db.execute(
+            select(func.coalesce(func.sum(MaintenanceExpense.amount), 0)).where(
+                MaintenanceExpense.property_id == property_id,
+                MaintenanceExpense.is_capex == True,
+                MaintenanceExpense.expense_date >= d_start,
+                MaintenanceExpense.expense_date <= d_end,
+            )
+        )
+        return float(r.scalar())
+
+    def property_costs_monthly_equiv(costs: list) -> float:
+        total = 0.0
+        for c in costs:
+            if not c.is_active:
+                continue
+            amt = float(c.amount)
+            if c.frequency == "monthly":
+                total += amt
+            elif c.frequency == "quarterly":
+                total += amt / 3
+            elif c.frequency == "annual":
+                total += amt / 12
+        return total
+
+    # Fetch active property costs once
+    costs_result = await db.execute(
+        select(PropertyCost).where(
+            PropertyCost.property_id == property_id,
+            PropertyCost.is_active == True,
+        )
+    )
+    active_costs = list(costs_result.scalars().all())
+    monthly_fixed_costs = property_costs_monthly_equiv(active_costs)
+
+    # ── Loans → debt service (estimated) ──
+    loans_result = await db.execute(
+        select(Loan).where(Loan.property_id == property_id)
+    )
+    loans = list(loans_result.scalars().all())
+    monthly_debt_service = sum(float(l.monthly_payment or 0) for l in loans)
+    total_original_loan_amount = sum(float(l.original_amount or 0) for l in loans)
+    total_current_balance = sum(float(l.current_balance or 0) for l in loans)
+
+    # ── MONTHLY ──
+    m_charged = await rent_charged(m_start, m_end)
+    m_collected = await rent_collected(m_start, m_end)
+    m_opex = await maintenance_opex(m_start, m_end) + monthly_fixed_costs
+    m_capex = await maintenance_capex(m_start, m_end)
+    m_noi = m_collected - m_opex
+    m_cash_flow = m_noi - monthly_debt_service
+    occ_pct = (occupied_month / len(rentable_units) * 100) if rentable_units else 0.0
+
+    # ── QUARTERLY ──
+    q_charged = await rent_charged(q_start, q_end)
+    q_collected = await rent_collected(q_start, q_end)
+    q_opex_maint = await maintenance_opex(q_start, q_end)
+    # Fixed costs for quarter (3 months)
+    q_months = ((q_end.year - q_start.year) * 12 + q_end.month - q_start.month) + 1
+    q_fixed = monthly_fixed_costs * q_months
+    q_opex = q_opex_maint + q_fixed
+    q_debt = monthly_debt_service * q_months
+    q_noi = q_collected - q_opex
+    q_cash_flow = q_noi - q_debt
+
+    # Expense breakdown by category for quarter
+    exp_cat_result = await db.execute(
+        select(
+            MaintenanceExpense.category,
+            func.sum(MaintenanceExpense.amount).label("total"),
+        )
+        .where(
+            MaintenanceExpense.property_id == property_id,
+            MaintenanceExpense.expense_date >= q_start,
+            MaintenanceExpense.expense_date <= q_end,
+        )
+        .group_by(MaintenanceExpense.category)
+        .order_by(func.sum(MaintenanceExpense.amount).desc())
+    )
+    expense_by_category = [
+        {"category": row.category, "total": float(row.total)}
+        for row in exp_cat_result.all()
+    ]
+
+    # Turnover: leases that ended in the quarter
+    turnover_result = await db.execute(
+        select(Lease).where(
+            Lease.unit_id.in_(unit_ids) if unit_ids else False,
+            Lease.status == "ended",
+            Lease.move_out_date >= q_start,
+            Lease.move_out_date <= q_end,
+        )
+    ) if unit_ids else None
+    ended_leases = list(turnover_result.scalars().all()) if turnover_result else []
+    turnover_count = len(ended_leases)
+
+    # Average vacancy days: days between move_out and next lease_start on same unit
+    avg_vacancy_days = 0
+    if ended_leases:
+        vacancy_days_list = []
+        for ended in ended_leases:
+            if ended.move_out_date:
+                next_lease_result = await db.execute(
+                    select(Lease)
+                    .where(
+                        Lease.unit_id == ended.unit_id,
+                        Lease.lease_start > ended.move_out_date,
+                    )
+                    .order_by(Lease.lease_start)
+                    .limit(1)
+                )
+                next_lease = next_lease_result.scalar_one_or_none()
+                if next_lease:
+                    vacancy_days_list.append(
+                        (next_lease.lease_start - ended.move_out_date).days
+                    )
+        if vacancy_days_list:
+            avg_vacancy_days = sum(vacancy_days_list) / len(vacancy_days_list)
+
+    # YTD cash flow up to current quarter end
+    ytd_end = q_end if q_end <= date.today() else date.today()
+    ytd_start = date(year, 1, 1)
+    ytd_months = ((ytd_end.year - ytd_start.year) * 12 + ytd_end.month - ytd_start.month) + 1
+    ytd_collected = await rent_collected(ytd_start, ytd_end)
+    ytd_opex_maint = await maintenance_opex(ytd_start, ytd_end)
+    ytd_fixed = monthly_fixed_costs * ytd_months
+    ytd_opex = ytd_opex_maint + ytd_fixed
+    ytd_debt = monthly_debt_service * ytd_months
+    ytd_noi = ytd_collected - ytd_opex
+    ytd_cash_flow = ytd_noi - ytd_debt
+
+    # Total equity invested (for cash-on-cash)
+    purchase_price = float(prop.purchase_price or 0)
+    closing_costs = float(prop.closing_costs or 0)
+    total_equity_invested = (
+        purchase_price + closing_costs - total_original_loan_amount
+    )
+    cash_on_cash_ytd = (
+        (ytd_cash_flow / total_equity_invested * 100)
+        if total_equity_invested > 0
+        else None
+    )
+
+    # ── ANNUAL ──
+    y_charged = await rent_charged(y_start, y_end)
+    y_collected = await rent_collected(y_start, y_end)
+    y_opex_maint = await maintenance_opex(y_start, y_end)
+    y_capex = await maintenance_capex(y_start, y_end)
+    y_fixed = monthly_fixed_costs * 12
+    y_opex = y_opex_maint + y_fixed
+    y_debt = monthly_debt_service * 12
+    y_noi = y_collected - y_opex
+    y_cash_flow = y_noi - y_debt
+
+    # Prior year NOI
+    py_collected = await rent_collected(py_start, py_end)
+    py_opex_maint = await maintenance_opex(py_start, py_end)
+    py_opex = py_opex_maint + y_fixed  # same fixed costs (approx)
+    py_noi = py_collected - py_opex
+    noi_yoy_pct = (
+        ((y_noi - py_noi) / abs(py_noi) * 100) if py_noi != 0 else None
+    )
+
+    # Cap rate
+    current_value = float(prop.current_value or 0)
+    cap_rate = (y_noi / current_value * 100) if current_value > 0 else None
+
+    # Tax rollups from property_costs
+    tax_total = sum(
+        float(c.amount) / (3 if c.frequency == "quarterly" else 1 if c.frequency == "monthly" else 12 if c.frequency == "annual" else 1) * 12
+        for c in active_costs if c.category == "property_tax"
+    )
+    insurance_total = sum(
+        float(c.amount) / (3 if c.frequency == "quarterly" else 1 if c.frequency == "monthly" else 12 if c.frequency == "annual" else 1) * 12
+        for c in active_costs if c.category == "insurance"
+    )
+
+    # Current equity
+    current_equity = current_value - total_current_balance
+
+    # ── IRR ──
+    irr_value = None
+    capital_events_result = await db.execute(
+        select(CapitalEvent)
+        .where(CapitalEvent.property_id == property_id)
+        .order_by(CapitalEvent.event_date)
+    )
+    capital_events = list(capital_events_result.scalars().all())
+
+    if capital_events or (prop.purchase_date and total_equity_invested != 0):
+        cf_list: list[tuple[date, float]] = []
+
+        # If no acquisition event, auto-derive initial equity from property data
+        has_acquisition = any(e.event_type == "acquisition" for e in capital_events)
+        if not has_acquisition and prop.purchase_date and total_equity_invested > 0:
+            acq_date = prop.purchase_date.date() if hasattr(prop.purchase_date, "date") else prop.purchase_date
+            cf_list.append((acq_date, -total_equity_invested))
+
+        for e in capital_events:
+            cf_list.append((e.event_date, float(e.amount)))
+
+        # Add annual operating cash flows since earliest event year
+        if cf_list:
+            earliest = cf_list[0][0]
+            for yr in range(earliest.year, year + 1):
+                yr_s, yr_e = _year_range(yr)
+                yr_end_cap = yr_e if yr < year else date.today()
+                yr_collected = await rent_collected(yr_s, yr_end_cap)
+                yr_opex_m = await maintenance_opex(yr_s, yr_end_cap)
+                yr_months = ((yr_end_cap.month - yr_s.month) + 1) + (yr_end_cap.year - yr_s.year) * 12
+                yr_fixed = monthly_fixed_costs * yr_months
+                yr_opex = yr_opex_m + yr_fixed
+                yr_debt = monthly_debt_service * yr_months
+                yr_op_cf = yr_collected - yr_opex - yr_debt
+                cf_list.append((date(yr, 12, 31) if yr < year else date.today(), yr_op_cf))
+
+            # Terminal value: current equity
+            if current_equity > 0:
+                cf_list.append((date.today(), current_equity))
+
+        irr_value = _irr(cf_list)
+
+    quarter_num = (month - 1) // 3 + 1
+
+    return {
+        "property_id": str(property_id),
+        "property_address": prop.address,
+        "year": year,
+        "month": f"{year:04d}-{month:02d}",
+        "quarter": f"{year}-Q{quarter_num}",
+        "monthly": {
+            "rent_charged": round(m_charged, 2),
+            "rent_collected": round(m_collected, 2),
+            "delinquency": round(m_charged - m_collected, 2),
+            "opex": round(m_opex, 2),
+            "capex": round(m_capex, 2),
+            "noi": round(m_noi, 2),
+            "debt_service": round(monthly_debt_service, 2),
+            "cash_flow": round(m_cash_flow, 2),
+            "occupancy_pct": round(occ_pct, 1),
+            "rentable_units": len(rentable_units),
+            "occupied_units": int(occupied_month),
+        },
+        "quarterly": {
+            "rent_charged": round(q_charged, 2),
+            "rent_collected": round(q_collected, 2),
+            "opex": round(q_opex, 2),
+            "noi": round(q_noi, 2),
+            "debt_service": round(q_debt, 2),
+            "cash_flow": round(q_cash_flow, 2),
+            "cash_on_cash_ytd": round(cash_on_cash_ytd, 2) if cash_on_cash_ytd is not None else None,
+            "expense_by_category": expense_by_category,
+            "turnover_count": turnover_count,
+            "avg_vacancy_days": round(avg_vacancy_days, 1),
+        },
+        "annual": {
+            "rent_charged": round(y_charged, 2),
+            "rent_collected": round(y_collected, 2),
+            "opex": round(y_opex, 2),
+            "capex": round(y_capex, 2),
+            "noi": round(y_noi, 2),
+            "debt_service": round(y_debt, 2),
+            "cash_flow": round(y_cash_flow, 2),
+            "cap_rate": round(cap_rate, 2) if cap_rate is not None else None,
+            "irr": irr_value,
+            "noi_prior_year": round(py_noi, 2),
+            "noi_yoy_pct": round(noi_yoy_pct, 1) if noi_yoy_pct is not None else None,
+            "property_tax_annual": round(tax_total, 2),
+            "insurance_annual": round(insurance_total, 2),
+            "total_equity_invested": round(total_equity_invested, 2),
+            "current_equity": round(current_equity, 2),
+        },
+    }
+
+
+# ─── Endpoints ────────────────────────────────────────────────────────────────
+
+@router.get("/reports/property/{property_id}")
+async def property_report(
+    property_id: uuid.UUID,
+    year: int = Query(default=None),
+    month: str = Query(default=None),  # YYYY-MM
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-property investment report: monthly, quarterly, and annual metrics."""
+    today = date.today()
+    if year is None:
+        year = today.year
+    if month is None:
+        month = today.month
+    else:
+        try:
+            month = int(month[5:7])
+        except (ValueError, IndexError):
+            raise HTTPException(status_code=400, detail="month must be YYYY-MM")
+
+    # Verify ownership
+    prop_result = await db.execute(
+        select(Property).where(
+            Property.id == property_id,
+            Property.household_id == user.household_id,
+        )
+    )
+    if not prop_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    return await _property_metrics(property_id, year, month, db)
+
+
+@router.get("/reports/portfolio")
+async def portfolio_report(
+    year: int = Query(default=None),
+    month: str = Query(default=None),  # YYYY-MM
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Portfolio report: per-property summaries + aggregate totals."""
+    today = date.today()
+    if year is None:
+        year = today.year
+    if month is None:
+        month_num = today.month
+    else:
+        try:
+            month_num = int(month[5:7])
+        except (ValueError, IndexError):
+            raise HTTPException(status_code=400, detail="month must be YYYY-MM")
+
+    props_result = await db.execute(
+        select(Property).where(Property.household_id == user.household_id)
+    )
+    properties = list(props_result.scalars().all())
+
+    reports = []
+    for prop in properties:
+        try:
+            report = await _property_metrics(prop.id, year, month_num, db)
+            reports.append(report)
+        except Exception:
+            pass  # skip properties with errors
+
+    # Aggregate portfolio totals
+    def agg(key_path: list[str]) -> float:
+        total = 0.0
+        for r in reports:
+            obj = r
+            for k in key_path:
+                obj = obj.get(k, 0) if isinstance(obj, dict) else 0
+            total += float(obj or 0)
+        return round(total, 2)
+
+    portfolio_total = {
+        "monthly": {
+            "rent_charged": agg(["monthly", "rent_charged"]),
+            "rent_collected": agg(["monthly", "rent_collected"]),
+            "delinquency": agg(["monthly", "delinquency"]),
+            "opex": agg(["monthly", "opex"]),
+            "capex": agg(["monthly", "capex"]),
+            "noi": agg(["monthly", "noi"]),
+            "debt_service": agg(["monthly", "debt_service"]),
+            "cash_flow": agg(["monthly", "cash_flow"]),
+            "rentable_units": agg(["monthly", "rentable_units"]),
+            "occupied_units": agg(["monthly", "occupied_units"]),
+        },
+        "annual": {
+            "rent_charged": agg(["annual", "rent_charged"]),
+            "rent_collected": agg(["annual", "rent_collected"]),
+            "opex": agg(["annual", "opex"]),
+            "noi": agg(["annual", "noi"]),
+            "debt_service": agg(["annual", "debt_service"]),
+            "cash_flow": agg(["annual", "cash_flow"]),
+            "total_equity_invested": agg(["annual", "total_equity_invested"]),
+            "current_equity": agg(["annual", "current_equity"]),
+        },
+    }
+
+    return {
+        "year": year,
+        "month": f"{year:04d}-{month_num:02d}",
+        "properties": reports,
+        "portfolio_total": portfolio_total,
+    }

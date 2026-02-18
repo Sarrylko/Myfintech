@@ -34,9 +34,19 @@ class ManualAccountCreate(BaseModel):
     currency_code: str = "USD"
 
 
+class AccountUpdate(BaseModel):
+    name: str | None = None
+    institution_name: str | None = None
+    type: str | None = None
+    subtype: str | None = None
+    mask: str | None = None
+    current_balance: Decimal | None = None
+    is_hidden: bool | None = None
+
+
 class TransactionResponse(BaseModel):
     id: uuid.UUID
-    account_id: uuid.UUID
+    account_id: uuid.UUID | None
     amount: Decimal
     date: datetime
     name: str
@@ -45,6 +55,7 @@ class TransactionResponse(BaseModel):
     plaid_category: str | None
     custom_category_id: uuid.UUID | None
     is_manual_category: bool
+    is_ignored: bool
     notes: str | None
     created_at: datetime
 
@@ -60,6 +71,7 @@ class TransactionUpdate(BaseModel):
     custom_category_id: uuid.UUID | None = None
     notes: str | None = None
     pending: bool | None = None
+    is_ignored: bool | None = None
 
 
 class CategoryCreate(BaseModel):

@@ -75,8 +75,8 @@ class Transaction(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    account_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("accounts.id"), index=True
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), index=True, nullable=True
     )
     household_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("households.id"), index=True
@@ -98,12 +98,13 @@ class Transaction(Base):
     )
     is_manual_category: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    is_ignored: Mapped[bool] = mapped_column(Boolean, default=False)
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
 
-    account: Mapped["Account"] = relationship(back_populates="transactions")
+    account: Mapped["Account | None"] = relationship(back_populates="transactions")
     category: Mapped["Category | None"] = relationship()
 
 

@@ -7,7 +7,7 @@ from sqlalchemy import engine_from_config, pool
 from app.core.database import Base
 
 # Import all models so they register with Base.metadata
-from app.models import user, account, budget, investment, property, networth, rule  # noqa: F401
+from app.models import user, account, budget, investment, property, property_details, capital_event, networth, rule, rental  # noqa: F401
 
 config = context.config
 

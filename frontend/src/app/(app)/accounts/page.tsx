@@ -8,10 +8,14 @@ import {
   exchangePublicToken,
   listPlaidItems,
   syncPlaidItem,
+  deletePlaidItem,
   listAccounts,
   createManualAccount,
+  updateAccount,
+  deleteAccount,
   PlaidItem,
   Account,
+  AccountUpdate,
   ManualAccountCreate,
 } from "@/lib/api";
 
@@ -111,6 +115,22 @@ export default function AccountsPage() {
   const [manualSaving, setManualSaving] = useState(false);
   const [manualError, setManualError] = useState("");
 
+  // Delete account state
+  const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
+  const [deleteSaving, setDeleteSaving] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  // Edit account state
+  const [editTarget, setEditTarget] = useState<Account | null>(null);
+  const [editForm, setEditForm] = useState<AccountUpdate>({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  // Delete institution (Plaid item) state
+  const [deleteItemTarget, setDeleteItemTarget] = useState<PlaidItem | null>(null);
+  const [deleteItemSaving, setDeleteItemSaving] = useState(false);
+  const [deleteItemError, setDeleteItemError] = useState("");
+
   // Load Plaid Link script
   useEffect(() => {
     const existing = document.querySelector('script[src*="plaid.com/link"]');
@@ -205,6 +225,69 @@ export default function AccountsPage() {
       setManualError(e instanceof Error ? e.message : "Failed to create account");
     } finally {
       setManualSaving(false);
+    }
+  }
+
+  function openEdit(acct: Account) {
+    setEditTarget(acct);
+    setEditError("");
+    setEditForm({
+      name: acct.name,
+      institution_name: acct.institution_name ?? undefined,
+      type: acct.type,
+      subtype: acct.subtype ?? undefined,
+      mask: acct.mask ?? undefined,
+      current_balance: acct.current_balance !== null ? parseFloat(acct.current_balance!) : undefined,
+      is_hidden: acct.is_hidden,
+    });
+  }
+
+  async function handleEditAccount(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editTarget) return;
+    const token = getToken();
+    if (!token) return;
+    setEditSaving(true); setEditError("");
+    try {
+      const updated = await updateAccount(editTarget.id, editForm, token);
+      setAccounts((prev) => prev.map((a) => a.id === updated.id ? updated : a));
+      setEditTarget(null);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to save changes");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleDeleteItem(withTransactions: boolean) {
+    if (!deleteItemTarget) return;
+    const token = getToken();
+    if (!token) return;
+    setDeleteItemSaving(true); setDeleteItemError("");
+    try {
+      await deletePlaidItem(deleteItemTarget.id, withTransactions, token);
+      setDeleteItemTarget(null);
+      await loadData();
+    } catch (e) {
+      setDeleteItemError(e instanceof Error ? e.message : "Failed to disconnect institution");
+    } finally {
+      setDeleteItemSaving(false);
+    }
+  }
+
+  async function handleDeleteAccount(withTransactions: boolean) {
+    if (!deleteTarget) return;
+    const token = getToken();
+    if (!token) return;
+    setDeleteSaving(true); setDeleteError("");
+    try {
+      await deleteAccount(deleteTarget.id, withTransactions, token);
+      setDeleteTarget(null);
+      await loadData();
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "Failed to delete account");
+    } finally {
+      setDeleteSaving(false);
     }
   }
 
@@ -353,6 +436,274 @@ export default function AccountsPage() {
         </div>
       )}
 
+      {/* Edit Account Modal */}
+      {editTarget && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <h3 className="font-semibold text-lg">Edit Account</h3>
+              <button onClick={() => setEditTarget(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+            </div>
+            <form onSubmit={handleEditAccount} className="p-5 space-y-4">
+              {/* Name — always editable */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Account Name <span className="text-red-500">*</span></label>
+                <input
+                  type="text" required
+                  value={editForm.name ?? ""}
+                  onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))}
+                  className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+
+              {/* Institution name — always shown (Plaid accounts use it for display) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Institution / Bank Name</label>
+                <input
+                  type="text"
+                  value={editForm.institution_name ?? ""}
+                  onChange={(e) => setEditForm((p) => ({ ...p, institution_name: e.target.value || undefined }))}
+                  placeholder={editTarget.is_manual ? "Chase, Bank of America…" : editTarget.institution_name ?? ""}
+                  className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+
+              {/* Type + Subtype — only for manual accounts */}
+              {editTarget.is_manual && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Account Type</label>
+                    <select
+                      value={editForm.type ?? ""}
+                      onChange={(e) => setEditForm((p) => ({ ...p, type: e.target.value, subtype: SUBTYPES[e.target.value]?.[0]?.value ?? "" }))}
+                      className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                      {ACCOUNT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Subtype</label>
+                    {(SUBTYPES[editForm.type ?? ""] ?? []).length > 0 ? (
+                      <select
+                        value={editForm.subtype ?? ""}
+                        onChange={(e) => setEditForm((p) => ({ ...p, subtype: e.target.value }))}
+                        className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      >
+                        {(SUBTYPES[editForm.type ?? ""] ?? []).map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                      </select>
+                    ) : (
+                      <input type="text" value={editForm.subtype ?? ""}
+                        onChange={(e) => setEditForm((p) => ({ ...p, subtype: e.target.value }))}
+                        placeholder="e.g. savings"
+                        className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Mask + Balance */}
+              <div className="grid grid-cols-2 gap-3">
+                {editTarget.is_manual && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Last 4 Digits</label>
+                    <input
+                      type="text" maxLength={4}
+                      value={editForm.mask ?? ""}
+                      onChange={(e) => setEditForm((p) => ({ ...p, mask: e.target.value.replace(/\D/g, "") }))}
+                      placeholder="1234"
+                      className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                  </div>
+                )}
+                <div className={editTarget.is_manual ? "" : "col-span-2"}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {editTarget.is_manual ? "Current Balance" : "Balance Override"}
+                    {!editTarget.is_manual && (
+                      <span className="text-xs text-gray-400 ml-1">(optional — overrides Plaid balance)</span>
+                    )}
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                    <input
+                      type="number" min="0" step="any"
+                      value={editForm.current_balance ?? ""}
+                      onChange={(e) => setEditForm((p) => ({ ...p, current_balance: e.target.value ? Number(e.target.value) : undefined }))}
+                      placeholder="0.00"
+                      className="border border-gray-300 rounded-lg pl-7 pr-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Hidden toggle */}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editForm.is_hidden ?? false}
+                  onChange={(e) => setEditForm((p) => ({ ...p, is_hidden: e.target.checked }))}
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-700">Hide this account from dashboards</span>
+              </label>
+
+              {editError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{editError}</div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setEditTarget(null)}
+                  className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">Cancel</button>
+                <button type="submit" disabled={editSaving}
+                  className="bg-primary-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:opacity-50">
+                  {editSaving ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Institution (Plaid Item) Confirmation Modal */}
+      {deleteItemTarget && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <h3 className="font-semibold text-lg text-gray-900">Disconnect Institution</h3>
+              <button onClick={() => { setDeleteItemTarget(null); setDeleteItemError(""); }}
+                className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+            </div>
+            <div className="p-5">
+              <p className="text-sm text-gray-700 mb-1">
+                You are about to disconnect{" "}
+                <span className="font-semibold text-gray-900">
+                  {deleteItemTarget.institution_name ?? "this institution"}
+                </span>{" "}
+                and remove all its linked accounts.
+              </p>
+              <p className="text-sm text-gray-500 mb-5">
+                What should happen to the transactions from this institution?
+              </p>
+
+              {deleteItemError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2 mb-4">
+                  {deleteItemError}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <button
+                  onClick={() => handleDeleteItem(true)}
+                  disabled={deleteItemSaving}
+                  className="w-full text-left px-4 py-3 rounded-lg border-2 border-red-200 bg-red-50 hover:bg-red-100 transition disabled:opacity-50 group"
+                >
+                  <p className="text-sm font-semibold text-red-700 group-hover:text-red-800">
+                    Disconnect and delete all transactions
+                  </p>
+                  <p className="text-xs text-red-500 mt-0.5">
+                    Permanently removes the connection, all linked accounts, and every transaction.
+                  </p>
+                </button>
+
+                <button
+                  onClick={() => handleDeleteItem(false)}
+                  disabled={deleteItemSaving}
+                  className="w-full text-left px-4 py-3 rounded-lg border-2 border-amber-200 bg-amber-50 hover:bg-amber-100 transition disabled:opacity-50 group"
+                >
+                  <p className="text-sm font-semibold text-amber-700 group-hover:text-amber-800">
+                    Disconnect and keep transactions
+                  </p>
+                  <p className="text-xs text-amber-600 mt-0.5">
+                    Removes the connection and accounts but keeps transaction history. Transactions will show as unlinked.
+                  </p>
+                </button>
+
+                <button
+                  onClick={() => { setDeleteItemTarget(null); setDeleteItemError(""); }}
+                  disabled={deleteItemSaving}
+                  className="w-full text-center px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              {deleteItemSaving && (
+                <p className="text-xs text-gray-400 text-center mt-3">Disconnecting...</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Account Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <h3 className="font-semibold text-lg text-gray-900">Delete Account</h3>
+              <button onClick={() => { setDeleteTarget(null); setDeleteError(""); }}
+                className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+            </div>
+            <div className="p-5">
+              <p className="text-sm text-gray-700 mb-2">
+                You are about to delete{" "}
+                <span className="font-semibold text-gray-900">
+                  {deleteTarget.name}{deleteTarget.mask ? ` ••• ${deleteTarget.mask}` : ""}
+                </span>.
+              </p>
+              <p className="text-sm text-gray-500 mb-5">
+                What should happen to this account&apos;s transactions?
+              </p>
+
+              {deleteError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2 mb-4">
+                  {deleteError}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <button
+                  onClick={() => handleDeleteAccount(true)}
+                  disabled={deleteSaving}
+                  className="w-full text-left px-4 py-3 rounded-lg border-2 border-red-200 bg-red-50 hover:bg-red-100 transition disabled:opacity-50 group"
+                >
+                  <p className="text-sm font-semibold text-red-700 group-hover:text-red-800">
+                    Delete account and all its transactions
+                  </p>
+                  <p className="text-xs text-red-500 mt-0.5">
+                    Permanently removes the account and every transaction linked to it.
+                  </p>
+                </button>
+
+                <button
+                  onClick={() => handleDeleteAccount(false)}
+                  disabled={deleteSaving}
+                  className="w-full text-left px-4 py-3 rounded-lg border-2 border-amber-200 bg-amber-50 hover:bg-amber-100 transition disabled:opacity-50 group"
+                >
+                  <p className="text-sm font-semibold text-amber-700 group-hover:text-amber-800">
+                    Delete account, keep transactions
+                  </p>
+                  <p className="text-xs text-amber-600 mt-0.5">
+                    Removes the account but keeps its transaction history. Transactions will show as unlinked.
+                  </p>
+                </button>
+
+                <button
+                  onClick={() => { setDeleteTarget(null); setDeleteError(""); }}
+                  disabled={deleteSaving}
+                  className="w-full text-center px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              {deleteSaving && (
+                <p className="text-xs text-gray-400 text-center mt-3">Deleting...</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Plaid not configured banner */}
       {plaidNotConfigured && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
@@ -424,7 +775,9 @@ PLAID_ENV=sandbox`}
           </div>
           <div className="divide-y divide-gray-50">
             {manualAccounts.map((acct) => (
-              <AccountRow key={acct.id} acct={acct} />
+              <AccountRow key={acct.id} acct={acct}
+                onEdit={() => openEdit(acct)}
+                onDelete={() => { setDeleteTarget(acct); setDeleteError(""); }} />
             ))}
           </div>
         </div>
@@ -451,20 +804,33 @@ PLAID_ENV=sandbox`}
                   {" · "}{item.account_count} account{item.account_count !== 1 ? "s" : ""}
                 </p>
               </div>
-              <button
-                onClick={() => handleSync(item.id)}
-                disabled={isSyncing}
-                className="text-xs text-primary-600 hover:text-primary-700 border border-primary-200 hover:border-primary-400 px-3 py-1.5 rounded-md transition disabled:opacity-50"
-              >
-                {isSyncing ? "Syncing..." : "↻ Sync"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleSync(item.id)}
+                  disabled={isSyncing}
+                  className="text-xs text-primary-600 hover:text-primary-700 border border-primary-200 hover:border-primary-400 px-3 py-1.5 rounded-md transition disabled:opacity-50"
+                >
+                  {isSyncing ? "Syncing..." : "↻ Sync"}
+                </button>
+                <button
+                  onClick={() => { setDeleteItemTarget(item); setDeleteItemError(""); }}
+                  className="text-xs text-gray-400 hover:text-red-600 border border-gray-200 hover:border-red-300 px-3 py-1.5 rounded-md transition"
+                  title="Disconnect institution"
+                >
+                  Disconnect
+                </button>
+              </div>
             </div>
 
             {itemAccounts.length === 0 ? (
               <div className="px-6 py-4 text-sm text-gray-400">No accounts found — click Sync to pull from this institution.</div>
             ) : (
               <div className="divide-y divide-gray-50">
-                {itemAccounts.map((acct) => <AccountRow key={acct.id} acct={acct} />)}
+                {itemAccounts.map((acct) => (
+                  <AccountRow key={acct.id} acct={acct}
+                    onEdit={() => openEdit(acct)}
+                    onDelete={() => { setDeleteTarget(acct); setDeleteError(""); }} />
+                ))}
               </div>
             )}
           </div>
@@ -474,15 +840,16 @@ PLAID_ENV=sandbox`}
   );
 }
 
-function AccountRow({ acct }: { acct: Account }) {
+function AccountRow({ acct, onEdit, onDelete }: { acct: Account; onEdit: () => void; onDelete: () => void }) {
   const addedDate = new Date(acct.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
   return (
-    <div className="flex items-center justify-between px-6 py-3">
+    <div className="flex items-center justify-between px-6 py-3 group">
       <div>
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-800">{acct.name}</span>
+          <span className={`text-sm font-medium ${acct.is_hidden ? "text-gray-400 line-through" : "text-gray-800"}`}>{acct.name}</span>
           {acct.mask && <span className="text-xs text-gray-400">••• {acct.mask}</span>}
+          {acct.is_hidden && <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Hidden</span>}
         </div>
         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -499,17 +866,35 @@ function AccountRow({ acct }: { acct: Account }) {
           <span className="text-xs text-gray-400">Added {addedDate}</span>
         </div>
       </div>
-      <div className="text-right">
-        <div className="text-sm font-semibold text-gray-900">
-          {acct.current_balance !== null
-            ? new Intl.NumberFormat("en-US", { style: "currency", currency: acct.currency_code, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(parseFloat(acct.current_balance!))
-            : "—"}
-        </div>
-        {acct.available_balance !== null && acct.available_balance !== acct.current_balance && (
-          <div className="text-xs text-gray-400">
-            {new Intl.NumberFormat("en-US", { style: "currency", currency: acct.currency_code, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(parseFloat(acct.available_balance!))} avail.
+      <div className="flex items-center gap-3">
+        <div className="text-right">
+          <div className="text-sm font-semibold text-gray-900">
+            {acct.current_balance !== null
+              ? new Intl.NumberFormat("en-US", { style: "currency", currency: acct.currency_code, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(parseFloat(acct.current_balance!))
+              : "—"}
           </div>
-        )}
+          {acct.available_balance !== null && acct.available_balance !== acct.current_balance && (
+            <div className="text-xs text-gray-400">
+              {new Intl.NumberFormat("en-US", { style: "currency", currency: acct.currency_code, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(parseFloat(acct.available_balance!))} avail.
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+          <button
+            onClick={onEdit}
+            className="text-gray-300 hover:text-primary-600 transition p-1 rounded"
+            title="Edit account"
+          >
+            ✏
+          </button>
+          <button
+            onClick={onDelete}
+            className="text-gray-300 hover:text-red-500 transition p-1 rounded"
+            title="Delete account"
+          >
+            ✕
+          </button>
+        </div>
       </div>
     </div>
   );

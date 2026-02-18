@@ -1,6 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+} from "recharts";
 import { useRouter } from "next/navigation";
 import {
   getToken,
@@ -323,7 +326,7 @@ function ImportModal({ accounts, onImported, onClose }: {
   const [selectedAccount, setSelectedAccount] = useState(accounts[0]?.id ?? "");
   const [file, setFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<{ imported: number; errors: { row: number; error: string }[] } | null>(null);
+  const [result, setResult] = useState<{ imported: number; duplicates: number; errors: { row: number; error: string }[] } | null>(null);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -410,13 +413,20 @@ function ImportModal({ accounts, onImported, onClose }: {
             {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{error}</div>}
 
             {result && (
-              <div className={`rounded-lg p-3 text-sm ${result.imported > 0 ? "bg-green-50 border border-green-200" : "bg-yellow-50 border border-yellow-200"}`}>
-                <p className={`font-semibold mb-1 ${result.imported > 0 ? "text-green-700" : "text-yellow-700"}`}>
-                  {result.imported > 0 ? `✓ ${result.imported} transaction${result.imported !== 1 ? "s" : ""} imported` : "No transactions imported"}
+              <div className={`rounded-lg p-3 text-sm space-y-2 ${result.imported > 0 ? "bg-green-50 border border-green-200" : "bg-yellow-50 border border-yellow-200"}`}>
+                <p className={`font-semibold ${result.imported > 0 ? "text-green-700" : "text-yellow-700"}`}>
+                  {result.imported > 0
+                    ? `✓ ${result.imported} transaction${result.imported !== 1 ? "s" : ""} imported`
+                    : "No new transactions imported"}
                 </p>
+                {result.duplicates > 0 && (
+                  <p className="text-blue-700 text-xs">
+                    {result.duplicates} duplicate{result.duplicates !== 1 ? "s" : ""} skipped — already exist in this account.
+                  </p>
+                )}
                 {result.errors.length > 0 && (
                   <div>
-                    <p className="text-yellow-700 font-medium mb-1">{result.errors.length} row{result.errors.length !== 1 ? "s" : ""} skipped:</p>
+                    <p className="text-yellow-700 font-medium mb-1">{result.errors.length} row{result.errors.length !== 1 ? "s" : ""} had errors:</p>
                     <ul className="text-xs space-y-0.5 text-yellow-800">
                       {result.errors.map((e, i) => <li key={i}>Row {e.row}: {e.error}</li>)}
                     </ul>
@@ -455,6 +465,8 @@ export default function TransactionsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
+  const [showCharts, setShowCharts] = useState(true);
+  const [showIgnored, setShowIgnored] = useState(false);
   const [editTxn, setEditTxn] = useState<Transaction | null>(null);
   const [showImport, setShowImport] = useState(false);
   // "Save as Rule" prompt state
@@ -505,6 +517,7 @@ export default function TransactionsPage() {
   const effectiveTo   = datePreset === "custom" ? (dateTo   ? new Date(dateTo   + "T23:59:59") : null) : presetTo;
 
   const filtered = transactions.filter((t) => {
+    if (!showIgnored && t.is_ignored) return false;
     const matchAccount = selectedAccount === "all" || t.account_id === selectedAccount;
     const matchCategory = selectedCategory === "all" ||
       (t.plaid_category ?? "").toLowerCase().startsWith(selectedCategory.toLowerCase());
@@ -523,13 +536,55 @@ export default function TransactionsPage() {
 
   const totalExpenses = filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending).reduce((s, t) => s + parseFloat(t.amount), 0);
   const totalIncome = filtered.filter((t) => parseFloat(t.amount) < 0 && !t.pending).reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0);
+  const netCashFlow = totalIncome - totalExpenses;
+
+  // ── Chart data ──────────────────────────────────────────────────────────────
+  const monthlyTrend = useMemo(() => {
+    const months: Record<string, { key: string; label: string; expenses: number; income: number }> = {};
+    for (const t of filtered) {
+      if (t.pending) continue;
+      const d = new Date(t.date);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+      if (!months[key]) months[key] = { key, label, expenses: 0, income: 0 };
+      const amt = parseFloat(t.amount);
+      if (amt > 0) months[key].expenses += amt;
+      else months[key].income += Math.abs(amt);
+    }
+    return Object.values(months)
+      .sort((a, b) => a.key.localeCompare(b.key))
+      .slice(-12);
+  }, [filtered]);
+
+  const categorySpend = useMemo(() => {
+    const spend: Record<string, number> = {};
+    for (const t of filtered) {
+      const amt = parseFloat(t.amount);
+      if (amt <= 0 || t.pending) continue;
+      const cat = parseCategory(t.plaid_category).group || "Uncategorized";
+      spend[cat] = (spend[cat] || 0) + amt;
+    }
+    return Object.entries(spend)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 6)
+      .map(([name, amount]) => ({ name, amount }));
+  }, [filtered]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const paginatedTxns = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   // Reset to page 1 whenever any filter changes
-  useEffect(() => { setPage(1); }, [search, selectedAccount, selectedCategory, datePreset, dateFrom, dateTo]);
+  useEffect(() => { setPage(1); }, [search, selectedAccount, selectedCategory, datePreset, dateFrom, dateTo, showIgnored]);
+
+  async function handleIgnoreTxn(txn: Transaction) {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const updated = await updateTransaction(txn.id, { is_ignored: !txn.is_ignored }, token);
+      setTransactions((prev) => prev.map((t) => t.id === updated.id ? updated : t));
+    } catch {}
+  }
 
   function onTransactionSaved(updated: Transaction, newCategory: string | undefined, prevCategory: string | null) {
     setTransactions((prev) => prev.map((t) => t.id === updated.id ? updated : t));
@@ -630,7 +685,7 @@ export default function TransactionsPage() {
 
       {/* Summary strip */}
       {filtered.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
             <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Expenses</p>
             <p className="text-xl font-bold text-red-600">
@@ -643,10 +698,114 @@ export default function TransactionsPage() {
               +{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(totalIncome)}
             </p>
           </div>
-          <div className="bg-white rounded-lg border border-gray-100 shadow p-4 col-span-2 md:col-span-1">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Count</p>
+          <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
+            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net</p>
+            <p className={`text-xl font-bold ${netCashFlow >= 0 ? "text-green-600" : "text-red-600"}`}>
+              {netCashFlow >= 0 ? "+" : "-"}
+              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Math.abs(netCashFlow))}
+            </p>
+          </div>
+          <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
+            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Transactions</p>
             <p className="text-xl font-bold text-gray-900">{filtered.length}</p>
           </div>
+        </div>
+      )}
+
+      {/* ── Analytics ────────────────────────────────────────────── */}
+      {filtered.length > 0 && (
+        <div className="mb-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Analytics</p>
+            <button
+              onClick={() => setShowCharts((v) => !v)}
+              className="text-xs text-gray-400 hover:text-gray-600 transition"
+            >
+              {showCharts ? "Hide" : "Show"}
+            </button>
+          </div>
+
+          {showCharts && (
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+              {/* Monthly Cash Flow */}
+              <div className="lg:col-span-3 bg-white rounded-lg border border-gray-100 shadow p-4">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Monthly Cash Flow</p>
+                {monthlyTrend.length === 0 ? (
+                  <p className="text-xs text-gray-400 py-8 text-center">No data</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={monthlyTrend} barSize={10} barCategoryGap="30%">
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fontSize: 11, fill: "#6b7280" }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        tickFormatter={(v) =>
+                          v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`
+                        }
+                        width={42}
+                        tick={{ fontSize: 10, fill: "#9ca3af" }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        formatter={(v: number, name: string) => [
+                          new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v),
+                          name.charAt(0).toUpperCase() + name.slice(1),
+                        ]}
+                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+                      />
+                      <Legend
+                        iconType="circle"
+                        iconSize={7}
+                        wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+                      />
+                      <Bar dataKey="income"   name="income"   fill="#22c55e" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="expenses" name="expenses" fill="#f87171" radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              {/* Top Spending Categories */}
+              <div className="lg:col-span-2 bg-white rounded-lg border border-gray-100 shadow p-4">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Top Spending</p>
+                {categorySpend.length === 0 ? (
+                  <p className="text-xs text-gray-400 py-8 text-center">No expense data</p>
+                ) : (
+                  <div className="space-y-2.5 mt-1">
+                    {categorySpend.map(({ name, amount }, idx) => {
+                      const pct = Math.round((amount / categorySpend[0].amount) * 100);
+                      const colors = [
+                        "bg-indigo-500", "bg-violet-500", "bg-blue-500",
+                        "bg-sky-500", "bg-teal-500", "bg-cyan-500",
+                      ];
+                      return (
+                        <div key={name}>
+                          <div className="flex items-center justify-between text-xs mb-1">
+                            <span className="text-gray-700 font-medium truncate max-w-[55%]">{name}</span>
+                            <span className="text-gray-500 shrink-0 ml-2">
+                              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(amount)}
+                            </span>
+                          </div>
+                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${colors[idx % colors.length]} rounded-full transition-all duration-500`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
         </div>
       )}
 
@@ -711,6 +870,17 @@ export default function TransactionsPage() {
             </div>
           </>
         )}
+        <button
+          onClick={() => setShowIgnored((v) => !v)}
+          className={`text-xs px-3 py-2 rounded-lg border transition whitespace-nowrap ${
+            showIgnored
+              ? "bg-orange-100 border-orange-300 text-orange-700"
+              : "border-gray-200 text-gray-500 hover:bg-gray-50"
+          }`}
+          title={showIgnored ? "Hide ignored transactions" : "Show ignored transactions"}
+        >
+          {showIgnored ? "Hide Ignored" : "Show Ignored"}
+        </button>
       </div>
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>}
@@ -725,7 +895,7 @@ export default function TransactionsPage() {
               <th className="px-5 py-3 hidden md:table-cell">Category</th>
               <th className="px-5 py-3 hidden lg:table-cell">Account</th>
               <th className="px-5 py-3 text-right">Amount</th>
-              <th className="px-5 py-3 w-12"></th>
+              <th className="px-5 py-3 w-20"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -742,19 +912,22 @@ export default function TransactionsPage() {
               </tr>
             )}
             {!loading && paginatedTxns.map((txn) => {
-              const acct = accountMap[txn.account_id];
+              const acct = txn.account_id ? accountMap[txn.account_id] : undefined;
               const { display, isExpense } = fmtAmt(txn.amount);
 
               return (
-                <tr key={txn.id} className="hover:bg-gray-50 transition group">
+                <tr key={txn.id} className={`hover:bg-gray-50 transition group ${txn.is_ignored ? "opacity-40" : ""}`}>
                   <td className="px-5 py-3 text-sm text-gray-500 whitespace-nowrap">
                     {fmtDate(txn.date)}
                     {txn.pending && (
                       <span className="ml-1.5 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded">Pending</span>
                     )}
+                    {txn.is_ignored && (
+                      <span className="ml-1.5 text-xs bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded">Ignored</span>
+                    )}
                   </td>
                   <td className="px-5 py-3 max-w-xs">
-                    <div className="text-sm font-medium text-gray-800 truncate">{txn.name}</div>
+                    <div className={`text-sm font-medium text-gray-800 truncate ${txn.is_ignored ? "line-through" : ""}`}>{txn.name}</div>
                     {txn.merchant_name && txn.merchant_name !== txn.name && (
                       <div className="text-xs text-gray-400 truncate">{txn.merchant_name}</div>
                     )}
@@ -791,13 +964,22 @@ export default function TransactionsPage() {
                     {display}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <button
-                      onClick={() => setEditTxn(txn)}
-                      className="text-xs text-gray-400 hover:text-primary-600 opacity-0 group-hover:opacity-100 transition px-1"
-                      title="Edit"
-                    >
-                      ✏
-                    </button>
+                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition">
+                      <button
+                        onClick={() => setEditTxn(txn)}
+                        className="text-xs text-gray-400 hover:text-primary-600 px-1"
+                        title="Edit"
+                      >
+                        ✏
+                      </button>
+                      <button
+                        onClick={() => handleIgnoreTxn(txn)}
+                        className={`text-xs px-1 ${txn.is_ignored ? "text-orange-400 hover:text-orange-600" : "text-gray-300 hover:text-orange-500"}`}
+                        title={txn.is_ignored ? "Un-ignore" : "Ignore"}
+                      >
+                        {txn.is_ignored ? "○" : "⊘"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

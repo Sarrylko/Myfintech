@@ -70,5 +70,7 @@ const navItems = [
   { href: "/budgets", label: "Budgets", icon: "💸" },
   { href: "/investments", label: "Investments", icon: "📈" },
   { href: "/properties", label: "Real Estate", icon: "🏠" },
+  { href: "/rentals", label: "Rentals", icon: "🏘" },
+  { href: "/rules", label: "Rules", icon: "⚡" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];

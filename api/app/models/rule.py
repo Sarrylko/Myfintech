@@ -26,6 +26,7 @@ class CategorizationRule(Base):
     match_field: Mapped[str] = mapped_column(String(50))  # name, merchant_name, account_type
     match_type: Mapped[str] = mapped_column(String(20))   # contains, exact
     match_value: Mapped[str] = mapped_column(String(500))
+    action: Mapped[str] = mapped_column(String(20), default="categorize")  # "categorize" | "ignore"
     negate_amount: Mapped[bool] = mapped_column(Boolean, default=False)
     priority: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

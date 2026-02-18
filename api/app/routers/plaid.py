@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.security import decrypt_value, encrypt_value
 from app.models.account import Account, PlaidItem, Transaction
+from app.models.rule import CategorizationRule
 from app.models.user import User
 
 router = APIRouter(prefix="/plaid", tags=["plaid"])
@@ -66,6 +67,7 @@ async def _sync_item(item: PlaidItem, client, db: AsyncSession) -> dict:
     """Pull accounts and new transactions from Plaid and upsert into DB."""
     from plaid.model.accounts_get_request import AccountsGetRequest
     from plaid.model.transactions_sync_request import TransactionsSyncRequest
+    from app.routers.rules import apply_rules_to_txn
 
     access_token = decrypt_value(item.encrypted_access_token)
 
@@ -105,6 +107,27 @@ async def _sync_item(item: PlaidItem, client, db: AsyncSession) -> dict:
 
     await db.flush()
 
+    # Load active household rules once for the whole sync
+    rules_result = await db.execute(
+        select(CategorizationRule)
+        .where(
+            CategorizationRule.household_id == item.household_id,
+            CategorizationRule.is_active == True,  # noqa: E712
+        )
+        .order_by(CategorizationRule.priority.desc())
+    )
+    rules = rules_result.scalars().all()
+
+    # Build plaid_account_id → account.type map for rule matching
+    accts_map_result = await db.execute(
+        select(Account).where(Account.household_id == item.household_id)
+    )
+    account_type_map: dict[str, str] = {
+        a.plaid_account_id: a.type
+        for a in accts_map_result.scalars().all()
+        if a.plaid_account_id
+    }
+
     # ── 2. Sync transactions (cursor-based) ───────────────────────────
     has_more = True
     cursor = item.cursor
@@ -138,6 +161,14 @@ async def _sync_item(item: PlaidItem, client, db: AsyncSession) -> dict:
             d = pt.date
             txn_dt = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
 
+            # Normalize Plaid category array to "Group > Item" format
+            if pt.category and len(pt.category) >= 2:
+                plaid_cat = f"{pt.category[0]} > {pt.category[1]}"
+            elif pt.category:
+                plaid_cat = pt.category[0]
+            else:
+                plaid_cat = None
+
             txn = Transaction(
                 account_id=acct.id,
                 household_id=item.household_id,
@@ -147,9 +178,15 @@ async def _sync_item(item: PlaidItem, client, db: AsyncSession) -> dict:
                 name=pt.name,
                 merchant_name=pt.merchant_name,
                 pending=pt.pending,
-                plaid_category=", ".join(pt.category) if pt.category else None,
+                plaid_category=plaid_cat,
                 plaid_category_id=pt.category_id,
             )
+
+            # Apply household categorization rules (same as CSV import)
+            if rules:
+                account_type = account_type_map.get(pt.account_id, acct.type)
+                apply_rules_to_txn(txn, account_type, rules)
+
             db.add(txn)
             added_count += 1
 
@@ -282,3 +319,45 @@ async def sync_item(
     stats = await _sync_item(item, client, db)
     await db.commit()
     return SyncResponse(status="ok", **stats)
+
+
+@router.delete("/items/{item_id}", status_code=204)
+async def delete_plaid_item(
+    item_id: uuid.UUID,
+    delete_transactions: bool = Query(default=True),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a Plaid institution connection and all its accounts.
+    If delete_transactions=True (default), also deletes all transactions.
+    If delete_transactions=False, transactions are kept but unlinked (account_id set to NULL).
+    """
+    result = await db.execute(
+        select(PlaidItem).where(
+            PlaidItem.id == item_id,
+            PlaidItem.household_id == user.household_id,
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Institution not found")
+
+    # Get all accounts linked to this institution
+    accts_result = await db.execute(
+        select(Account).where(Account.plaid_item_id == item.id)
+    )
+    accounts = accts_result.scalars().all()
+
+    for acct in accounts:
+        txns_result = await db.execute(
+            select(Transaction).where(Transaction.account_id == acct.id)
+        )
+        for txn in txns_result.scalars().all():
+            if delete_transactions:
+                await db.delete(txn)
+            else:
+                txn.account_id = None
+        await db.delete(acct)
+
+    await db.delete(item)
+    await db.commit()

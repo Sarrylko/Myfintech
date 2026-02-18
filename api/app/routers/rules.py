@@ -48,10 +48,13 @@ def apply_rules_to_txn(
         if not rule.is_active:
             continue
         if _match_rule(rule, txn, account_type):
-            if rule.category_string:
-                txn.plaid_category = rule.category_string
-            if rule.negate_amount:
-                txn.amount = -abs(txn.amount)
+            if getattr(rule, "action", "categorize") == "ignore":
+                txn.is_ignored = True
+            else:
+                if rule.category_string:
+                    txn.plaid_category = rule.category_string
+                if rule.negate_amount:
+                    txn.amount = -abs(txn.amount)
             return True
     return False
 
@@ -81,6 +84,7 @@ async def create_rule(
         match_field=payload.match_field,
         match_type=payload.match_type,
         match_value=payload.match_value,
+        action=payload.action,
         category_string=payload.category_string,
         negate_amount=payload.negate_amount,
         priority=payload.priority,
@@ -173,6 +177,9 @@ async def apply_rules_to_all(
 
     applied = 0
     for txn in txns:
+        # Don't overwrite categories the user set manually
+        if txn.is_manual_category:
+            continue
         acct = account_map.get(txn.account_id)
         account_type = acct.type if acct else ""
         if apply_rules_to_txn(txn, account_type, rules):

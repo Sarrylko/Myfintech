@@ -7,10 +7,31 @@ import {
   listProperties,
   updateProperty,
   deleteProperty,
+  listLoans,
+  createLoan,
+  updateLoan,
+  deleteLoan,
+  listPropertyCosts,
+  createPropertyCost,
+  updatePropertyCost,
+  deletePropertyCost,
+  listMaintenanceExpenses,
+  createMaintenanceExpense,
+  updateMaintenanceExpense,
+  deleteMaintenanceExpense,
+  importMaintenanceExpenses,
   Property,
+  Loan,
+  LoanCreate,
+  PropertyCost,
+  PropertyCostCreate,
+  MaintenanceExpense,
+  MaintenanceExpenseCreate,
 } from "@/lib/api";
 
-function fmt(val: string | null | number): string {
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function fmt(val: string | null | number | undefined): string {
   if (val === null || val === undefined || val === "") return "—";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -20,16 +41,25 @@ function fmt(val: string | null | number): string {
   }).format(Number(val));
 }
 
-function gain(current: string | null, purchase: string | null): string {
-  if (!current || !purchase) return "—";
-  const diff = Number(current) - Number(purchase);
-  const sign = diff >= 0 ? "+" : "";
-  return `${sign}${fmt(String(diff))}`;
+function fmtDec(val: string | null | number | undefined, decimals = 2): string {
+  if (val === null || val === undefined || val === "") return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(Number(val));
 }
 
-function gainColor(current: string | null, purchase: string | null): string {
-  if (!current || !purchase) return "text-gray-400";
-  return Number(current) >= Number(purchase) ? "text-green-600" : "text-red-600";
+function gain(current: string | null, costBasis: number): string {
+  if (!current || costBasis === 0) return "—";
+  const diff = Number(current) - costBasis;
+  return `${diff >= 0 ? "+" : ""}${fmt(String(diff))}`;
+}
+
+function gainColor(current: string | null, costBasis: number): string {
+  if (!current || costBasis === 0) return "text-gray-400";
+  return Number(current) >= costBasis ? "text-green-600" : "text-red-600";
 }
 
 function typeLabel(type: string | null): string {
@@ -44,105 +74,174 @@ function typeLabel(type: string | null): string {
   return type ? (map[type] ?? type) : "—";
 }
 
-function monthlyExpenses(p: Property): number {
-  return (
-    Number(p.mortgage_monthly ?? 0) +
-    Number(p.property_tax_annual ?? 0) / 12 +
-    Number(p.insurance_annual ?? 0) / 12 +
-    Number(p.hoa_monthly ?? 0) +
-    Number(p.maintenance_monthly ?? 0)
-  );
+function costBasis(p: Property): number {
+  return (p.purchase_price ? Number(p.purchase_price) : 0) +
+    (p.closing_costs ? Number(p.closing_costs) : 0);
 }
 
-function netCashFlow(p: Property): number {
-  return Number(p.monthly_rent ?? 0) - monthlyExpenses(p);
+function totalLoanBalance(loans: Loan[]): number {
+  return loans.reduce((s, l) => s + Number(l.current_balance ?? 0), 0);
 }
 
-function hasFinancials(p: Property): boolean {
-  return !!(
-    p.monthly_rent ||
-    p.mortgage_monthly ||
-    p.property_tax_annual ||
-    p.insurance_annual ||
-    p.hoa_monthly ||
-    p.maintenance_monthly
-  );
+// Monthly equivalent of any frequency
+function toMonthly(amount: number, frequency: string): number {
+  if (frequency === "monthly") return amount;
+  if (frequency === "quarterly") return amount / 3;
+  if (frequency === "annual") return amount / 12;
+  return 0; // one_time not counted in monthly
 }
 
-interface FinancialForm {
-  mortgage_balance: string;
-  monthly_rent: string;
-  mortgage_monthly: string;
-  property_tax_annual: string;
-  insurance_annual: string;
-  hoa_monthly: string;
-  maintenance_monthly: string;
-}
+const LOAN_TYPES = ["mortgage", "heloc", "second_mortgage", "other"];
+const COST_CATEGORIES = ["hoa", "property_tax", "insurance", "maintenance", "utility", "other"];
+const COST_FREQUENCIES = ["monthly", "quarterly", "annual", "one_time"];
+const EXPENSE_CATEGORIES = [
+  "repair", "appliance", "landscaping", "cleaning",
+  "inspection", "plumbing", "electrical", "roofing", "hvac",
+  "management_fee", "administrative", "leasing_fee", "other",
+];
 
-function toFinancialForm(p: Property): FinancialForm {
-  return {
-    mortgage_balance: p.mortgage_balance ? String(Number(p.mortgage_balance)) : "",
-    monthly_rent: p.monthly_rent ? String(Number(p.monthly_rent)) : "",
-    mortgage_monthly: p.mortgage_monthly ? String(Number(p.mortgage_monthly)) : "",
-    property_tax_annual: p.property_tax_annual ? String(Number(p.property_tax_annual)) : "",
-    insurance_annual: p.insurance_annual ? String(Number(p.insurance_annual)) : "",
-    hoa_monthly: p.hoa_monthly ? String(Number(p.hoa_monthly)) : "",
-    maintenance_monthly: p.maintenance_monthly ? String(Number(p.maintenance_monthly)) : "",
-  };
-}
+const COST_COLORS: Record<string, string> = {
+  hoa: "bg-blue-100 text-blue-700",
+  property_tax: "bg-purple-100 text-purple-700",
+  insurance: "bg-yellow-100 text-yellow-700",
+  maintenance: "bg-orange-100 text-orange-700",
+  utility: "bg-teal-100 text-teal-700",
+  other: "bg-gray-100 text-gray-600",
+};
 
-function CurrencyInput({
-  label,
-  sublabel,
-  value,
-  onChange,
-  placeholder,
-}: {
-  label: string;
-  sublabel?: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-}) {
+const EXPENSE_COLORS: Record<string, string> = {
+  repair: "bg-red-100 text-red-700",
+  appliance: "bg-blue-100 text-blue-700",
+  landscaping: "bg-green-100 text-green-700",
+  cleaning: "bg-teal-100 text-teal-700",
+  inspection: "bg-yellow-100 text-yellow-700",
+  plumbing: "bg-cyan-100 text-cyan-700",
+  electrical: "bg-amber-100 text-amber-700",
+  roofing: "bg-stone-100 text-stone-700",
+  hvac: "bg-indigo-100 text-indigo-700",
+  management_fee: "bg-violet-100 text-violet-700",
+  administrative: "bg-pink-100 text-pink-700",
+  leasing_fee: "bg-orange-100 text-orange-700",
+  other: "bg-gray-100 text-gray-600",
+};
+
+// ─── Small UI components ──────────────────────────────────────────────────────
+
+function CurrencyField({
+  label, value, onChange, placeholder, hint,
+}: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; hint?: string }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-600 mb-1">
-        {label}
-        {sublabel && <span className="font-normal text-gray-400 ml-1">{sublabel}</span>}
-      </label>
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
       <div className="relative">
         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
         <input
-          type="number"
-          min="0"
-          step="any"
-          value={value}
+          type="number" min="0" step="any" value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="border border-gray-300 rounded-lg pl-6 pr-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
           placeholder={placeholder ?? "0"}
+          className="border border-gray-300 rounded-lg pl-6 pr-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
         />
       </div>
+      {hint && <p className="text-xs text-gray-400 mt-0.5">{hint}</p>}
     </div>
   );
 }
+
+function Field({
+  label, type = "text", value, onChange, placeholder,
+}: { label: string; type?: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      <input
+        type={type} value={value} onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+      />
+    </div>
+  );
+}
+
+function SelectField({
+  label, value, onChange, options,
+}: { label: string; value: string; onChange: (v: string) => void; options: string[] }) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      <select
+        value={value} onChange={(e) => onChange(e.target.value)}
+        className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>{o.replace(/_/g, " ")}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function TabBtn({
+  active, onClick, children,
+}: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+        active
+          ? "bg-primary-600 text-white"
+          : "bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ─── Edit Details form types ──────────────────────────────────────────────────
+
+interface DetailForm {
+  purchase_price: string;
+  purchase_date: string;
+  closing_costs: string;
+}
+
+function toDetailForm(p: Property): DetailForm {
+  return {
+    purchase_price: p.purchase_price ? String(Number(p.purchase_price)) : "",
+    purchase_date: p.purchase_date
+      ? new Date(p.purchase_date).toISOString().split("T")[0]
+      : "",
+    closing_costs: p.closing_costs ? String(Number(p.closing_costs)) : "",
+  };
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function PropertiesPage() {
   const router = useRouter();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Current value quick-edit
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Detail edit panel
+  const [editingDetails, setEditingDetails] = useState<string | null>(null);
+  const [detailForm, setDetailForm] = useState<DetailForm>({
+    purchase_price: "", purchase_date: "", closing_costs: "",
+  });
+  const [savingDetails, setSavingDetails] = useState(false);
+
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  // Financial edit state
-  const [editingFinancials, setEditingFinancials] = useState<string | null>(null);
-  const [financialForm, setFinancialForm] = useState<FinancialForm>({
-    mortgage_balance: "", monthly_rent: "", mortgage_monthly: "",
-    property_tax_annual: "", insurance_annual: "", hoa_monthly: "", maintenance_monthly: "",
-  });
-  const [savingFinancials, setSavingFinancials] = useState(false);
+  // Per-property tabs and data
+  const [activeTab, setActiveTab] = useState<Record<string, string | null>>({});
+  const [loans, setLoans] = useState<Record<string, Loan[]>>({});
+  const [costs, setCosts] = useState<Record<string, PropertyCost[]>>({});
+  const [expenses, setExpenses] = useState<Record<string, MaintenanceExpense[]>>({});
 
   const token = getToken();
 
@@ -156,8 +255,13 @@ export default function PropertiesPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const data = await listProperties(token);
-      setProperties(data);
+      const props = await listProperties(token);
+      setProperties(props);
+      // Load loans for all properties to power the equity bar
+      if (props.length > 0) {
+        const allLoans = await Promise.all(props.map((p) => listLoans(p.id, token)));
+        setLoans(Object.fromEntries(props.map((p, i) => [p.id, allLoans[i]])));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load properties");
     } finally {
@@ -165,15 +269,40 @@ export default function PropertiesPage() {
     }
   }
 
+  // ── Tab toggling + lazy data loads ────────────────────────────────────────
+  async function toggleTab(propertyId: string, tab: string) {
+    if (!token) return;
+    const current = activeTab[propertyId];
+    if (current === tab) {
+      setActiveTab((prev) => ({ ...prev, [propertyId]: null }));
+      return;
+    }
+    setActiveTab((prev) => ({ ...prev, [propertyId]: tab }));
+    setEditingDetails(null); // close details panel when opening a tab
+    if (tab === "costs" && costs[propertyId] === undefined) {
+      try {
+        const data = await listPropertyCosts(propertyId, token);
+        setCosts((prev) => ({ ...prev, [propertyId]: data }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load costs");
+      }
+    }
+    if (tab === "maintenance" && expenses[propertyId] === undefined) {
+      try {
+        const data = await listMaintenanceExpenses(propertyId, token);
+        setExpenses((prev) => ({ ...prev, [propertyId]: data }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load expenses");
+      }
+    }
+  }
+
+  // ── Current value quick-edit ──────────────────────────────────────────────
   async function saveValue(id: string) {
     if (!token) return;
     setSaving(true);
     try {
-      const updated = await updateProperty(
-        id,
-        { current_value: editValue ? Number(editValue) : undefined },
-        token
-      );
+      const updated = await updateProperty(id, { current_value: editValue ? Number(editValue) : undefined }, token);
       setProperties((prev) => prev.map((p) => (p.id === id ? updated : p)));
       setEditing(null);
     } catch (err) {
@@ -183,37 +312,37 @@ export default function PropertiesPage() {
     }
   }
 
-  function openFinancialEdit(p: Property) {
-    setFinancialForm(toFinancialForm(p));
-    setEditingFinancials(p.id);
+  // ── Detail edit panel ─────────────────────────────────────────────────────
+  function openDetails(p: Property) {
+    setDetailForm(toDetailForm(p));
+    setEditingDetails(p.id);
+    setEditing(null);
+    setActiveTab((prev) => ({ ...prev, [p.id]: null }));
   }
 
-  async function saveFinancials(id: string) {
+  async function saveDetails(id: string) {
     if (!token) return;
-    setSavingFinancials(true);
+    setSavingDetails(true);
     try {
-      const updated = await updateProperty(
-        id,
-        {
-          mortgage_balance: financialForm.mortgage_balance ? Number(financialForm.mortgage_balance) : undefined,
-          monthly_rent: financialForm.monthly_rent ? Number(financialForm.monthly_rent) : undefined,
-          mortgage_monthly: financialForm.mortgage_monthly ? Number(financialForm.mortgage_monthly) : undefined,
-          property_tax_annual: financialForm.property_tax_annual ? Number(financialForm.property_tax_annual) : undefined,
-          insurance_annual: financialForm.insurance_annual ? Number(financialForm.insurance_annual) : undefined,
-          hoa_monthly: financialForm.hoa_monthly ? Number(financialForm.hoa_monthly) : undefined,
-          maintenance_monthly: financialForm.maintenance_monthly ? Number(financialForm.maintenance_monthly) : undefined,
-        },
-        token
-      );
+      const payload: Record<string, unknown> = {};
+      if (detailForm.purchase_price !== "") payload.purchase_price = Number(detailForm.purchase_price);
+      else payload.purchase_price = null;
+      if (detailForm.purchase_date) payload.purchase_date = new Date(detailForm.purchase_date).toISOString();
+      else payload.purchase_date = null;
+      if (detailForm.closing_costs !== "") payload.closing_costs = Number(detailForm.closing_costs);
+      else payload.closing_costs = null;
+
+      const updated = await updateProperty(id, payload, token);
       setProperties((prev) => prev.map((p) => (p.id === id ? updated : p)));
-      setEditingFinancials(null);
+      setEditingDetails(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update financials");
+      setError(err instanceof Error ? err.message : "Failed to update property");
     } finally {
-      setSavingFinancials(false);
+      setSavingDetails(false);
     }
   }
 
+  // ── Delete property ───────────────────────────────────────────────────────
   async function handleDelete(id: string) {
     if (!token) return;
     if (!confirm("Remove this property?")) return;
@@ -228,56 +357,35 @@ export default function PropertiesPage() {
     }
   }
 
-  const totalValue = properties.reduce(
-    (sum, p) => sum + (p.current_value ? Number(p.current_value) : 0),
-    0
-  );
-  const totalPurchase = properties.reduce(
-    (sum, p) => sum + (p.purchase_price ? Number(p.purchase_price) : 0),
-    0
-  );
-  const totalNetCashFlow = properties
-    .filter(hasFinancials)
-    .reduce((sum, p) => sum + netCashFlow(p), 0);
-  const hasSomeFinancials = properties.some(hasFinancials);
+  const totalValue = properties.reduce((sum, p) => sum + (p.current_value ? Number(p.current_value) : 0), 0);
+  const totalCostBasis = properties.reduce((sum, p) => sum + costBasis(p), 0);
 
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold">Real Estate</h2>
-        <a
-          href="/settings"
-          className="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition"
-        >
+        <a href="/settings" className="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition">
           + Add Property
         </a>
       </div>
 
-      {/* Summary cards */}
       {properties.length > 0 && (
-        <div className={`grid grid-cols-1 gap-4 mb-6 ${hasSomeFinancials ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
             <p className="text-sm text-gray-500 mb-1">Total Current Value</p>
             <p className="text-2xl font-bold">{fmt(String(totalValue))}</p>
           </div>
           <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
             <p className="text-sm text-gray-500 mb-1">Total Cost Basis</p>
-            <p className="text-2xl font-bold">{fmt(String(totalPurchase))}</p>
+            <p className="text-2xl font-bold">{fmt(String(totalCostBasis))}</p>
+            <p className="text-xs text-gray-400 mt-0.5">Purchase price + closing costs</p>
           </div>
           <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
             <p className="text-sm text-gray-500 mb-1">Total Gain / Loss</p>
-            <p className={`text-2xl font-bold ${gainColor(String(totalValue), String(totalPurchase))}`}>
-              {gain(String(totalValue), String(totalPurchase))}
+            <p className={`text-2xl font-bold ${gainColor(String(totalValue), totalCostBasis)}`}>
+              {gain(String(totalValue), totalCostBasis)}
             </p>
           </div>
-          {hasSomeFinancials && (
-            <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
-              <p className="text-sm text-gray-500 mb-1">Monthly Net Cash Flow</p>
-              <p className={`text-2xl font-bold ${totalNetCashFlow >= 0 ? "text-green-600" : "text-red-600"}`}>
-                {totalNetCashFlow >= 0 ? "+" : ""}{fmt(totalNetCashFlow)}
-              </p>
-            </div>
-          )}
         </div>
       )}
 
@@ -295,322 +403,1028 @@ export default function PropertiesPage() {
         <div className="bg-white rounded-lg shadow border border-gray-100 p-12 text-center text-gray-400">
           <p className="text-lg mb-2">No properties added yet</p>
           <p className="text-sm mb-4">
-            Go to{" "}
-            <a href="/settings" className="text-primary-600 underline">Settings</a>{" "}
-            to add your first property.
+            Go to <a href="/settings" className="text-primary-600 underline">Settings</a> to add your first property.
           </p>
         </div>
       ) : (
         <div className="space-y-4">
-          {properties.map((p) => (
-            <div key={p.id} className="bg-white rounded-xl shadow border border-gray-100 p-6">
+          {properties.map((p) => {
+            const basis = costBasis(p);
+            const isEditingDetails = editingDetails === p.id;
+            const propLoans = loans[p.id] ?? [];
+            const loanBalance = totalLoanBalance(propLoans);
+            const curTab = activeTab[p.id] ?? null;
 
-              {/* Header row */}
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-lg">🏠</span>
-                    <h3 className="font-semibold text-gray-900">{p.address}</h3>
-                    <span className="text-xs bg-gray-100 text-gray-500 rounded px-2 py-0.5">
-                      {typeLabel(p.property_type)}
-                    </span>
+            return (
+              <div key={p.id} className="bg-white rounded-xl shadow border border-gray-100 p-6">
+
+                {/* ── Header ── */}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-lg">🏠</span>
+                      <h3 className="font-semibold text-gray-900">{p.address}</h3>
+                      <span className="text-xs bg-gray-100 text-gray-500 rounded px-2 py-0.5">
+                        {typeLabel(p.property_type)}
+                      </span>
+                    </div>
+                    {(p.city || p.state || p.zip_code) && (
+                      <p className="text-sm text-gray-500 ml-7">
+                        {[p.city, p.state, p.zip_code].filter(Boolean).join(", ")}
+                      </p>
+                    )}
+                    {p.notes && <p className="text-xs text-gray-400 ml-7 mt-1">{p.notes}</p>}
                   </div>
-                  {(p.city || p.state || p.zip_code) && (
-                    <p className="text-sm text-gray-500 ml-7">
-                      {[p.city, p.state, p.zip_code].filter(Boolean).join(", ")}
-                    </p>
-                  )}
-                  {p.notes && (
-                    <p className="text-xs text-gray-400 ml-7 mt-1">{p.notes}</p>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleDelete(p.id)}
-                  disabled={deleting === p.id}
-                  className="text-gray-300 hover:text-red-400 transition text-sm shrink-0 disabled:opacity-50"
-                  title="Remove property"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* Value row */}
-              <div className="mt-4 flex flex-wrap gap-6 items-end">
-                <div>
-                  <p className="text-xs text-gray-400 mb-0.5">Purchase Price</p>
-                  <p className="font-medium text-gray-700">{fmt(p.purchase_price)}</p>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <a href="/rentals" className="text-xs text-primary-600 hover:text-primary-700 font-medium">
+                      Manage Rentals →
+                    </a>
+                    <button
+                      onClick={() => isEditingDetails ? setEditingDetails(null) : openDetails(p)}
+                      className="text-xs text-gray-500 hover:text-primary-600 font-medium border border-gray-200 hover:border-primary-300 px-2 py-1 rounded-md transition"
+                    >
+                      {isEditingDetails ? "Cancel Edit" : "Edit Details"}
+                    </button>
+                    <button
+                      onClick={() => handleDelete(p.id)}
+                      disabled={deleting === p.id}
+                      className="text-gray-300 hover:text-red-400 transition text-sm disabled:opacity-50"
+                      title="Remove property"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
 
-                {/* Current value — inline edit */}
-                <div>
-                  <p className="text-xs text-gray-400 mb-0.5">Current Value</p>
-                  {editing === p.id ? (
-                    <div className="flex items-center gap-2">
-                      <div className="relative">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          autoFocus
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          className="border border-primary-400 rounded px-2 pl-5 py-1 text-sm w-32 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") saveValue(p.id);
-                            if (e.key === "Escape") setEditing(null);
-                          }}
+                {/* ── Value row ── */}
+                <div className="mt-4 flex flex-wrap gap-6 items-end">
+                  <div>
+                    <p className="text-xs text-gray-400 mb-0.5">Purchase Price</p>
+                    <p className="font-medium text-gray-700">{fmt(p.purchase_price)}</p>
+                  </div>
+                  {p.purchase_date && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Purchase Date</p>
+                      <p className="font-medium text-gray-700">
+                        {new Date(p.purchase_date).toLocaleDateString("en-US", {
+                          month: "short", day: "numeric", year: "numeric",
+                        })}
+                      </p>
+                    </div>
+                  )}
+                  {p.closing_costs && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Closing Costs</p>
+                      <p className="font-medium text-gray-700">{fmt(p.closing_costs)}</p>
+                    </div>
+                  )}
+                  {/* Current value quick-edit */}
+                  <div>
+                    <p className="text-xs text-gray-400 mb-0.5">Current Value</p>
+                    {editing === p.id ? (
+                      <div className="flex items-center gap-2">
+                        <div className="relative">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                          <input
+                            type="number" min="0" step="any" autoFocus
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            className="border border-primary-400 rounded px-2 pl-5 py-1 text-sm w-32 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") saveValue(p.id);
+                              if (e.key === "Escape") setEditing(null);
+                            }}
+                          />
+                        </div>
+                        <button onClick={() => saveValue(p.id)} disabled={saving}
+                          className="text-xs bg-primary-600 text-white px-2 py-1 rounded hover:bg-primary-700 disabled:opacity-50">
+                          {saving ? "..." : "Save"}
+                        </button>
+                        <button onClick={() => setEditing(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setEditing(p.id);
+                          setEditValue(p.current_value ? String(Number(p.current_value)) : "");
+                          setEditingDetails(null);
+                          setActiveTab((prev) => ({ ...prev, [p.id]: null }));
+                        }}
+                        className="font-semibold text-gray-900 hover:text-primary-600 transition group flex items-center gap-1"
+                        title="Click to update value"
+                      >
+                        {fmt(p.current_value)}
+                        <span className="text-xs text-gray-300 group-hover:text-primary-400">✏</span>
+                      </button>
+                    )}
+                  </div>
+                  {p.current_value && basis > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Gain / Loss</p>
+                      <p className={`font-medium ${gainColor(p.current_value, basis)}`}>
+                        {gain(p.current_value, basis)}
+                      </p>
+                    </div>
+                  )}
+                  {p.last_valuation_date && (
+                    <div className="ml-auto text-right">
+                      <p className="text-xs text-gray-400">Last updated</p>
+                      <p className="text-xs text-gray-500">
+                        {new Date(p.last_valuation_date).toLocaleDateString("en-US", {
+                          month: "short", day: "numeric", year: "numeric",
+                        })}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Equity bar (from loans) ── */}
+                {p.current_value && loanBalance > 0 && (() => {
+                  const value = Number(p.current_value);
+                  const equity = value - loanBalance;
+                  const equityPct = Math.max(0, Math.min(100, (equity / value) * 100));
+                  return (
+                    <div className="mt-4">
+                      <div className="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>
+                          Equity{" "}
+                          <span className={equity >= 0 ? "text-green-600 font-medium" : "text-red-500 font-medium"}>
+                            {fmt(equity)} ({equityPct.toFixed(1)}%)
+                          </span>
+                        </span>
+                        <span>
+                          Total loan balance{" "}
+                          <span className="text-gray-600 font-medium">{fmt(loanBalance)}</span>
+                        </span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-green-500 rounded-full transition-all duration-500"
+                          style={{ width: `${equityPct}%` }}
                         />
                       </div>
-                      <button
-                        onClick={() => saveValue(p.id)}
-                        disabled={saving}
-                        className="text-xs bg-primary-600 text-white px-2 py-1 rounded hover:bg-primary-700 transition disabled:opacity-50"
-                      >
-                        {saving ? "..." : "Save"}
+                    </div>
+                  );
+                })()}
+
+                {/* ── Edit Details panel ── */}
+                {isEditingDetails && (
+                  <div className="mt-5 pt-4 border-t border-gray-100">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
+                      Edit Purchase Details
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                      <CurrencyField
+                        label="Purchase Price"
+                        value={detailForm.purchase_price}
+                        onChange={(v) => setDetailForm((f) => ({ ...f, purchase_price: v }))}
+                        placeholder="450000"
+                      />
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Purchase Date</label>
+                        <input
+                          type="date"
+                          value={detailForm.purchase_date}
+                          onChange={(e) => setDetailForm((f) => ({ ...f, purchase_date: e.target.value }))}
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                      </div>
+                      <CurrencyField
+                        label="Closing Costs"
+                        value={detailForm.closing_costs}
+                        onChange={(v) => setDetailForm((f) => ({ ...f, closing_costs: v }))}
+                        placeholder="8500"
+                      />
+                    </div>
+                    <div className="flex gap-3">
+                      <button onClick={() => saveDetails(p.id)} disabled={savingDetails}
+                        className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+                        {savingDetails ? "Saving..." : "Save Changes"}
                       </button>
-                      <button onClick={() => setEditing(null)} className="text-xs text-gray-400 hover:text-gray-600">
+                      <button onClick={() => setEditingDetails(null)} className="text-sm text-gray-400 hover:text-gray-600 px-3 py-1.5">
                         Cancel
                       </button>
                     </div>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        setEditing(p.id);
-                        setEditValue(p.current_value ? String(Number(p.current_value)) : "");
-                      }}
-                      className="font-semibold text-gray-900 hover:text-primary-600 transition group flex items-center gap-1"
-                      title="Click to update value"
-                    >
-                      {fmt(p.current_value)}
-                      <span className="text-xs text-gray-300 group-hover:text-primary-400">✏</span>
-                    </button>
-                  )}
-                </div>
-
-                {p.current_value && p.purchase_price && (
-                  <div>
-                    <p className="text-xs text-gray-400 mb-0.5">Gain / Loss</p>
-                    <p className={`font-medium ${gainColor(p.current_value, p.purchase_price)}`}>
-                      {gain(p.current_value, p.purchase_price)}
-                    </p>
                   </div>
                 )}
 
-                {p.last_valuation_date && (
-                  <div className="ml-auto text-right">
-                    <p className="text-xs text-gray-400">Last updated</p>
-                    <p className="text-xs text-gray-500">
-                      {new Date(p.last_valuation_date).toLocaleDateString("en-US", {
-                        month: "short", day: "numeric", year: "numeric",
-                      })}
-                    </p>
-                  </div>
+                {/* ── Tab bar ── */}
+                <div className="mt-4 pt-3 border-t border-gray-50 flex gap-2">
+                  <TabBtn active={curTab === "loans"} onClick={() => toggleTab(p.id, "loans")}>
+                    Loans {propLoans.length > 0 && `(${propLoans.length})`}
+                  </TabBtn>
+                  <TabBtn active={curTab === "costs"} onClick={() => toggleTab(p.id, "costs")}>
+                    Recurring Costs {costs[p.id] && costs[p.id].length > 0 && `(${costs[p.id].length})`}
+                  </TabBtn>
+                  <TabBtn active={curTab === "maintenance"} onClick={() => toggleTab(p.id, "maintenance")}>
+                    Maintenance Log {expenses[p.id] && expenses[p.id].length > 0 && `(${expenses[p.id].length})`}
+                  </TabBtn>
+                </div>
+
+                {/* ── Loans tab ── */}
+                {curTab === "loans" && (
+                  <LoansTab
+                    propertyId={p.id}
+                    loans={propLoans}
+                    token={token!}
+                    onUpdate={(updated) => setLoans((prev) => ({ ...prev, [p.id]: updated }))}
+                  />
+                )}
+
+                {/* ── Costs tab ── */}
+                {curTab === "costs" && (
+                  <CostsTab
+                    propertyId={p.id}
+                    costs={costs[p.id] ?? []}
+                    token={token!}
+                    onUpdate={(updated) => setCosts((prev) => ({ ...prev, [p.id]: updated }))}
+                  />
+                )}
+
+                {/* ── Maintenance tab ── */}
+                {curTab === "maintenance" && (
+                  <MaintenanceTab
+                    propertyId={p.id}
+                    expenses={expenses[p.id] ?? []}
+                    token={token!}
+                    onUpdate={(updated) => setExpenses((prev) => ({ ...prev, [p.id]: updated }))}
+                  />
                 )}
               </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
-              {/* ── Equity bar ── */}
-              {p.current_value && p.mortgage_balance && (() => {
-                const value = Number(p.current_value);
-                const balance = Number(p.mortgage_balance);
-                const equity = value - balance;
-                const equityPct = Math.max(0, Math.min(100, (equity / value) * 100));
-                return (
-                  <div className="mt-4">
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Equity <span className={equity >= 0 ? "text-green-600 font-medium" : "text-red-500 font-medium"}>{fmt(equity)} ({equityPct.toFixed(1)}%)</span></span>
-                      <span>Mortgage balance <span className="text-gray-600 font-medium">{fmt(balance)}</span></span>
-                    </div>
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-green-500 rounded-full transition-all duration-500"
-                        style={{ width: `${equityPct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })()}
+// ─── Loans Tab ────────────────────────────────────────────────────────────────
 
-              {/* ── Financial section ── */}
-              {editingFinancials === p.id ? (
-                /* Edit form */
-                <div className="mt-5 pt-4 border-t border-gray-100">
-                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Edit Financials</p>
-                  <div className="space-y-3">
-                    <CurrencyInput
-                      label="Mortgage Balance Remaining"
-                      sublabel="(for equity tracking)"
-                      value={financialForm.mortgage_balance}
-                      onChange={(v) => setFinancialForm((f) => ({ ...f, mortgage_balance: v }))}
-                      placeholder="280000"
-                    />
-                    <CurrencyInput
-                      label="Monthly Rent Income"
-                      sublabel="(leave blank if owner-occupied)"
-                      value={financialForm.monthly_rent}
-                      onChange={(v) => setFinancialForm((f) => ({ ...f, monthly_rent: v }))}
-                      placeholder="2000"
-                    />
-                    <p className="text-xs text-gray-400 uppercase tracking-wide pt-1">Monthly Costs</p>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <CurrencyInput
-                        label="Mortgage"
-                        value={financialForm.mortgage_monthly}
-                        onChange={(v) => setFinancialForm((f) => ({ ...f, mortgage_monthly: v }))}
-                        placeholder="1800"
-                      />
-                      <CurrencyInput
-                        label="HOA"
-                        value={financialForm.hoa_monthly}
-                        onChange={(v) => setFinancialForm((f) => ({ ...f, hoa_monthly: v }))}
-                        placeholder="250"
-                      />
-                      <CurrencyInput
-                        label="Maintenance"
-                        value={financialForm.maintenance_monthly}
-                        onChange={(v) => setFinancialForm((f) => ({ ...f, maintenance_monthly: v }))}
-                        placeholder="200"
-                      />
-                    </div>
-                    <p className="text-xs text-gray-400 uppercase tracking-wide pt-1">Annual Costs</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <CurrencyInput
-                        label="Property Tax"
-                        sublabel="(annual)"
-                        value={financialForm.property_tax_annual}
-                        onChange={(v) => setFinancialForm((f) => ({ ...f, property_tax_annual: v }))}
-                        placeholder="4800"
-                      />
-                      <CurrencyInput
-                        label="Insurance"
-                        sublabel="(annual)"
-                        value={financialForm.insurance_annual}
-                        onChange={(v) => setFinancialForm((f) => ({ ...f, insurance_annual: v }))}
-                        placeholder="1200"
-                      />
-                    </div>
+const BLANK_LOAN: LoanCreate = {
+  lender_name: "", loan_type: "mortgage",
+  original_amount: undefined, current_balance: undefined,
+  interest_rate: undefined, monthly_payment: undefined,
+  payment_due_day: undefined,
+  escrow_included: false, escrow_amount: undefined,
+  origination_date: undefined, maturity_date: undefined,
+  term_months: undefined, notes: "",
+};
+
+function loanLabel(l: Loan): string {
+  const type = l.loan_type.replace(/_/g, " ");
+  return l.lender_name ? `${l.lender_name} (${type})` : type;
+}
+
+function LoanForm({
+  form, setForm, onSave, onCancel, saving, saveLabel,
+}: {
+  form: LoanCreate & { [k: string]: unknown };
+  setForm: React.Dispatch<React.SetStateAction<LoanCreate & { [k: string]: unknown }>>;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  saveLabel: string;
+}) {
+  function numField(key: string): string {
+    const v = form[key];
+    return v !== undefined && v !== null && v !== "" ? String(v) : "";
+  }
+  function setNum(key: string, val: string) {
+    setForm((f) => ({ ...f, [key]: val === "" ? undefined : Number(val) }));
+  }
+
+  return (
+    <div className="mt-3 bg-gray-50 rounded-lg p-4 border border-gray-200">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label="Lender Name" value={String(form.lender_name ?? "")}
+          onChange={(v) => setForm((f) => ({ ...f, lender_name: v }))} placeholder="e.g. Chase" />
+        <SelectField label="Loan Type" value={String(form.loan_type ?? "mortgage")}
+          onChange={(v) => setForm((f) => ({ ...f, loan_type: v }))} options={LOAN_TYPES} />
+        <CurrencyField label="Original Amount" value={numField("original_amount")}
+          onChange={(v) => setNum("original_amount", v)} placeholder="400000" />
+        <CurrencyField label="Current Balance" value={numField("current_balance")}
+          onChange={(v) => setNum("current_balance", v)} placeholder="350000" />
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Interest Rate (%)</label>
+          <input type="number" min="0" step="0.001" value={numField("interest_rate")}
+            onChange={(e) => setNum("interest_rate", e.target.value)} placeholder="6.875"
+            className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+        </div>
+        <CurrencyField label="Monthly Payment (P&I)" value={numField("monthly_payment")}
+          onChange={(v) => setNum("monthly_payment", v)} placeholder="2200" />
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Payment Due Day</label>
+          <input type="number" min="1" max="31" value={numField("payment_due_day")}
+            onChange={(e) => setNum("payment_due_day", e.target.value)} placeholder="1"
+            className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+        </div>
+        <Field label="Origination Date" type="date" value={String(form.origination_date ?? "")}
+          onChange={(v) => setForm((f) => ({ ...f, origination_date: v || undefined }))} />
+        <Field label="Maturity Date" type="date" value={String(form.maturity_date ?? "")}
+          onChange={(v) => setForm((f) => ({ ...f, maturity_date: v || undefined }))} />
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Term (months)</label>
+          <input type="number" min="1" value={numField("term_months")}
+            onChange={(e) => setNum("term_months", e.target.value)} placeholder="360"
+            className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+        </div>
+      </div>
+      {/* Escrow row */}
+      <div className="mt-3 flex items-center gap-4">
+        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input type="checkbox" checked={Boolean(form.escrow_included)}
+            onChange={(e) => setForm((f) => ({ ...f, escrow_included: e.target.checked }))}
+            className="rounded" />
+          Escrow included (taxes + insurance in payment)
+        </label>
+        {form.escrow_included && (
+          <div className="w-48">
+            <CurrencyField label="Monthly Escrow Amount" value={numField("escrow_amount")}
+              onChange={(v) => setNum("escrow_amount", v)} placeholder="500" />
+          </div>
+        )}
+      </div>
+      <div className="mt-3">
+        <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+        <input type="text" value={String(form.notes ?? "")}
+          onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+          placeholder="Optional notes" />
+      </div>
+      <div className="mt-3 flex gap-2">
+        <button onClick={onSave} disabled={saving}
+          className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+          {saving ? "Saving..." : saveLabel}
+        </button>
+        <button onClick={onCancel} className="text-sm text-gray-400 hover:text-gray-600 px-3 py-1.5">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function LoansTab({
+  propertyId, loans, token, onUpdate,
+}: {
+  propertyId: string;
+  loans: Loan[];
+  token: string;
+  onUpdate: (updated: Loan[]) => void;
+}) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState<LoanCreate & { [k: string]: unknown }>({ ...BLANK_LOAN });
+  const [addSaving, setAddSaving] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<LoanCreate & { [k: string]: unknown }>({ ...BLANK_LOAN });
+  const [editSaving, setEditSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [tabError, setTabError] = useState("");
+
+  function loanToForm(l: Loan): LoanCreate & { [k: string]: unknown } {
+    return {
+      lender_name: l.lender_name ?? "",
+      loan_type: l.loan_type,
+      original_amount: l.original_amount ? Number(l.original_amount) : undefined,
+      current_balance: l.current_balance ? Number(l.current_balance) : undefined,
+      interest_rate: l.interest_rate ? Number(l.interest_rate) : undefined,
+      monthly_payment: l.monthly_payment ? Number(l.monthly_payment) : undefined,
+      payment_due_day: l.payment_due_day ?? undefined,
+      escrow_included: l.escrow_included,
+      escrow_amount: l.escrow_amount ? Number(l.escrow_amount) : undefined,
+      origination_date: l.origination_date ?? undefined,
+      maturity_date: l.maturity_date ?? undefined,
+      term_months: l.term_months ?? undefined,
+      notes: l.notes ?? "",
+    };
+  }
+
+  async function handleAdd() {
+    setAddSaving(true);
+    setTabError("");
+    try {
+      const loan = await createLoan(propertyId, addForm as LoanCreate, token);
+      onUpdate([...loans, loan]);
+      setShowAdd(false);
+      setAddForm({ ...BLANK_LOAN });
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to save loan");
+    } finally {
+      setAddSaving(false);
+    }
+  }
+
+  async function handleEdit(id: string) {
+    setEditSaving(true);
+    setTabError("");
+    try {
+      const loan = await updateLoan(id, editForm as LoanCreate, token);
+      onUpdate(loans.map((l) => (l.id === id ? loan : l)));
+      setEditId(null);
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to update loan");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("Remove this loan?")) return;
+    setDeletingId(id);
+    setTabError("");
+    try {
+      await deleteLoan(id, token);
+      onUpdate(loans.filter((l) => l.id !== id));
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to delete loan");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return (
+    <div className="mt-4 pt-3 border-t border-gray-100">
+      {tabError && (
+        <div className="mb-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+          {tabError}
+        </div>
+      )}
+      {loans.length === 0 && !showAdd && (
+        <p className="text-sm text-gray-400 mb-3">No loans recorded yet.</p>
+      )}
+      <div className="space-y-3">
+        {loans.map((l) => (
+          <div key={l.id}>
+            {editId === l.id ? (
+              <LoanForm
+                form={editForm} setForm={setEditForm}
+                onSave={() => handleEdit(l.id)} onCancel={() => setEditId(null)}
+                saving={editSaving} saveLabel="Save" />
+            ) : (
+              <div className="flex items-start justify-between gap-4 bg-gray-50 rounded-lg px-4 py-3">
+                <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1">
+                  <div>
+                    <p className="text-xs text-gray-400">Loan</p>
+                    <p className="text-sm font-medium text-gray-800">{loanLabel(l)}</p>
                   </div>
-                  {/* Live preview */}
-                  {(financialForm.monthly_rent || financialForm.mortgage_monthly || financialForm.property_tax_annual || financialForm.insurance_annual || financialForm.hoa_monthly || financialForm.maintenance_monthly) && (() => {
-                    const previewRent = Number(financialForm.monthly_rent || 0);
-                    const previewExp =
-                      Number(financialForm.mortgage_monthly || 0) +
-                      Number(financialForm.property_tax_annual || 0) / 12 +
-                      Number(financialForm.insurance_annual || 0) / 12 +
-                      Number(financialForm.hoa_monthly || 0) +
-                      Number(financialForm.maintenance_monthly || 0);
-                    const previewNet = previewRent - previewExp;
-                    return (
-                      <div className="mt-4 p-3 bg-gray-50 rounded-lg flex flex-wrap gap-6 items-center">
-                        <p className="text-xs text-gray-400 uppercase tracking-wide w-full mb-1">Preview</p>
-                        {previewRent > 0 && (
-                          <div>
-                            <p className="text-xs text-gray-400">Rent Income</p>
-                            <p className="text-sm font-medium text-green-600">+{fmt(previewRent)}</p>
-                          </div>
-                        )}
-                        {previewExp > 0 && (
-                          <div>
-                            <p className="text-xs text-gray-400">Total Expenses</p>
-                            <p className="text-sm font-medium text-gray-700">{fmt(previewExp)}</p>
-                          </div>
-                        )}
-                        <div className="pl-4 border-l border-gray-300">
-                          <p className="text-xs text-gray-400">Net / Month</p>
-                          <p className={`text-sm font-bold ${previewNet >= 0 ? "text-green-600" : "text-red-600"}`}>
-                            {previewNet >= 0 ? "+" : ""}{fmt(previewNet)}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  <div className="flex gap-3 mt-4">
-                    <button
-                      onClick={() => saveFinancials(p.id)}
-                      disabled={savingFinancials}
-                      className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:opacity-50"
-                    >
-                      {savingFinancials ? "Saving..." : "Save"}
-                    </button>
-                    <button
-                      onClick={() => setEditingFinancials(null)}
-                      className="text-sm text-gray-400 hover:text-gray-600 px-3 py-1.5"
-                    >
-                      Cancel
-                    </button>
+                  <div>
+                    <p className="text-xs text-gray-400">Balance</p>
+                    <p className="text-sm font-semibold text-gray-900">{fmt(l.current_balance)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400">Rate</p>
+                    <p className="text-sm text-gray-700">
+                      {l.interest_rate ? `${Number(l.interest_rate).toFixed(3)}%` : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400">Payment / mo</p>
+                    <p className="text-sm text-gray-700">
+                      {l.monthly_payment ? fmtDec(l.monthly_payment) : "—"}
+                      {l.escrow_included && (
+                        <span className="ml-1 text-xs text-blue-500" title="Escrow included">✓ escrow</span>
+                      )}
+                    </p>
                   </div>
                 </div>
-              ) : (
-                /* Display / empty state */
-                <div className="mt-5 pt-4 border-t border-gray-100">
-                  {hasFinancials(p) ? (
-                    <>
-                      <div className="flex items-center justify-between mb-3">
-                        <p className="text-xs text-gray-400 uppercase tracking-wide">Monthly Cash Flow</p>
-                        <button
-                          onClick={() => openFinancialEdit(p)}
-                          className="text-xs text-primary-600 hover:text-primary-700"
-                        >
-                          Edit ✏
-                        </button>
-                      </div>
-                      <div className="flex flex-wrap gap-x-8 gap-y-3">
-                        {p.monthly_rent && (
-                          <div>
-                            <p className="text-xs text-gray-400 mb-0.5">Rent Income</p>
-                            <p className="text-sm font-medium text-green-600">+{fmt(p.monthly_rent)}</p>
-                          </div>
-                        )}
-                        {p.mortgage_monthly && (
-                          <div>
-                            <p className="text-xs text-gray-400 mb-0.5">Mortgage</p>
-                            <p className="text-sm font-medium text-gray-700">{fmt(p.mortgage_monthly)}</p>
-                          </div>
-                        )}
-                        {p.property_tax_annual && (
-                          <div>
-                            <p className="text-xs text-gray-400 mb-0.5">Tax <span className="text-gray-300">(÷12)</span></p>
-                            <p className="text-sm font-medium text-gray-700">{fmt(Number(p.property_tax_annual) / 12)}</p>
-                          </div>
-                        )}
-                        {p.insurance_annual && (
-                          <div>
-                            <p className="text-xs text-gray-400 mb-0.5">Insurance <span className="text-gray-300">(÷12)</span></p>
-                            <p className="text-sm font-medium text-gray-700">{fmt(Number(p.insurance_annual) / 12)}</p>
-                          </div>
-                        )}
-                        {p.hoa_monthly && (
-                          <div>
-                            <p className="text-xs text-gray-400 mb-0.5">HOA</p>
-                            <p className="text-sm font-medium text-gray-700">{fmt(p.hoa_monthly)}</p>
-                          </div>
-                        )}
-                        {p.maintenance_monthly && (
-                          <div>
-                            <p className="text-xs text-gray-400 mb-0.5">Maintenance</p>
-                            <p className="text-sm font-medium text-gray-700">{fmt(p.maintenance_monthly)}</p>
-                          </div>
-                        )}
-                        <div className="pl-4 border-l border-gray-200">
-                          <p className="text-xs text-gray-400 mb-0.5">Net / Month</p>
-                          <p className={`text-sm font-bold ${netCashFlow(p) >= 0 ? "text-green-600" : "text-red-600"}`}>
-                            {netCashFlow(p) >= 0 ? "+" : ""}{fmt(netCashFlow(p))}
-                          </p>
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => openFinancialEdit(p)}
-                      className="text-sm text-primary-600 hover:text-primary-700"
-                    >
-                      + Add rent / mortgage / expenses
-                    </button>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    onClick={() => { setEditId(l.id); setEditForm(loanToForm(l)); }}
+                    className="text-xs text-gray-400 hover:text-primary-600 transition">Edit</button>
+                  <button
+                    onClick={() => handleDelete(l.id)} disabled={deletingId === l.id}
+                    className="text-xs text-gray-400 hover:text-red-500 transition disabled:opacity-40">Delete</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {showAdd ? (
+        <LoanForm
+          form={addForm} setForm={setAddForm}
+          onSave={handleAdd} onCancel={() => { setShowAdd(false); setAddForm({ ...BLANK_LOAN }); }}
+          saving={addSaving} saveLabel="Add Loan" />
+      ) : (
+        <button onClick={() => setShowAdd(true)}
+          className="mt-3 text-sm text-primary-600 hover:text-primary-700 font-medium">
+          + Add Loan
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Costs Tab ────────────────────────────────────────────────────────────────
+
+const BLANK_COST: PropertyCostCreate = {
+  category: "other", label: "", amount: 0, frequency: "monthly", is_active: true, notes: "",
+};
+
+function CostsTab({
+  propertyId, costs, token, onUpdate,
+}: {
+  propertyId: string;
+  costs: PropertyCost[];
+  token: string;
+  onUpdate: (updated: PropertyCost[]) => void;
+}) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState({ ...BLANK_COST, amount: "" as unknown as number });
+  const [addSaving, setAddSaving] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ ...BLANK_COST, amount: "" as unknown as number });
+  const [editSaving, setEditSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [tabError, setTabError] = useState("");
+
+  function costToForm(c: PropertyCost) {
+    return {
+      category: c.category, label: c.label ?? "",
+      amount: Number(c.amount) as unknown as number,
+      frequency: c.frequency, is_active: c.is_active, notes: c.notes ?? "",
+    };
+  }
+
+  async function handleAdd() {
+    setAddSaving(true);
+    setTabError("");
+    try {
+      const created = await createPropertyCost(propertyId, {
+        ...addForm, amount: Number(addForm.amount),
+        label: addForm.label || undefined, notes: addForm.notes || undefined,
+      } as PropertyCostCreate, token);
+      onUpdate([...costs, created]);
+      setShowAdd(false);
+      setAddForm({ ...BLANK_COST, amount: "" as unknown as number });
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to save cost");
+    } finally {
+      setAddSaving(false);
+    }
+  }
+
+  async function handleEdit(id: string) {
+    setEditSaving(true);
+    setTabError("");
+    try {
+      const updated = await updatePropertyCost(id, {
+        ...editForm, amount: Number(editForm.amount),
+        label: editForm.label || undefined, notes: editForm.notes || undefined,
+      } as PropertyCostCreate, token);
+      onUpdate(costs.map((c) => (c.id === id ? updated : c)));
+      setEditId(null);
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to update cost");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("Remove this recurring cost?")) return;
+    setDeletingId(id);
+    setTabError("");
+    try {
+      await deletePropertyCost(id, token);
+      onUpdate(costs.filter((c) => c.id !== id));
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to delete cost");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function toggleActive(c: PropertyCost) {
+    setTabError("");
+    try {
+      const updated = await updatePropertyCost(c.id, { is_active: !c.is_active }, token);
+      onUpdate(costs.map((x) => (x.id === c.id ? updated : x)));
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to update cost");
+    }
+  }
+
+  const activeCosts = costs.filter((c) => c.is_active);
+  const monthlyTotal = activeCosts.reduce(
+    (sum, c) => sum + toMonthly(Number(c.amount), c.frequency), 0
+  );
+
+  function CostFormFields({
+    form, setForm,
+  }: { form: typeof addForm; setForm: React.Dispatch<React.SetStateAction<typeof addForm>> }) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <SelectField label="Category" value={form.category}
+          onChange={(v) => setForm((f) => ({ ...f, category: v }))} options={COST_CATEGORIES} />
+        <Field label="Label / Description" value={form.label ?? ""}
+          onChange={(v) => setForm((f) => ({ ...f, label: v }))} placeholder="e.g. HOA - Lakeside Commons" />
+        <CurrencyField label="Amount" value={String(form.amount === 0 ? "" : form.amount)}
+          onChange={(v) => setForm((f) => ({ ...f, amount: v as unknown as number }))} />
+        <SelectField label="Frequency" value={form.frequency}
+          onChange={(v) => setForm((f) => ({ ...f, frequency: v }))} options={COST_FREQUENCIES} />
+        <Field label="Notes (optional)" value={form.notes ?? ""}
+          onChange={(v) => setForm((f) => ({ ...f, notes: v }))} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 pt-3 border-t border-gray-100">
+      {tabError && (
+        <div className="mb-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+          {tabError}
+        </div>
+      )}
+      {costs.length === 0 && !showAdd && (
+        <p className="text-sm text-gray-400 mb-3">No recurring costs recorded yet.</p>
+      )}
+      <div className="space-y-2">
+        {costs.map((c) => (
+          <div key={c.id}>
+            {editId === c.id ? (
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <CostFormFields form={editForm} setForm={setEditForm} />
+                <div className="mt-3 flex gap-2">
+                  <button onClick={() => handleEdit(c.id)} disabled={editSaving}
+                    className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+                    {editSaving ? "Saving..." : "Save"}
+                  </button>
+                  <button onClick={() => setEditId(null)} className="text-sm text-gray-400 hover:text-gray-600 px-3">Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div className={`flex items-center justify-between gap-4 rounded-lg px-4 py-2.5 ${c.is_active ? "bg-gray-50" : "bg-gray-50 opacity-50"}`}>
+                <div className="flex items-center gap-3 flex-1">
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${COST_COLORS[c.category] ?? COST_COLORS.other}`}>
+                    {c.category.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-sm text-gray-700">{c.label || "—"}</span>
+                </div>
+                <div className="flex items-center gap-4 shrink-0">
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-gray-900">{fmtDec(c.amount)}</p>
+                    <p className="text-xs text-gray-400">{c.frequency}</p>
+                  </div>
+                  <button onClick={() => toggleActive(c)} title={c.is_active ? "Deactivate" : "Activate"}
+                    className="text-xs text-gray-300 hover:text-amber-500 transition">
+                    {c.is_active ? "●" : "○"}
+                  </button>
+                  <button onClick={() => { setEditId(c.id); setEditForm(costToForm(c)); }}
+                    className="text-xs text-gray-400 hover:text-primary-600 transition">Edit</button>
+                  <button onClick={() => handleDelete(c.id)} disabled={deletingId === c.id}
+                    className="text-xs text-gray-400 hover:text-red-500 transition disabled:opacity-40">Delete</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {showAdd ? (
+        <div className="mt-3 bg-gray-50 rounded-lg p-4 border border-gray-200">
+          <CostFormFields form={addForm} setForm={setAddForm} />
+          <div className="mt-3 flex gap-2">
+            <button onClick={handleAdd} disabled={addSaving}
+              className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+              {addSaving ? "Saving..." : "Add Cost"}
+            </button>
+            <button onClick={() => { setShowAdd(false); setAddForm({ ...BLANK_COST, amount: "" as unknown as number }); }}
+              className="text-sm text-gray-400 hover:text-gray-600 px-3">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setShowAdd(true)} className="mt-3 text-sm text-primary-600 hover:text-primary-700 font-medium">
+          + Add Recurring Cost
+        </button>
+      )}
+
+      {activeCosts.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between text-sm">
+          <span className="text-gray-500">Monthly equivalent (active costs)</span>
+          <span className="font-semibold text-gray-900">{fmtDec(monthlyTotal)}/mo</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Maintenance Tab ──────────────────────────────────────────────────────────
+
+const BLANK_EXPENSE: MaintenanceExpenseCreate = {
+  expense_date: "", amount: 0, category: "other", description: "", vendor: "", is_capex: false, notes: "",
+};
+
+function MaintenanceTab({
+  propertyId, expenses, token, onUpdate,
+}: {
+  propertyId: string;
+  expenses: MaintenanceExpense[];
+  token: string;
+  onUpdate: (updated: MaintenanceExpense[]) => void;
+}) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState({ ...BLANK_EXPENSE, amount: "" as unknown as number });
+  const [addSaving, setAddSaving] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ ...BLANK_EXPENSE, amount: "" as unknown as number });
+  const [editSaving, setEditSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [tabError, setTabError] = useState("");
+  const [showImport, setShowImport] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ imported: number; errors: { row: number; error: string }[] } | null>(null);
+
+  function expenseToForm(e: MaintenanceExpense) {
+    return {
+      expense_date: e.expense_date,
+      amount: Number(e.amount) as unknown as number,
+      category: e.category,
+      description: e.description,
+      vendor: e.vendor ?? "",
+      is_capex: e.is_capex,
+      notes: e.notes ?? "",
+    };
+  }
+
+  async function handleAdd() {
+    if (!addForm.expense_date || !addForm.description) return;
+    setAddSaving(true);
+    setTabError("");
+    try {
+      const created = await createMaintenanceExpense(propertyId, {
+        ...addForm,
+        amount: Number(addForm.amount),
+        vendor: addForm.vendor || undefined,
+        notes: addForm.notes || undefined,
+      } as MaintenanceExpenseCreate, token);
+      onUpdate([created, ...expenses]);
+      setShowAdd(false);
+      setAddForm({ ...BLANK_EXPENSE, amount: "" as unknown as number });
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to save expense");
+    } finally {
+      setAddSaving(false);
+    }
+  }
+
+  async function handleEdit(id: string) {
+    setEditSaving(true);
+    setTabError("");
+    try {
+      const updated = await updateMaintenanceExpense(id, {
+        ...editForm,
+        amount: Number(editForm.amount),
+        vendor: editForm.vendor || undefined,
+        notes: editForm.notes || undefined,
+      } as MaintenanceExpenseCreate, token);
+      onUpdate(expenses.map((e) => (e.id === id ? updated : e)));
+      setEditId(null);
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to update expense");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("Remove this expense?")) return;
+    setDeletingId(id);
+    setTabError("");
+    try {
+      await deleteMaintenanceExpense(id, token);
+      onUpdate(expenses.filter((e) => e.id !== id));
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to delete expense");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  function downloadTemplate() {
+    const header = "expense_date,amount,description,vendor,category,notes";
+    const examples = [
+      "2024-03-15,250.00,Plumbing repair - kitchen sink,ABC Plumbing,plumbing,",
+      "2024-04-01,150.00,Lawn mowing,Green Lawn Co,landscaping,April service",
+      "2024-05-20,800.00,HVAC filter replacement and service,,,Annual tune-up",
+    ].join("\n");
+    const blob = new Blob([header + "\n" + examples], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "maintenance_expenses_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleImport() {
+    if (!importFile) return;
+    setImporting(true);
+    setTabError("");
+    setImportResult(null);
+    try {
+      const result = await importMaintenanceExpenses(propertyId, importFile, token);
+      setImportResult(result);
+      if (result.imported > 0) {
+        // Reload the expenses list
+        const refreshed = await listMaintenanceExpenses(propertyId, token);
+        onUpdate(refreshed);
+      }
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  const thisYear = new Date().getFullYear();
+  const ytdTotal = expenses
+    .filter((e) => new Date(e.expense_date).getFullYear() === thisYear)
+    .reduce((sum, e) => sum + Number(e.amount), 0);
+  const allTotal = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+
+  function ExpenseFormFields({
+    form, setForm,
+  }: { form: typeof addForm; setForm: React.Dispatch<React.SetStateAction<typeof addForm>> }) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label="Date" type="date" value={form.expense_date}
+          onChange={(v) => setForm((f) => ({ ...f, expense_date: v }))} />
+        <CurrencyField label="Amount" value={String(form.amount === 0 ? "" : form.amount)}
+          onChange={(v) => setForm((f) => ({ ...f, amount: v as unknown as number }))} />
+        <SelectField label="Category" value={form.category}
+          onChange={(v) => setForm((f) => ({ ...f, category: v }))} options={EXPENSE_CATEGORIES} />
+        <div className="md:col-span-2">
+          <Field label="Description" value={form.description}
+            onChange={(v) => setForm((f) => ({ ...f, description: v }))} placeholder="e.g. HVAC repair" />
+        </div>
+        <Field label="Vendor (optional)" value={form.vendor ?? ""}
+          onChange={(v) => setForm((f) => ({ ...f, vendor: v }))} placeholder="e.g. ABC Plumbing" />
+        <div className="md:col-span-3">
+          <Field label="Notes (optional)" value={form.notes ?? ""}
+            onChange={(v) => setForm((f) => ({ ...f, notes: v }))} />
+        </div>
+        <div className="md:col-span-3">
+          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={Boolean(form.is_capex)}
+              onChange={(e) => setForm((f) => ({ ...f, is_capex: e.target.checked }))}
+              className="rounded"
+            />
+            <span>Capital Expenditure (CapEx)</span>
+            <span className="text-xs text-gray-400">— excluded from NOI calculation</span>
+          </label>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 pt-3 border-t border-gray-100">
+      {tabError && (
+        <div className="mb-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+          {tabError}
+        </div>
+      )}
+      {expenses.length === 0 && !showAdd && (
+        <p className="text-sm text-gray-400 mb-3">No maintenance expenses recorded yet.</p>
+      )}
+
+      <div className="space-y-2">
+        {expenses.map((e) => (
+          <div key={e.id}>
+            {editId === e.id ? (
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <ExpenseFormFields form={editForm} setForm={setEditForm} />
+                <div className="mt-3 flex gap-2">
+                  <button onClick={() => handleEdit(e.id)} disabled={editSaving}
+                    className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+                    {editSaving ? "Saving..." : "Save"}
+                  </button>
+                  <button onClick={() => setEditId(null)} className="text-sm text-gray-400 hover:text-gray-600 px-3">Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-4 bg-gray-50 rounded-lg px-4 py-2.5">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <span className="text-xs text-gray-400 shrink-0">
+                    {new Date(e.expense_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </span>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${EXPENSE_COLORS[e.category] ?? EXPENSE_COLORS.other}`}>
+                    {e.category.replace(/_/g, " ")}
+                  </span>
+                  {e.is_capex && (
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full shrink-0 bg-purple-100 text-purple-700">
+                      CapEx
+                    </span>
                   )}
+                  <span className="text-sm text-gray-700 truncate">{e.description}</span>
+                  {e.vendor && <span className="text-xs text-gray-400 truncate">· {e.vendor}</span>}
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-sm font-semibold text-gray-900">{fmtDec(e.amount)}</span>
+                  <button onClick={() => { setEditId(e.id); setEditForm(expenseToForm(e)); }}
+                    className="text-xs text-gray-400 hover:text-primary-600 transition">Edit</button>
+                  <button onClick={() => handleDelete(e.id)} disabled={deletingId === e.id}
+                    className="text-xs text-gray-400 hover:text-red-500 transition disabled:opacity-40">Delete</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {showAdd ? (
+        <div className="mt-3 bg-gray-50 rounded-lg p-4 border border-gray-200">
+          <ExpenseFormFields form={addForm} setForm={setAddForm} />
+          <div className="mt-3 flex gap-2">
+            <button onClick={handleAdd} disabled={addSaving || !addForm.expense_date || !addForm.description}
+              className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+              {addSaving ? "Saving..." : "Add Expense"}
+            </button>
+            <button onClick={() => { setShowAdd(false); setAddForm({ ...BLANK_EXPENSE, amount: "" as unknown as number }); }}
+              className="text-sm text-gray-400 hover:text-gray-600 px-3">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3 flex items-center gap-4">
+          <button onClick={() => { setShowAdd(true); setShowImport(false); }}
+            className="text-sm text-primary-600 hover:text-primary-700 font-medium">
+            + Add Expense
+          </button>
+          <button
+            onClick={() => { setShowImport((v) => !v); setShowAdd(false); setImportResult(null); }}
+            className="text-sm text-gray-500 hover:text-gray-700 font-medium border border-gray-200 hover:border-gray-300 px-2.5 py-1 rounded-md transition"
+          >
+            {showImport ? "Cancel Import" : "Import CSV"}
+          </button>
+        </div>
+      )}
+
+      {/* ── CSV Import panel ── */}
+      {showImport && !showAdd && (
+        <div className="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-medium text-blue-800">Import Maintenance Expenses</p>
+            <button
+              onClick={downloadTemplate}
+              className="text-xs text-blue-600 hover:text-blue-800 underline font-medium"
+            >
+              Download template CSV
+            </button>
+          </div>
+          <p className="text-xs text-blue-600 mb-3">
+            Required columns: <strong>expense_date</strong> (YYYY-MM-DD), <strong>amount</strong>, <strong>description</strong>.
+            Optional: vendor, category, notes. Category is auto-detected from description if not provided.
+          </p>
+          <div className="flex items-center gap-3">
+            <input
+              type="file"
+              accept=".csv"
+              onChange={(e) => { setImportFile(e.target.files?.[0] ?? null); setImportResult(null); }}
+              className="text-xs text-gray-600 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-white file:text-primary-600 file:hover:bg-gray-50 file:cursor-pointer"
+            />
+            <button
+              onClick={handleImport}
+              disabled={!importFile || importing}
+              className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50 shrink-0"
+            >
+              {importing ? "Importing..." : "Import"}
+            </button>
+          </div>
+          {importResult && (
+            <div className="mt-3 space-y-1">
+              <p className="text-xs font-medium text-green-700">
+                {importResult.imported} expense{importResult.imported !== 1 ? "s" : ""} imported successfully.
+              </p>
+              {importResult.errors.length > 0 && (
+                <div className="mt-1">
+                  <p className="text-xs font-medium text-red-600 mb-1">
+                    {importResult.errors.length} row{importResult.errors.length !== 1 ? "s" : ""} skipped:
+                  </p>
+                  <ul className="space-y-0.5">
+                    {importResult.errors.map((err) => (
+                      <li key={err.row} className="text-xs text-red-600">
+                        Row {err.row}: {err.error}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>
-          ))}
+          )}
+        </div>
+      )}
+
+      {expenses.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-gray-100 flex gap-6 text-sm">
+          <span className="text-gray-500">
+            YTD ({thisYear}): <span className="font-semibold text-gray-900">{fmtDec(ytdTotal)}</span>
+          </span>
+          <span className="text-gray-500">
+            All-time: <span className="font-semibold text-gray-900">{fmtDec(allTotal)}</span>
+          </span>
         </div>
       )}
     </div>

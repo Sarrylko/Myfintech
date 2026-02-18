@@ -3,7 +3,7 @@ import io
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from app.models.rule import CategorizationRule
 from app.models.user import User
 from app.schemas.account import (
     AccountResponse,
+    AccountUpdate,
     ManualAccountCreate,
     TransactionResponse,
     TransactionUpdate,
@@ -112,6 +113,73 @@ async def get_account(
     return account
 
 
+@router.delete("/{account_id}", status_code=204)
+async def delete_account(
+    account_id: uuid.UUID,
+    delete_transactions: bool = Query(default=True),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an account. Optionally delete its transactions (default=True).
+    If delete_transactions=False, transactions remain but are unlinked (account_id set to NULL).
+    """
+    result = await db.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.household_id == user.household_id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if delete_transactions:
+        # Delete all transactions for this account
+        txns_result = await db.execute(
+            select(Transaction).where(Transaction.account_id == account_id)
+        )
+        for txn in txns_result.scalars().all():
+            await db.delete(txn)
+    else:
+        # Unlink transactions (set account_id to NULL so they remain accessible)
+        txns_result = await db.execute(
+            select(Transaction).where(Transaction.account_id == account_id)
+        )
+        for txn in txns_result.scalars().all():
+            txn.account_id = None
+
+    await db.delete(account)
+    await db.commit()
+
+
+@router.patch("/{account_id}", response_model=AccountResponse)
+async def update_account(
+    account_id: uuid.UUID,
+    payload: AccountUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update editable fields on any account (manual or Plaid-linked)."""
+    result = await db.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.household_id == user.household_id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    for field, value in data.items():
+        setattr(account, field, value)
+
+    await db.flush()
+    await db.refresh(account)
+    await db.commit()
+    return account
+
+
 @router.get("/{account_id}/transactions", response_model=list[TransactionResponse])
 async def list_transactions(
     account_id: uuid.UUID,
@@ -194,8 +262,21 @@ async def import_csv_transactions(
     )
     rules = rules_result.scalars().all()
 
+    # Build fingerprint set from transactions already in this account
+    # Fingerprint: "YYYY-MM-DD|description_lower|amount_normalized"
+    existing_result = await db.execute(
+        select(Transaction.date, Transaction.name, Transaction.amount)
+        .where(Transaction.account_id == account.id)
+    )
+    existing_fps: set[str] = set()
+    for ex_date, ex_name, ex_amount in existing_result.all():
+        date_str = ex_date.strftime("%Y-%m-%d") if ex_date else ""
+        existing_fps.add(f"{date_str}|{(ex_name or '').lower().strip()}|{float(ex_amount):.2f}")
+
     errors = []
     imported = 0
+    duplicates = 0
+    seen_in_file: set[str] = set()  # dedup within the same CSV upload
     i = 1  # track last row number for total_rows calculation
 
     for i, raw_row in enumerate(reader, start=2):  # row 1 = header
@@ -222,6 +303,13 @@ async def import_csv_transactions(
         if not description:
             errors.append({"row": i, "error": "Description is required"})
             continue
+
+        # Deduplication check (use original amount before rule sign-flip)
+        fp = f"{txn_date.strftime('%Y-%m-%d')}|{description.lower()}|{float(amount):.2f}"
+        if fp in existing_fps or fp in seen_in_file:
+            duplicates += 1
+            continue
+        seen_in_file.add(fp)
 
         merchant = row.get("merchant", "") or None
         category = row.get("category", "") or None
@@ -253,8 +341,9 @@ async def import_csv_transactions(
 
     return {
         "imported": imported,
+        "duplicates": duplicates,
         "errors": errors,
-        "total_rows": i - 1 if imported + len(errors) > 0 else 0,
+        "total_rows": i - 1 if imported + len(errors) + duplicates > 0 else 0,
     }
 
 
