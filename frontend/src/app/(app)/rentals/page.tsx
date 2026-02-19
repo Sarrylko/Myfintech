@@ -41,7 +41,12 @@ import {
   CapitalEventCreate,
   PropertyReport,
   PortfolioReport,
+  ExpenseBreakdown,
 } from "@/lib/api";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip as ChartTooltip, Legend, ResponsiveContainer,
+} from "recharts";
 
 function fmt(val: string | number | null | undefined): string {
   if (val === null || val === undefined || val === "") return "—";
@@ -1098,6 +1103,10 @@ function ReportsTab({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Time-series data for YTD/LastYear/LTD monthly/yearly breakdown charts
+  const [timeSeriesData, setTimeSeriesData] = useState<{ label: string; data: PropertyReport | PortfolioReport }[] | null>(null);
+  const [loadingTimeSeries, setLoadingTimeSeries] = useState(false);
+
   // Capital events
   const [capitalEvents, setCapitalEvents] = useState<CapitalEvent[]>([]);
   const [showAddEvent, setShowAddEvent] = useState(false);
@@ -1156,6 +1165,58 @@ function ReportsTab({
     if (properties.length > 0) loadReport();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPropId, year, month, selectedPreset]); // selectedPreset ensures MTD↔YTD re-fetches
+
+  // Fetch time-series breakdown for YTD/LastYear/LTD (monthly or yearly data)
+  useEffect(() => {
+    // Only fetch time-series for YTD and LastYear presets
+    if (selectedPreset !== "YTD" && selectedPreset !== "LastYear") {
+      setTimeSeriesData(null);
+      return;
+    }
+
+    async function fetchTimeSeries() {
+      setLoadingTimeSeries(true);
+      try {
+        const promises: Promise<PropertyReport | PortfolioReport>[] = [];
+        const labels: string[] = [];
+
+        if (selectedPreset === "YTD") {
+          // Fetch each month from Jan to selected month
+          for (let m = 1; m <= month; m++) {
+            const mStr = `${year}-${m.toString().padStart(2, "0")}`;
+            labels.push(MONTHS[m - 1]);
+            if (selectedPropId === "all") {
+              promises.push(getPortfolioReport(year, mStr, token));
+            } else {
+              promises.push(getPropertyReport(selectedPropId, year, mStr, token));
+            }
+          }
+        } else if (selectedPreset === "LastYear") {
+          // Fetch all 12 months of previous year
+          for (let m = 1; m <= 12; m++) {
+            const mStr = `${year}-${m.toString().padStart(2, "0")}`;
+            labels.push(MONTHS[m - 1]);
+            if (selectedPropId === "all") {
+              promises.push(getPortfolioReport(year, mStr, token));
+            } else {
+              promises.push(getPropertyReport(selectedPropId, year, mStr, token));
+            }
+          }
+        }
+
+        const results = await Promise.all(promises);
+        setTimeSeriesData(results.map((data, i) => ({ label: labels[i], data })));
+      } catch (err) {
+        console.error("Failed to fetch time series:", err);
+        setTimeSeriesData(null);
+      } finally {
+        setLoadingTimeSeries(false);
+      }
+    }
+
+    if (properties.length > 0) fetchTimeSeries();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPropId, selectedPreset, year, month]);
 
   async function handleAddEvent() {
     if (!selectedPropId || selectedPropId === "all") return;
@@ -1328,27 +1389,6 @@ function ReportsTab({
             <KpiCard icon="📈" label="Q NOI" value={fmtM(q.noi)} color={q.noi >= 0 ? "green" : "red"}
               higherIsBetter={true} trend={tr(q.noi, pq?.noi)} tooltip={TT.noi} />
           </div>
-          {q.expense_by_category.length > 0 && (
-            <div className="bg-white rounded-lg border border-gray-200 p-4">
-              <p className="text-xs font-medium text-gray-500 mb-3">Expense Breakdown — Q{qNum}</p>
-              <div className="space-y-2">
-                {q.expense_by_category.map((row) => {
-                  const total = q.expense_by_category.reduce((s, r) => s + r.total, 0);
-                  const pct = total > 0 ? (row.total / total) * 100 : 0;
-                  return (
-                    <div key={row.category} className="flex items-center gap-3">
-                      <span className="text-xs text-gray-500 w-28 shrink-0 capitalize">{row.category.replace(/_/g, " ")}</span>
-                      <div className="flex-1 h-2 bg-gray-100 rounded-full">
-                        <div className="h-full bg-primary-500 rounded-full" style={{ width: `${pct}%` }} />
-                      </div>
-                      <span className="text-xs text-gray-700 font-medium w-20 text-right">{fmtM(row.total)}</span>
-                      <span className="text-xs text-gray-400 w-10 text-right">{pct.toFixed(0)}%</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Annual */}
@@ -1648,6 +1688,27 @@ function ReportsTab({
             </div>
           </div>
         </div>
+
+        {/* Re-calculate action */}
+        <div className="flex justify-end pt-1 border-t border-gray-100">
+          <button
+            onClick={loadReport}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors"
+          >
+            {loading ? (
+              <>
+                <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                Calculating…
+              </>
+            ) : (
+              <>↻ Re-calculate KPIs</>
+            )}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -1667,6 +1728,142 @@ function ReportsTab({
           <p>No properties found. Add properties in the Real Estate page first.</p>
         </div>
       )}
+
+      {loadingTimeSeries && (
+        <div className="bg-white rounded-xl shadow border border-gray-100 p-8 text-center text-gray-400 text-sm">
+          Loading monthly breakdown...
+        </div>
+      )}
+
+      {/* Payments vs Expenses stacked chart */}
+      {!loading && !loadingTimeSeries && (report || portfolio || timeSeriesData) && (() => {
+        // Expense bar definitions — order = bottom→top in the stack
+        const EXP_BARS: { key: keyof ExpenseBreakdown; label: string; color: string }[] = [
+          { key: "loan_payment",  label: "Loan Payment",  color: "#6366f1" },
+          { key: "property_tax",  label: "Property Tax",  color: "#f97316" },
+          { key: "insurance",     label: "Insurance",     color: "#eab308" },
+          { key: "hoa",           label: "HOA",           color: "#a855f7" },
+          { key: "other_fixed",   label: "Other Fixed",   color: "#ec4899" },
+          { key: "repairs",       label: "Repairs",       color: "#f87171" },
+        ];
+
+        type ChartRow = { name: string; Payments: number } & Record<string, number>;
+
+        function bdRow(name: string, collected: number, bd: ExpenseBreakdown): ChartRow {
+          return {
+            name,
+            Payments: collected,
+            loan_payment: bd.loan_payment,
+            property_tax: bd.property_tax,
+            insurance:    bd.insurance,
+            hoa:          bd.hoa,
+            other_fixed:  bd.other_fixed,
+            repairs:      bd.repairs,
+          };
+        }
+
+        const chartData: ChartRow[] = [];
+        let chartTitle = "";
+        const fmtTick = (v: number) =>
+          v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M`
+          : v >= 1_000   ? `$${(v / 1_000).toFixed(0)}k`
+          : `$${v}`;
+
+        // TIME-SERIES CHART: Show monthly breakdown for YTD/LastYear
+        if (timeSeriesData && timeSeriesData.length > 0) {
+          timeSeriesData.forEach((ts) => {
+            const isPortfolio = "properties" in ts.data;
+            if (isPortfolio) {
+              const p = ts.data as PortfolioReport;
+              const m = p.portfolio_total.monthly;
+              chartData.push(bdRow(ts.label, m.rent_collected, m.expense_breakdown));
+            } else {
+              const r = ts.data as PropertyReport;
+              chartData.push(bdRow(ts.label, r.monthly.rent_collected, r.monthly.expense_breakdown));
+            }
+          });
+          const isPortfolio = "properties" in timeSeriesData[0].data;
+          chartTitle = selectedPreset === "YTD"
+            ? `${isPortfolio ? "Portfolio" : report?.property_address || ""} — Monthly Breakdown (YTD ${year})`
+            : `${isPortfolio ? "Portfolio" : report?.property_address || ""} — Monthly Breakdown (${year})`;
+        }
+        // AGGREGATE CHART: Show property comparison or single period for MTD/LTD/etc
+        else if (portfolio) {
+          portfolio.properties.forEach((pr) => {
+            // FIX: Last Year should use ytd (full year when month=12), not monthly (Dec only)
+            const prm = (selectedPreset === "YTD" || selectedPreset === "LastYear") && pr.ytd ? pr.ytd : pr.monthly;
+            chartData.push(bdRow(pr.property_address.split(",")[0], prm.rent_collected, prm.expense_breakdown));
+          });
+          chartTitle =
+            selectedPreset === "YTD" ? `Portfolio YTD — Jan–${MONTHS[month - 1]} ${year}`
+            : selectedPreset === "LastYear" ? `Portfolio — Full ${year}`
+            : `Portfolio — ${MONTHS[month - 1]} ${year}`;
+        } else if (report) {
+          let collected = 0;
+          let bd: ExpenseBreakdown;
+          if (selectedPreset === "LTD" && report.lifetime) {
+            collected = report.lifetime.rent_collected;
+            bd = report.lifetime.expense_breakdown;
+          } else if ((selectedPreset === "YTD" || selectedPreset === "LastYear") && report.ytd) {
+            // FIX: Last Year should use ytd (full year), not monthly (Dec only)
+            collected = report.ytd.rent_collected;
+            bd = report.ytd.expense_breakdown;
+          } else {
+            collected = report.monthly.rent_collected;
+            bd = report.monthly.expense_breakdown;
+          }
+          const pLabel =
+            selectedPreset === "LTD"       ? "Lifetime"
+            : selectedPreset === "YTD"     ? `Jan–${MONTHS[month - 1]} ${year}`
+            : selectedPreset === "LastYear" ? `Full ${year}`
+            : `${MONTHS[month - 1]} ${year}`;
+          chartData.push(bdRow(pLabel, collected, bd));
+          chartTitle = report.property_address;
+        }
+
+        if (!chartData.length) return null;
+
+        // Only render bars that have at least one non-zero value across all rows
+        const activeExpBars = EXP_BARS.filter((b) =>
+          chartData.some((row) => (row[b.key] as number) > 0)
+        );
+
+        return (
+          <div className="bg-white rounded-xl shadow border border-gray-100 p-5">
+            <p className="text-sm font-semibold text-gray-700 mb-0.5">Payments vs Expenses</p>
+            <p className="text-xs text-gray-400 mb-4">{chartTitle}</p>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }} barCategoryGap="35%">
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={fmtTick} tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} width={52} />
+                <ChartTooltip
+                  formatter={(value: number, name: string) => [
+                    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value),
+                    name,
+                  ]}
+                  contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+                />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                {/* Payments bar — standalone green */}
+                <Bar dataKey="Payments" name="Payments (Collected)" fill="#22c55e" radius={[4, 4, 0, 0]} maxBarSize={80} />
+                {/* Stacked expense breakdown bars */}
+                {activeExpBars.map((b, i) => (
+                  <Bar
+                    key={b.key}
+                    dataKey={b.key}
+                    name={b.label}
+                    fill={b.color}
+                    stackId="exp"
+                    radius={i === activeExpBars.length - 1 ? [4, 4, 0, 0] : undefined}
+                    maxBarSize={80}
+                  />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })()}
 
       {!loading && report && (
         <div className="bg-white rounded-xl shadow border border-gray-100 p-6">

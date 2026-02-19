@@ -872,6 +872,15 @@ export async function deleteCapitalEvent(id: string, token: string): Promise<voi
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
 
+export interface ExpenseBreakdown {
+  loan_payment: number;
+  property_tax: number;
+  insurance: number;
+  hoa: number;
+  other_fixed: number;
+  repairs: number;
+}
+
 export interface MonthlyReport {
   rent_charged: number;
   rent_collected: number;
@@ -884,6 +893,7 @@ export interface MonthlyReport {
   occupancy_pct: number;
   rentable_units: number;
   occupied_units: number;
+  expense_breakdown: ExpenseBreakdown;
 }
 
 export interface QuarterlyReport {
@@ -930,6 +940,7 @@ export interface YtdReport {
   occupancy_pct: number;
   rentable_units: number;
   occupied_units: number;
+  expense_breakdown: ExpenseBreakdown;
 }
 
 export interface LifetimeReport {
@@ -949,6 +960,7 @@ export interface LifetimeReport {
   irr: number | null;
   current_equity: number;
   total_equity_invested: number;
+  expense_breakdown: ExpenseBreakdown;
 }
 
 export interface PropertyReport {

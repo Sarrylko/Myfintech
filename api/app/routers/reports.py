@@ -103,6 +103,28 @@ def _prior_year_range(year: int) -> tuple[date, date]:
     return date(year - 1, 1, 1), date(year - 1, 12, 31)
 
 
+def _bound_by_purchase(start: date, end: date, purchase_date) -> tuple[date, date]:
+    """
+    Cap the date range so it doesn't go before the property's purchase_date.
+    If the entire period is before purchase, returns (end, end) which yields 0 results.
+    """
+    if not purchase_date:
+        return (start, end)
+
+    # Convert datetime to date if needed
+    pd = purchase_date.date() if hasattr(purchase_date, 'date') else purchase_date
+
+    # If entire period is before purchase, return empty range
+    if end < pd:
+        return (end, end)
+
+    # Cap start at purchase_date
+    if start < pd:
+        start = pd
+
+    return (start, end)
+
+
 # ─── Aggregation helpers ──────────────────────────────────────────────────────
 
 async def _property_metrics(
@@ -123,6 +145,12 @@ async def _property_metrics(
     prop = prop_result.scalar_one_or_none()
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
+
+    # ── Bound all date ranges by purchase_date (don't calculate before property was purchased) ──
+    m_start, m_end = _bound_by_purchase(m_start, m_end, prop.purchase_date)
+    q_start, q_end = _bound_by_purchase(q_start, q_end, prop.purchase_date)
+    y_start, y_end = _bound_by_purchase(y_start, y_end, prop.purchase_date)
+    py_start, py_end = _bound_by_purchase(py_start, py_end, prop.purchase_date)
 
     # ── Rentable units ──
     units_result = await db.execute(
@@ -246,6 +274,37 @@ async def _property_metrics(
     active_costs = list(costs_result.scalars().all())
     monthly_fixed_costs = property_costs_monthly_equiv(active_costs)
 
+    # Per-category monthly equivalents for the stacked expense chart
+    def category_monthly_equiv(cat: str) -> float:
+        total = 0.0
+        for c in active_costs:
+            if not c.is_active or c.category != cat:
+                continue
+            amt = float(c.amount)
+            if c.frequency == "monthly":
+                total += amt
+            elif c.frequency == "quarterly":
+                total += amt / 3
+            elif c.frequency == "annual":
+                total += amt / 12
+        return total
+
+    monthly_tax       = category_monthly_equiv("property_tax")
+    monthly_insurance = category_monthly_equiv("insurance")
+    monthly_hoa       = category_monthly_equiv("hoa")
+    monthly_other_fixed = monthly_fixed_costs - monthly_tax - monthly_insurance - monthly_hoa
+
+    def expense_bd(months: int, repairs: float) -> dict:
+        """Return per-category expense breakdown for a given period length."""
+        return {
+            "loan_payment": round(monthly_debt_service * months, 2),
+            "property_tax": round(monthly_tax * months, 2),
+            "insurance":    round(monthly_insurance * months, 2),
+            "hoa":          round(monthly_hoa * months, 2),
+            "other_fixed":  round(monthly_other_fixed * months, 2),
+            "repairs":      round(repairs, 2),
+        }
+
     # ── Loans → debt service (estimated) ──
     loans_result = await db.execute(
         select(Loan).where(Loan.property_id == property_id)
@@ -258,7 +317,8 @@ async def _property_metrics(
     # ── MONTHLY ──
     m_charged = await rent_roll(m_start, m_end)
     m_collected = await rent_collected(m_start, m_end)
-    m_opex = await maintenance_opex(m_start, m_end) + monthly_fixed_costs
+    m_opex_maint = await maintenance_opex(m_start, m_end)
+    m_opex = m_opex_maint + monthly_fixed_costs
     m_capex = await maintenance_capex(m_start, m_end)
     m_noi = m_collected - m_opex
     m_cash_flow = m_noi - monthly_debt_service
@@ -333,7 +393,9 @@ async def _property_metrics(
     # ── YTD (Jan 1 → end of selected month) ──
     ytd_start = date(year, 1, 1)
     ytd_end = m_end              # end of the selected month (consistent with MTD)
-    ytd_months = month           # number of months Jan–selected (e.g. Feb → 2)
+    ytd_start, ytd_end = _bound_by_purchase(ytd_start, ytd_end, prop.purchase_date)
+    # Recalculate months from bounded period (not just calendar month count)
+    ytd_months = max(1, ((ytd_end.year - ytd_start.year) * 12 + ytd_end.month - ytd_start.month) + 1) if ytd_end >= ytd_start else 0
     ytd_charged = await rent_roll(ytd_start, ytd_end)
     ytd_collected = await rent_collected(ytd_start, ytd_end)
     ytd_opex_maint = await maintenance_opex(ytd_start, ytd_end)
@@ -361,16 +423,19 @@ async def _property_metrics(
     y_collected = await rent_collected(y_start, y_end)
     y_opex_maint = await maintenance_opex(y_start, y_end)
     y_capex = await maintenance_capex(y_start, y_end)
-    y_fixed = monthly_fixed_costs * 12
+    # Recalculate months from bounded period (not just 12 if purchase was mid-year)
+    y_months = max(1, ((y_end.year - y_start.year) * 12 + y_end.month - y_start.month) + 1) if y_end >= y_start else 0
+    y_fixed = monthly_fixed_costs * y_months
     y_opex = y_opex_maint + y_fixed
-    y_debt = monthly_debt_service * 12
+    y_debt = monthly_debt_service * y_months
     y_noi = y_collected - y_opex
     y_cash_flow = y_noi - y_debt
 
     # Prior year NOI
     py_collected = await rent_collected(py_start, py_end)
     py_opex_maint = await maintenance_opex(py_start, py_end)
-    py_opex = py_opex_maint + y_fixed  # same fixed costs (approx)
+    py_months = max(1, ((py_end.year - py_start.year) * 12 + py_end.month - py_start.month) + 1) if py_end >= py_start else 0
+    py_opex = py_opex_maint + (monthly_fixed_costs * py_months)
     py_noi = py_collected - py_opex
     noi_yoy_pct = (
         ((y_noi - py_noi) / abs(py_noi) * 100) if py_noi != 0 else None
@@ -429,6 +494,7 @@ async def _property_metrics(
             earliest = cf_list[0][0]
             for yr in range(earliest.year, year + 1):
                 yr_s, yr_e = _year_range(yr)
+                yr_s, yr_e = _bound_by_purchase(yr_s, yr_e, prop.purchase_date)
                 yr_end_cap = yr_e if yr < year else date.today()
                 yr_collected = await rent_collected(yr_s, yr_end_cap)
                 yr_opex_m = await maintenance_opex(yr_s, yr_end_cap)
@@ -491,6 +557,7 @@ async def _property_metrics(
             "irr": irr_value,
             "current_equity": round(current_equity, 2),
             "total_equity_invested": round(total_equity_invested, 2),
+            "expense_breakdown": expense_bd(lt_months, lt_opex_m),
         }
 
     quarter_num = (month - 1) // 3 + 1
@@ -513,6 +580,7 @@ async def _property_metrics(
             "occupancy_pct": round(occ_pct, 1),
             "rentable_units": len(rentable_units),
             "occupied_units": int(occupied_month),
+            "expense_breakdown": expense_bd(1, m_opex_maint),
         },
         "ytd": {
             "months": ytd_months,
@@ -527,6 +595,7 @@ async def _property_metrics(
             "occupancy_pct": round(occ_pct, 1),
             "rentable_units": len(rentable_units),
             "occupied_units": int(occupied_month),
+            "expense_breakdown": expense_bd(ytd_months, ytd_opex_maint),
         },
         "quarterly": {
             "rent_charged": round(q_charged, 2),
@@ -556,6 +625,7 @@ async def _property_metrics(
             "insurance_annual": round(insurance_total, 2),
             "total_equity_invested": round(total_equity_invested, 2),
             "current_equity": round(current_equity, 2),
+            "expense_breakdown": expense_bd(12, y_opex_maint),
         },
     }
     if lifetime_data is not None:
@@ -641,6 +711,10 @@ async def portfolio_report(
             total += float(obj or 0)
         return round(total, 2)
 
+    def agg_bd(period: str) -> dict:
+        cats = ["loan_payment", "property_tax", "insurance", "hoa", "other_fixed", "repairs"]
+        return {c: agg([period, "expense_breakdown", c]) for c in cats}
+
     portfolio_total = {
         "monthly": {
             "rent_charged": agg(["monthly", "rent_charged"]),
@@ -653,6 +727,7 @@ async def portfolio_report(
             "cash_flow": agg(["monthly", "cash_flow"]),
             "rentable_units": agg(["monthly", "rentable_units"]),
             "occupied_units": agg(["monthly", "occupied_units"]),
+            "expense_breakdown": agg_bd("monthly"),
         },
         "ytd": {
             "months": month_num,
@@ -666,6 +741,7 @@ async def portfolio_report(
             "cash_flow": agg(["ytd", "cash_flow"]),
             "rentable_units": agg(["monthly", "rentable_units"]),
             "occupied_units": agg(["monthly", "occupied_units"]),
+            "expense_breakdown": agg_bd("ytd"),
         },
         "annual": {
             "rent_charged": agg(["annual", "rent_charged"]),
