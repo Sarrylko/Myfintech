@@ -775,7 +775,7 @@ async def portfolio_report(
 
 # ─── Tax Export (CSV for CPA) ─────────────────────────────────────────────────
 
-@router.get("/tax-export")
+@router.get("/reports/tax-export")
 async def tax_export(
     year: int = Query(..., description="Tax year (e.g., 2025)"),
     user: User = Depends(get_current_user),
