@@ -20,6 +20,8 @@ import {
   createPayment,
   updatePayment,
   deletePayment,
+  importPayments,
+  PaymentImportResult,
   listCapitalEvents,
   createCapitalEvent,
   deleteCapitalEvent,
@@ -121,6 +123,7 @@ export default function RentalsPage() {
 
   // Global data
   const [properties, setProperties] = useState<Property[]>([]);
+  const [allUnits, setAllUnits] = useState<Unit[]>([]);   // flat list for property lookup
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [allLeases, setAllLeases] = useState<Lease[]>([]);
   const [loading, setLoading] = useState(true);
@@ -146,6 +149,9 @@ export default function RentalsPage() {
       setProperties(props);
       setTenants(tnts);
       setAllLeases(lses);
+      // Load all units for all properties to enable property-name lookup in PaymentsTab
+      const unitLists = await Promise.all(props.map((p) => listUnits(p.id, token).catch(() => [])));
+      setAllUnits(unitLists.flat());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -217,6 +223,8 @@ export default function RentalsPage() {
         <PaymentsTab
           allLeases={allLeases}
           tenants={tenants}
+          properties={properties}
+          allUnits={allUnits}
           token={token!}
         />
       )}
@@ -965,7 +973,7 @@ function bmNoiMargin(pct: number): KpiBenchmark {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function KpiCard({
-  label, value, sub, color = "gray", icon, higherIsBetter, trend, benchmark,
+  label, value, sub, color = "gray", icon, higherIsBetter, trend, benchmark, tooltip,
 }: {
   label: string;
   value: string;
@@ -975,6 +983,7 @@ function KpiCard({
   higherIsBetter?: boolean | null;        // null = no direction hint at all
   trend?: "up" | "down" | null;           // compared to previous period; null = no comparison available
   benchmark?: KpiBenchmark | null;        // industry benchmark badge
+  tooltip?: string;                       // hover explanation of how this metric is calculated
 }) {
   const valueColors: Record<string, string> = {
     gray: "text-gray-900", green: "text-green-600", red: "text-red-600",
@@ -1006,7 +1015,19 @@ function KpiCard({
           {icon && <span className="mr-1">{icon}</span>}
           {label}
         </p>
-        {arrowEl}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {arrowEl}
+          {tooltip && (
+            <div className="relative group/tip">
+              <span className="text-gray-300 hover:text-gray-500 cursor-help text-xs leading-none select-none">ⓘ</span>
+              <div className="absolute right-0 top-5 z-30 w-60 bg-gray-800 text-white text-[11px] leading-snug rounded-lg px-3 py-2 shadow-xl
+                            invisible group-hover/tip:visible opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150 pointer-events-none">
+                <p className="font-semibold text-gray-200 mb-1">{label}</p>
+                {tooltip}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
       <p className={`text-xl font-bold ${valueColors[color]}`}>{value}</p>
       {sub && <p className="text-xs text-gray-400">{sub}</p>}
@@ -1034,6 +1055,31 @@ function fmtPct(n: number | null | undefined, suffix = "%"): string {
 }
 
 type PeriodPreset = "MTD" | "YTD" | "LTD" | "LastMonth" | "LastYear" | "Custom";
+
+// ── KPI Tooltip Definitions ──────────────────────────────────────────────────
+const TT = {
+  rentRoll:     "Scheduled rent income from active leases. Uses formal rent charges when entered; falls back to sum of lease monthly rents × months in period.",
+  collected:    "Total rent payments received in the period. Source: Payments table (cash/check/ACH/Zelle entries).",
+  delinquency:  "Rent Roll − Rent Collected. Amount of scheduled rent not yet received.",
+  occupancy:    "Active leases ÷ Rentable Units × 100. Measured at end of period.",
+  opex:         "Operating Expenses = Maintenance costs (non-CapEx) + Recurring property costs (HOA, management fees, etc.) for the period.",
+  capex:        "Capital Expenditures = Maintenance expenses flagged as CapEx (roof replacements, major renovations, appliance upgrades, etc.).",
+  noi:          "Net Operating Income = Rent Collected − Operating Expenses. Excludes debt service and capital expenditures.",
+  debtService:  "Estimated from loan monthly_payment × months in period. Based on loan records — actual payments may differ.",
+  cashFlow:     "Cash Flow = NOI − Debt Service. Money left after operations and mortgage payments.",
+  capRate:      "Capitalization Rate = Annual NOI ÷ Current Property Value × 100. Measures return independent of financing.",
+  irr:          "Internal Rate of Return (annualized). Computed via Newton's method on capital events (acquisition, additional investments, refi proceeds) plus annual operating cash flows and current equity as terminal value.",
+  coc:          "Cash-on-Cash Return = YTD Cash Flow ÷ Total Equity Invested × 100. Measures return on actual cash deployed.",
+  turnover:     "Number of leases that ended (move-out) during the quarter.",
+  vacancyDays:  "Average days between a tenant moving out and the next tenant moving in, for leases that turned over this quarter.",
+  propTax:      "Annual property tax annualized from recurring cost records (monthly × 12, quarterly × 4, annual as entered).",
+  insurance:    "Annual insurance cost annualized from recurring cost records.",
+  equity:       "Current Equity = Current Property Value − Sum of outstanding loan balances.",
+  equityInvested: "Total Equity Invested = Purchase Price + Closing Costs − Original Loan Amount(s). Represents cash put into the deal.",
+  noiyoy:       "Year-over-Year NOI growth. (Current Year NOI − Prior Year NOI) ÷ |Prior Year NOI| × 100.",
+  avgMonthlyNoi:  "Average monthly NOI over the full lifetime period. LTD NOI ÷ Months tracked.",
+  avgMonthlyCf:   "Average monthly Cash Flow over the full lifetime period. LTD Cash Flow ÷ Months tracked.",
+};
 
 function ReportsTab({
   properties, token,
@@ -1146,12 +1192,13 @@ function ReportsTab({
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
   function renderSinglePropertyReport(r: PropertyReport, prev?: PropertyReport | null, preset?: PeriodPreset) {
-    const m = r.monthly;
+    // For YTD preset use the dedicated ytd section; otherwise use monthly
+    const m = (preset === "YTD" && r.ytd) ? r.ytd : r.monthly;
     const q = r.quarterly;
     const a = r.annual;
     const lt = r.lifetime;
     const qNum = r.quarter.split("Q")[1];
-    const pm = prev?.monthly;
+    const pm = (preset === "YTD" && prev?.ytd) ? prev.ytd : prev?.monthly;
     const pq = prev?.quarterly;
     const pa = prev?.annual;
 
@@ -1187,41 +1234,41 @@ function ReportsTab({
               Since {new Date(lt.start_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })} · {lt.months} months
             </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <KpiCard icon="🏠" label="Total Rent Roll"    value={fmtM(lt.rent_charged)}  higherIsBetter={true} trend={null} />
-              <KpiCard icon="💰" label="Total Collected"    value={fmtM(lt.rent_collected)} color="green" higherIsBetter={true} trend={null} />
+              <KpiCard icon="🏠" label="Total Rent Roll"    value={fmtM(lt.rent_charged)}  higherIsBetter={true} trend={null} tooltip={TT.rentRoll} />
+              <KpiCard icon="💰" label="Total Collected"    value={fmtM(lt.rent_collected)} color="green" higherIsBetter={true} trend={null} tooltip={TT.collected} />
               <KpiCard icon="⚠️" label="Total Delinquency"  value={fmtM(lt.delinquency)}    color={lt.delinquency > 0 ? "red" : "gray"}
-                higherIsBetter={false} trend={null}
+                higherIsBetter={false} trend={null} tooltip={TT.delinquency}
                 benchmark={lt.rent_charged > 0 ? bmDelinquency((lt.delinquency / lt.rent_charged) * 100) : null} />
               <KpiCard icon="📊" label="Occupancy (now)"    value={`${m.occupancy_pct.toFixed(0)}%`}
                 sub={`${m.occupied_units}/${m.rentable_units} units`}
                 color={m.occupancy_pct >= 95 ? "green" : m.occupancy_pct >= 75 ? "blue" : "red"}
-                higherIsBetter={true} trend={null}
+                higherIsBetter={true} trend={null} tooltip={TT.occupancy}
                 benchmark={m.rentable_units > 0 ? bmOccupancy(m.occupancy_pct) : null} />
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-              <KpiCard icon="🔧" label="Total OpEx"         value={fmtM(lt.opex)}          color="red"  higherIsBetter={false} trend={null} />
-              <KpiCard icon="📈" label="Total NOI"          value={fmtM(lt.noi)}           color={lt.noi >= 0 ? "green" : "red"} higherIsBetter={true} trend={null}
+              <KpiCard icon="🔧" label="Total OpEx"         value={fmtM(lt.opex)}          color="red"  higherIsBetter={false} trend={null} tooltip={TT.opex} />
+              <KpiCard icon="📈" label="Total NOI"          value={fmtM(lt.noi)}           color={lt.noi >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} tooltip={TT.noi}
                 benchmark={lt.rent_collected > 0 ? bmNoiMargin((lt.noi / lt.rent_collected) * 100) : null} />
-              <KpiCard icon="🏦" label="Total Debt Service" value={fmtM(lt.debt_service)}  higherIsBetter={null} />
-              <KpiCard icon="💵" label="Total Cash Flow"    value={fmtM(lt.cash_flow)}     color={lt.cash_flow >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} />
+              <KpiCard icon="🏦" label="Total Debt Service" value={fmtM(lt.debt_service)}  higherIsBetter={null} tooltip={TT.debtService} />
+              <KpiCard icon="💵" label="Total Cash Flow"    value={fmtM(lt.cash_flow)}     color={lt.cash_flow >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} tooltip={TT.cashFlow} />
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
               <KpiCard icon="📅" label="Avg Monthly NOI"    value={fmtM(lt.avg_monthly_noi)}
-                sub="Per month average" color={lt.avg_monthly_noi >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} />
+                sub="Per month average" color={lt.avg_monthly_noi >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} tooltip={TT.avgMonthlyNoi} />
               <KpiCard icon="💵" label="Avg Monthly CF"     value={fmtM(lt.avg_monthly_cash_flow)}
-                sub="Per month average" color={lt.avg_monthly_cash_flow >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} />
+                sub="Per month average" color={lt.avg_monthly_cash_flow >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} tooltip={TT.avgMonthlyCf} />
               <KpiCard icon="🎯" label="Cap Rate (current)" value={lt.cap_rate !== null ? `${lt.cap_rate.toFixed(2)}%` : "—"}
-                color="blue" higherIsBetter={true} trend={null}
+                color="blue" higherIsBetter={true} trend={null} tooltip={TT.capRate}
                 benchmark={lt.cap_rate !== null ? bmCapRate(lt.cap_rate) : null} />
               <KpiCard icon="🚀" label="IRR (lifetime)"     value={lt.irr !== null ? `${lt.irr.toFixed(1)}%` : "—"}
-                color={lt.irr !== null && lt.irr > 0 ? "green" : "gray"} higherIsBetter={true} trend={null}
+                color={lt.irr !== null && lt.irr > 0 ? "green" : "gray"} higherIsBetter={true} trend={null} tooltip={TT.irr}
                 benchmark={lt.irr !== null ? bmIrr(lt.irr) : null} />
             </div>
             <div className="grid grid-cols-2 md:grid-cols-2 gap-3 mt-3">
               <KpiCard icon="💼" label="Total Equity Invested" value={fmtM(lt.total_equity_invested)}
-                sub="Down pmt + closing costs" higherIsBetter={null} />
+                sub="Down pmt + closing costs" higherIsBetter={null} tooltip={TT.equityInvested} />
               <KpiCard icon="💎" label="Current Equity"        value={fmtM(lt.current_equity)}
-                sub="Value − loan balances" color={lt.current_equity >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} />
+                sub="Value − loan balances" color={lt.current_equity >= 0 ? "green" : "red"} higherIsBetter={true} trend={null} tooltip={TT.equity} />
             </div>
           </div>
         )}
@@ -1234,29 +1281,29 @@ function ReportsTab({
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard icon="🏠" label="Rent Roll" value={fmtM(m.rent_charged)}
-              higherIsBetter={true} trend={tr(m.rent_charged, pm?.rent_charged)} />
+              higherIsBetter={true} trend={tr(m.rent_charged, pm?.rent_charged)} tooltip={TT.rentRoll} />
             <KpiCard icon="💰" label="Collected" value={fmtM(m.rent_collected)} color="green"
-              higherIsBetter={true} trend={tr(m.rent_collected, pm?.rent_collected)} />
+              higherIsBetter={true} trend={tr(m.rent_collected, pm?.rent_collected)} tooltip={TT.collected} />
             <KpiCard icon="⚠️" label="Delinquency" value={fmtM(m.delinquency)}
               color={m.delinquency > 0 ? "red" : "gray"}
-              higherIsBetter={false} trend={tr(m.delinquency, pm?.delinquency)}
+              higherIsBetter={false} trend={tr(m.delinquency, pm?.delinquency)} tooltip={TT.delinquency}
               benchmark={m.rent_charged > 0 ? bmDelinquency(deliqPct) : null} />
             <KpiCard icon="📊" label="Occupancy" value={`${m.occupancy_pct.toFixed(0)}%`}
               sub={`${m.occupied_units}/${m.rentable_units} units`}
               color={m.occupancy_pct >= 95 ? "green" : m.occupancy_pct >= 75 ? "blue" : "red"}
-              higherIsBetter={true} trend={tr(m.occupancy_pct, pm?.occupancy_pct)}
+              higherIsBetter={true} trend={tr(m.occupancy_pct, pm?.occupancy_pct)} tooltip={TT.occupancy}
               benchmark={m.rentable_units > 0 ? bmOccupancy(m.occupancy_pct) : null} />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
             <KpiCard icon="🔧" label="OpEx" value={fmtM(m.opex)} color="red"
-              higherIsBetter={false} trend={tr(m.opex, pm?.opex)} />
+              higherIsBetter={false} trend={tr(m.opex, pm?.opex)} tooltip={TT.opex} />
             <KpiCard icon="📈" label="NOI" value={fmtM(m.noi)} color={m.noi >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={tr(m.noi, pm?.noi)}
+              higherIsBetter={true} trend={tr(m.noi, pm?.noi)} tooltip={TT.noi}
               benchmark={m.rent_collected > 0 ? bmNoiMargin(noiMarginPct) : null} />
             <KpiCard icon="🏦" label="Debt Service" value={fmtM(m.debt_service)} sub="estimated"
-              higherIsBetter={null} />
+              higherIsBetter={null} tooltip={TT.debtService} />
             <KpiCard icon="💵" label="Cash Flow" value={fmtM(m.cash_flow)} color={m.cash_flow >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={tr(m.cash_flow, pm?.cash_flow)} />
+              higherIsBetter={true} trend={tr(m.cash_flow, pm?.cash_flow)} tooltip={TT.cashFlow} />
           </div>
           {m.capex > 0 && (
             <p className="text-xs text-purple-600 mt-2">+ {fmtM(m.capex)} CapEx spend (excluded from NOI)</p>
@@ -1272,14 +1319,14 @@ function ReportsTab({
             <KpiCard icon="📊" label="Cash-on-Cash YTD"
               value={q.cash_on_cash_ytd !== null ? `${q.cash_on_cash_ytd.toFixed(1)}%` : "—"}
               color="blue" sub="YTD return on equity"
-              higherIsBetter={true} trend={tr(q.cash_on_cash_ytd ?? 0, pq?.cash_on_cash_ytd)}
+              higherIsBetter={true} trend={tr(q.cash_on_cash_ytd ?? 0, pq?.cash_on_cash_ytd)} tooltip={TT.coc}
               benchmark={q.cash_on_cash_ytd !== null ? bmCoc(q.cash_on_cash_ytd) : null} />
             <KpiCard icon="🔄" label="Turnover" value={String(q.turnover_count)}
               sub={q.avg_vacancy_days > 0 ? `${q.avg_vacancy_days.toFixed(0)} avg vacancy days` : "No vacancies"}
-              higherIsBetter={false} trend={tr(q.turnover_count, pq?.turnover_count)}
+              higherIsBetter={false} trend={tr(q.turnover_count, pq?.turnover_count)} tooltip={TT.turnover}
               benchmark={bmTurnover(q.turnover_count)} />
             <KpiCard icon="📈" label="Q NOI" value={fmtM(q.noi)} color={q.noi >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={tr(q.noi, pq?.noi)} />
+              higherIsBetter={true} trend={tr(q.noi, pq?.noi)} tooltip={TT.noi} />
           </div>
           {q.expense_by_category.length > 0 && (
             <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -1312,28 +1359,28 @@ function ReportsTab({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <KpiCard icon="🎯" label="Cap Rate" value={a.cap_rate !== null ? `${a.cap_rate.toFixed(2)}%` : "—"}
               sub="NOI / Current Value" color="blue"
-              higherIsBetter={true} trend={tr(a.cap_rate ?? 0, pa?.cap_rate)}
+              higherIsBetter={true} trend={tr(a.cap_rate ?? 0, pa?.cap_rate)} tooltip={TT.capRate}
               benchmark={a.cap_rate !== null ? bmCapRate(a.cap_rate) : null} />
             <KpiCard icon="🚀" label="IRR" value={a.irr !== null ? `${a.irr.toFixed(1)}%` : "—"}
               sub="Since acquisition" color={a.irr !== null && a.irr > 0 ? "green" : "gray"}
-              higherIsBetter={true} trend={tr(a.irr ?? 0, pa?.irr)}
+              higherIsBetter={true} trend={tr(a.irr ?? 0, pa?.irr)} tooltip={TT.irr}
               benchmark={a.irr !== null ? bmIrr(a.irr) : null} />
             <KpiCard icon="📈" label="Annual NOI" value={fmtM(a.noi)} color={a.noi >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={tr(a.noi, pa?.noi)} />
+              higherIsBetter={true} trend={tr(a.noi, pa?.noi)} tooltip={TT.noi} />
             <KpiCard icon="📊" label="NOI YoY" value={a.noi_yoy_pct !== null ? fmtPct(a.noi_yoy_pct) : "—"}
               color={a.noi_yoy_pct !== null && a.noi_yoy_pct >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={a.noi_yoy_pct !== null ? (a.noi_yoy_pct >= 0 ? "up" : "down") : null} />
+              higherIsBetter={true} trend={a.noi_yoy_pct !== null ? (a.noi_yoy_pct >= 0 ? "up" : "down") : null} tooltip={TT.noiyoy} />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard icon="🏛️" label="Property Tax (ann.)" value={fmtM(a.property_tax_annual)}
-              higherIsBetter={null} />
+              higherIsBetter={null} tooltip={TT.propTax} />
             <KpiCard icon="🛡️" label="Insurance (ann.)" value={fmtM(a.insurance_annual)}
-              higherIsBetter={null} />
+              higherIsBetter={null} tooltip={TT.insurance} />
             <KpiCard icon="💼" label="Equity Invested" value={fmtM(a.total_equity_invested)}
-              sub="Down pmt + closing costs" higherIsBetter={null} />
+              sub="Down pmt + closing costs" higherIsBetter={null} tooltip={TT.equityInvested} />
             <KpiCard icon="💎" label="Current Equity" value={fmtM(a.current_equity)}
               sub="Value − loan balances" color={a.current_equity >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={tr(a.current_equity, pa?.current_equity)} />
+              higherIsBetter={true} trend={tr(a.current_equity, pa?.current_equity)} tooltip={TT.equity} />
           </div>
         </div>
 
@@ -1432,9 +1479,10 @@ function ReportsTab({
     );
   }
 
-  function renderPortfolioReport(p: PortfolioReport) {
+  function renderPortfolioReport(p: PortfolioReport, preset?: PeriodPreset) {
     const tot = p.portfolio_total;
-    const m = tot.monthly;
+    // For YTD preset use ytd section so values are Jan–selected month cumulative
+    const m = (preset === "YTD" && tot.ytd) ? tot.ytd : tot.monthly;
     const a = tot.annual;
     const occ = m.rentable_units > 0 ? (m.occupied_units / m.rentable_units * 100) : 0;
     return (
@@ -1442,43 +1490,45 @@ function ReportsTab({
         {/* Portfolio totals */}
         <div>
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
-            Portfolio — {MONTHS[month - 1]} {year}
+            {preset === "YTD"
+              ? `Portfolio YTD — Jan–${MONTHS[month - 1]} ${year}`
+              : `Portfolio MTD — ${MONTHS[month - 1]} ${year}`}
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard icon="🏠" label="Rent Roll" value={fmtM(m.rent_charged)}
-              higherIsBetter={true} trend={null} />
+              higherIsBetter={true} trend={null} tooltip={TT.rentRoll} />
             <KpiCard icon="💰" label="Collected" value={fmtM(m.rent_collected)} color="green"
-              higherIsBetter={true} trend={null} />
+              higherIsBetter={true} trend={null} tooltip={TT.collected} />
             <KpiCard icon="⚠️" label="Delinquency" value={fmtM(m.delinquency)} color={m.delinquency > 0 ? "red" : "gray"}
-              higherIsBetter={false} trend={null}
+              higherIsBetter={false} trend={null} tooltip={TT.delinquency}
               benchmark={m.rent_charged > 0 ? bmDelinquency((m.delinquency / m.rent_charged) * 100) : null} />
             <KpiCard icon="📊" label="Occupancy" value={`${occ.toFixed(0)}%`} sub={`${m.occupied_units}/${m.rentable_units} units`}
               color={occ >= 95 ? "green" : occ >= 75 ? "blue" : "red"}
-              higherIsBetter={true} trend={null}
+              higherIsBetter={true} trend={null} tooltip={TT.occupancy}
               benchmark={m.rentable_units > 0 ? bmOccupancy(occ) : null} />
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
             <KpiCard icon="🔧" label="OpEx" value={fmtM(m.opex)} color="red"
-              higherIsBetter={false} trend={null} />
+              higherIsBetter={false} trend={null} tooltip={TT.opex} />
             <KpiCard icon="📈" label="NOI" value={fmtM(m.noi)} color={m.noi >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={null} />
+              higherIsBetter={true} trend={null} tooltip={TT.noi} />
             <KpiCard icon="🏦" label="Debt Service" value={fmtM(m.debt_service)} sub="estimated"
-              higherIsBetter={null} />
+              higherIsBetter={null} tooltip={TT.debtService} />
             <KpiCard icon="💵" label="Cash Flow" value={fmtM(m.cash_flow)} color={m.cash_flow >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={null} />
+              higherIsBetter={true} trend={null} tooltip={TT.cashFlow} />
           </div>
         </div>
         <div>
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Annual — {year}</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard icon="📈" label="Annual NOI" value={fmtM(a.noi)} color={a.noi >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={null} />
+              higherIsBetter={true} trend={null} tooltip={TT.noi} />
             <KpiCard icon="💵" label="Annual Cash Flow" value={fmtM(a.cash_flow)} color={a.cash_flow >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={null} />
+              higherIsBetter={true} trend={null} tooltip={TT.cashFlow} />
             <KpiCard icon="💼" label="Total Equity Invested" value={fmtM(a.total_equity_invested)}
-              higherIsBetter={null} />
+              higherIsBetter={null} tooltip={TT.equityInvested} />
             <KpiCard icon="💎" label="Total Current Equity" value={fmtM(a.current_equity)} color={a.current_equity >= 0 ? "green" : "red"}
-              higherIsBetter={true} trend={null} />
+              higherIsBetter={true} trend={null} tooltip={TT.equity} />
           </div>
         </div>
         {/* Per-property breakdown */}
@@ -1486,26 +1536,29 @@ function ReportsTab({
           <div>
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Per Property</p>
             <div className="space-y-2">
-              {p.properties.map((pr) => (
+              {p.properties.map((pr) => {
+                const prm = (preset === "YTD" && pr.ytd) ? pr.ytd : pr.monthly;
+                return (
                 <div key={pr.property_id} className="bg-white border border-gray-200 rounded-lg px-4 py-3 grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div className="md:col-span-2">
                     <p className="text-sm font-medium text-gray-800 truncate">{pr.property_address}</p>
-                    <p className="text-xs text-gray-400">{pr.monthly.occupied_units}/{pr.monthly.rentable_units} units occupied</p>
+                    <p className="text-xs text-gray-400">{prm.occupied_units}/{prm.rentable_units} units occupied</p>
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-gray-400">Collected</p>
-                    <p className="text-sm font-semibold text-green-600">{fmtM(pr.monthly.rent_collected)}</p>
+                    <p className="text-sm font-semibold text-green-600">{fmtM(prm.rent_collected)}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-gray-400">NOI</p>
-                    <p className={`text-sm font-semibold ${pr.monthly.noi >= 0 ? "text-green-600" : "text-red-600"}`}>{fmtM(pr.monthly.noi)}</p>
+                    <p className={`text-sm font-semibold ${prm.noi >= 0 ? "text-green-600" : "text-red-600"}`}>{fmtM(prm.noi)}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-gray-400">Cash Flow</p>
-                    <p className={`text-sm font-semibold ${pr.monthly.cash_flow >= 0 ? "text-green-600" : "text-red-600"}`}>{fmtM(pr.monthly.cash_flow)}</p>
+                    <p className={`text-sm font-semibold ${prm.cash_flow >= 0 ? "text-green-600" : "text-red-600"}`}>{fmtM(prm.cash_flow)}</p>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -1625,7 +1678,7 @@ function ReportsTab({
       {!loading && portfolio && (
         <div className="bg-white rounded-xl shadow border border-gray-100 p-6">
           <h3 className="font-semibold text-gray-900 mb-4">Portfolio Report</h3>
-          {renderPortfolioReport(portfolio)}
+          {renderPortfolioReport(portfolio, selectedPreset)}
         </div>
       )}
     </div>
@@ -1637,10 +1690,12 @@ function ReportsTab({
 const METHODS = ["cash", "check", "ach", "zelle", "other"];
 
 function PaymentsTab({
-  allLeases, tenants, token,
+  allLeases, tenants, properties, allUnits, token,
 }: {
   allLeases: Lease[];
   tenants: Tenant[];
+  properties: Property[];
+  allUnits: Unit[];
   token: string;
 }) {
   const [selectedLeaseId, setSelectedLeaseId] = useState<string>(
@@ -1648,6 +1703,12 @@ function PaymentsTab({
   );
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loadingPayments, setLoadingPayments] = useState(false);
+
+  // CSV import state
+  const [showImport, setShowImport] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<PaymentImportResult | null>(null);
 
   // Add form
   const [showAdd, setShowAdd] = useState(false);
@@ -1722,7 +1783,44 @@ function PaymentsTab({
 
   function leaseLabel(lease: Lease): string {
     const tenant = tenants.find((t) => t.id === lease.tenant_id);
-    return `${tenant?.name ?? "Unknown"} (${fmtDate(lease.lease_start)}${lease.status === "ended" ? " – ended" : ""})`;
+    const unit = allUnits.find((u) => u.id === lease.unit_id);
+    const property = properties.find((p) => p.id === unit?.property_id);
+    const propStr = property ? ` · ${property.address}` : "";
+    return `${tenant?.name ?? "Unknown"}${propStr} (${fmtDate(lease.lease_start)}${lease.status === "ended" ? " – ended" : ""})`;
+  }
+
+  function downloadPaymentTemplate() {
+    const header = "payment_date,amount,method,notes";
+    const examples = [
+      "2026-01-01,1800.00,ach,January rent",
+      "2026-02-01,1800.00,zelle,",
+      "2026-03-01,1800.00,check,March - check #1042",
+    ].join("\n");
+    const blob = new Blob([header + "\n" + examples], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "payments_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleImportPayments() {
+    if (!importFile || !selectedLeaseId) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const result = await importPayments(selectedLeaseId, importFile, token);
+      setImportResult(result);
+      if (result.imported > 0) {
+        const refreshed = await listPayments(selectedLeaseId, token);
+        setPayments(refreshed);
+      }
+    } catch (err) {
+      setImportResult({ imported: 0, total_rows: 0, errors: [{ row: 0, error: err instanceof Error ? err.message : "Import failed" }] });
+    } finally {
+      setImporting(false);
+    }
   }
 
   if (allLeases.length === 0) {
@@ -1744,7 +1842,7 @@ function PaymentsTab({
           <label className="text-sm font-medium text-gray-700">Lease:</label>
           <select
             value={selectedLeaseId}
-            onChange={(e) => { setSelectedLeaseId(e.target.value); setEditId(null); setShowAdd(false); }}
+            onChange={(e) => { setSelectedLeaseId(e.target.value); setEditId(null); setShowAdd(false); setShowImport(false); setImportResult(null); setImportFile(null); }}
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm flex-1 max-w-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
           >
             {allLeases.map((l) => (
@@ -1774,13 +1872,75 @@ function PaymentsTab({
 
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-semibold text-gray-800">Payment History</h3>
-          <button
-            onClick={() => { setShowAdd(!showAdd); setEditId(null); }}
-            className="text-sm bg-primary-600 text-white px-3 py-1.5 rounded-lg hover:bg-primary-700 transition"
-          >
-            + Record Payment
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setShowImport(!showImport); setShowAdd(false); setImportResult(null); setImportFile(null); }}
+              className="text-sm border border-gray-300 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition"
+            >
+              ↑ Import CSV
+            </button>
+            <button
+              onClick={() => { setShowAdd(!showAdd); setShowImport(false); setEditId(null); }}
+              className="text-sm bg-primary-600 text-white px-3 py-1.5 rounded-lg hover:bg-primary-700 transition"
+            >
+              + Record Payment
+            </button>
+          </div>
         </div>
+
+        {/* CSV Import panel */}
+        {showImport && (
+          <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-blue-800">Import Payments from CSV</p>
+              <button onClick={downloadPaymentTemplate} className="text-xs text-blue-600 hover:text-blue-800 underline font-medium">
+                Download template
+              </button>
+            </div>
+            <p className="text-xs text-blue-600 mb-3">
+              Required columns: <strong>payment_date</strong> (YYYY-MM-DD), <strong>amount</strong>.
+              Optional: method (cash|check|ach|zelle|other), notes.
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => { setImportFile(e.target.files?.[0] ?? null); setImportResult(null); }}
+                className="text-xs text-gray-600 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-white file:text-primary-600 file:hover:bg-gray-50 file:cursor-pointer"
+              />
+              <button
+                onClick={handleImportPayments}
+                disabled={!importFile || importing}
+                className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50 shrink-0"
+              >
+                {importing ? "Importing..." : "Import"}
+              </button>
+            </div>
+            {importResult && (
+              <div className="mt-3 space-y-1">
+                {importResult.imported > 0 && (
+                  <p className="text-xs font-medium text-green-700">
+                    {importResult.imported} payment{importResult.imported !== 1 ? "s" : ""} imported successfully.
+                  </p>
+                )}
+                {importResult.errors.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-red-600 mb-1">
+                      {importResult.errors.length} row{importResult.errors.length !== 1 ? "s" : ""} skipped:
+                    </p>
+                    <ul className="space-y-0.5">
+                      {importResult.errors.map((e, i) => (
+                        <li key={i} className="text-xs text-red-600">
+                          {e.row > 0 ? `Row ${e.row}: ` : ""}{e.error}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Add form */}
         {showAdd && (

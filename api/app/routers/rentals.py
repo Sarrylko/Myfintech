@@ -1,6 +1,9 @@
+import csv
+import io
 import uuid
+from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -397,3 +400,94 @@ async def delete_payment(
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
     await db.delete(payment)
+
+
+_VALID_METHODS = {"cash", "check", "ach", "zelle", "other"}
+
+
+@router.post("/leases/{lease_id}/payments/import-csv")
+async def import_payments_csv(
+    lease_id: uuid.UUID,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import payments for a lease from CSV.
+
+    Required columns: payment_date (YYYY-MM-DD), amount
+    Optional columns: method (cash|check|ach|zelle|other), notes
+    """
+    await _get_lease(lease_id, user, db)
+
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="File must be a .csv")
+
+    content = await file.read()
+    try:
+        text = content.decode("utf-8-sig")  # handle BOM from Excel
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV file is empty")
+
+    col_map: dict[str, str] = {h.lower().strip(): h for h in reader.fieldnames}
+    required = {"payment_date", "amount"}
+    missing = required - set(col_map.keys())
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"CSV missing required columns: {', '.join(sorted(missing))}. "
+                   "Required: payment_date, amount",
+        )
+
+    imported = 0
+    errors: list[dict] = []
+
+    from datetime import date as date_type
+    for row_num, raw_row in enumerate(reader, start=2):  # 1 = header
+        row = {k.lower().strip(): (v.strip() if v else "") for k, v in raw_row.items()}
+
+        # payment_date
+        raw_date = row.get("payment_date", "")
+        try:
+            parsed_date = date_type.fromisoformat(raw_date)
+        except ValueError:
+            errors.append({"row": row_num, "error": f"Invalid date '{raw_date}' (use YYYY-MM-DD)"})
+            continue
+
+        # amount
+        raw_amount = row.get("amount", "").lstrip("$").replace(",", "")
+        try:
+            amount = Decimal(raw_amount)
+            if amount <= 0:
+                raise ValueError("must be positive")
+        except (InvalidOperation, ValueError):
+            errors.append({"row": row_num, "error": f"Invalid amount '{raw_amount}'"})
+            continue
+
+        # method (optional, normalise to lowercase)
+        raw_method = row.get("method", "").lower() or None
+        method = raw_method if raw_method in _VALID_METHODS else None
+
+        notes = row.get("notes", "") or None
+
+        payment = Payment(
+            lease_id=lease_id,
+            payment_date=parsed_date,
+            amount=amount,
+            method=method,
+            notes=notes,
+        )
+        db.add(payment)
+        imported += 1
+
+    if imported:
+        await db.flush()
+
+    return {
+        "imported": imported,
+        "total_rows": imported + len(errors),
+        "errors": errors,
+    }

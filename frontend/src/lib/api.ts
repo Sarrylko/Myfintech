@@ -571,6 +571,31 @@ export async function deletePayment(id: string, token: string): Promise<void> {
   return apiFetch<void>(`/api/v1/payments/${id}`, { method: "DELETE", token });
 }
 
+export interface PaymentImportResult {
+  imported: number;
+  total_rows: number;
+  errors: { row: number; error: string }[];
+}
+
+export async function importPayments(
+  leaseId: string,
+  file: File,
+  token: string,
+): Promise<PaymentImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`/api/v1/leases/${leaseId}/payments/import-csv`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Import error: ${res.status}`);
+  }
+  return res.json();
+}
+
 // ─── Property Details: Loans ─────────────────────────────────────────────────
 
 export interface Loan {
@@ -892,6 +917,21 @@ export interface AnnualReport {
   current_equity: number;
 }
 
+export interface YtdReport {
+  months: number;              // number of months Jan–selected month
+  rent_charged: number;
+  rent_collected: number;
+  delinquency: number;
+  opex: number;
+  capex: number;
+  noi: number;
+  debt_service: number;
+  cash_flow: number;
+  occupancy_pct: number;
+  rentable_units: number;
+  occupied_units: number;
+}
+
 export interface LifetimeReport {
   start_date: string;          // ISO date of acquisition / first charge
   months: number;              // total months tracked
@@ -918,6 +958,7 @@ export interface PropertyReport {
   month: string;
   quarter: string;
   monthly: MonthlyReport;
+  ytd: YtdReport;
   quarterly: QuarterlyReport;
   annual: AnnualReport;
   lifetime?: LifetimeReport;   // only present when period=ltd
@@ -929,6 +970,7 @@ export interface PortfolioReport {
   properties: PropertyReport[];
   portfolio_total: {
     monthly: Omit<MonthlyReport, "occupancy_pct">;
+    ytd: YtdReport;
     annual: Pick<AnnualReport, "rent_charged" | "rent_collected" | "opex" | "noi" | "debt_service" | "cash_flow" | "total_equity_invested" | "current_equity">;
   };
 }

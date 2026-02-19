@@ -4,13 +4,16 @@ Endpoints:
   GET /reports/property/{property_id}?year=2026&month=2026-02
   GET /reports/portfolio?year=2026&month=2026-02
 """
+import logging
 import uuid
 from calendar import monthrange
 from datetime import date
 from math import isfinite
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, select
+
+logger = logging.getLogger(__name__)
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -148,6 +151,7 @@ async def _property_metrics(
     lease_ids = [r[0] for r in all_leases_result.all()]
 
     async def rent_charged(d_start: date, d_end: date) -> float:
+        """Sum of formal rent_charges for the period."""
         if not lease_ids:
             return 0.0
         r = await db.execute(
@@ -158,6 +162,31 @@ async def _property_metrics(
             )
         )
         return float(r.scalar())
+
+    async def rent_roll(d_start: date, d_end: date) -> float:
+        """
+        Scheduled rent roll for the period.
+        Uses formal rent_charges when they exist; falls back to active-lease
+        monthly_rent × months-in-period so the metric is never empty even if
+        the landlord hasn't created explicit charge records.
+        """
+        actual = await rent_charged(d_start, d_end)
+        if actual > 0:
+            return actual
+        if not unit_ids:
+            return 0.0
+        # Leases active at the end of the period
+        r = await db.execute(
+            select(func.coalesce(func.sum(Lease.monthly_rent), 0)).where(
+                Lease.unit_id.in_(unit_ids),
+                Lease.lease_start <= d_end,
+                or_(Lease.lease_end.is_(None), Lease.lease_end >= d_start),
+                Lease.status == "active",
+            )
+        )
+        monthly = float(r.scalar())
+        months_in_period = ((d_end.year - d_start.year) * 12 + d_end.month - d_start.month) + 1
+        return monthly * months_in_period
 
     async def rent_collected(d_start: date, d_end: date) -> float:
         if not lease_ids:
@@ -227,7 +256,7 @@ async def _property_metrics(
     total_current_balance = sum(float(l.current_balance or 0) for l in loans)
 
     # ── MONTHLY ──
-    m_charged = await rent_charged(m_start, m_end)
+    m_charged = await rent_roll(m_start, m_end)
     m_collected = await rent_collected(m_start, m_end)
     m_opex = await maintenance_opex(m_start, m_end) + monthly_fixed_costs
     m_capex = await maintenance_capex(m_start, m_end)
@@ -236,7 +265,7 @@ async def _property_metrics(
     occ_pct = (occupied_month / len(rentable_units) * 100) if rentable_units else 0.0
 
     # ── QUARTERLY ──
-    q_charged = await rent_charged(q_start, q_end)
+    q_charged = await rent_roll(q_start, q_end)
     q_collected = await rent_collected(q_start, q_end)
     q_opex_maint = await maintenance_opex(q_start, q_end)
     # Fixed costs for quarter (3 months)
@@ -301,12 +330,14 @@ async def _property_metrics(
         if vacancy_days_list:
             avg_vacancy_days = sum(vacancy_days_list) / len(vacancy_days_list)
 
-    # YTD cash flow up to current quarter end
-    ytd_end = q_end if q_end <= date.today() else date.today()
+    # ── YTD (Jan 1 → end of selected month) ──
     ytd_start = date(year, 1, 1)
-    ytd_months = ((ytd_end.year - ytd_start.year) * 12 + ytd_end.month - ytd_start.month) + 1
+    ytd_end = m_end              # end of the selected month (consistent with MTD)
+    ytd_months = month           # number of months Jan–selected (e.g. Feb → 2)
+    ytd_charged = await rent_roll(ytd_start, ytd_end)
     ytd_collected = await rent_collected(ytd_start, ytd_end)
     ytd_opex_maint = await maintenance_opex(ytd_start, ytd_end)
+    ytd_capex = await maintenance_capex(ytd_start, ytd_end)
     ytd_fixed = monthly_fixed_costs * ytd_months
     ytd_opex = ytd_opex_maint + ytd_fixed
     ytd_debt = monthly_debt_service * ytd_months
@@ -326,7 +357,7 @@ async def _property_metrics(
     )
 
     # ── ANNUAL ──
-    y_charged = await rent_charged(y_start, y_end)
+    y_charged = await rent_roll(y_start, y_end)
     y_collected = await rent_collected(y_start, y_end)
     y_opex_maint = await maintenance_opex(y_start, y_end)
     y_capex = await maintenance_capex(y_start, y_end)
@@ -371,14 +402,24 @@ async def _property_metrics(
     )
     capital_events = list(capital_events_result.scalars().all())
 
-    if capital_events or (prop.purchase_date and total_equity_invested != 0):
+    # Resolve acquisition date: purchase_date → earliest payment → None
+    _purchase_date = None
+    if prop.purchase_date:
+        _purchase_date = prop.purchase_date.date() if hasattr(prop.purchase_date, "date") else prop.purchase_date
+    elif lease_ids:
+        # Fall back to the earliest recorded payment when purchase_date is not set
+        _earliest_pay_result = await db.execute(
+            select(func.min(Payment.payment_date)).where(Payment.lease_id.in_(lease_ids))
+        )
+        _purchase_date = _earliest_pay_result.scalar()
+
+    if capital_events or (total_equity_invested != 0 and _purchase_date):
         cf_list: list[tuple[date, float]] = []
 
         # If no acquisition event, auto-derive initial equity from property data
         has_acquisition = any(e.event_type == "acquisition" for e in capital_events)
-        if not has_acquisition and prop.purchase_date and total_equity_invested > 0:
-            acq_date = prop.purchase_date.date() if hasattr(prop.purchase_date, "date") else prop.purchase_date
-            cf_list.append((acq_date, -total_equity_invested))
+        if not has_acquisition and _purchase_date and total_equity_invested > 0:
+            cf_list.append((_purchase_date, -total_equity_invested))
 
         for e in capital_events:
             cf_list.append((e.event_date, float(e.amount)))
@@ -409,8 +450,11 @@ async def _property_metrics(
     if include_lifetime:
         if prop.purchase_date:
             lt_start = prop.purchase_date.date() if hasattr(prop.purchase_date, "date") else prop.purchase_date
+        elif _purchase_date:
+            # Already resolved above: earliest payment date (or None)
+            lt_start = _purchase_date
         else:
-            # Fall back to earliest rent charge date
+            # Last resort: earliest rent charge date
             earliest_result = await db.execute(
                 select(func.min(RentCharge.charge_date)).where(
                     RentCharge.lease_id.in_(lease_ids) if lease_ids else False
@@ -420,7 +464,7 @@ async def _property_metrics(
         lt_end = date.today()
         lt_months = max(1, ((lt_end.year - lt_start.year) * 12 + lt_end.month - lt_start.month) + 1)
 
-        lt_charged = await rent_charged(lt_start, lt_end)
+        lt_charged = await rent_roll(lt_start, lt_end)
         lt_collected = await rent_collected(lt_start, lt_end)
         lt_opex_m = await maintenance_opex(lt_start, lt_end)
         lt_capex = await maintenance_capex(lt_start, lt_end)
@@ -466,6 +510,20 @@ async def _property_metrics(
             "noi": round(m_noi, 2),
             "debt_service": round(monthly_debt_service, 2),
             "cash_flow": round(m_cash_flow, 2),
+            "occupancy_pct": round(occ_pct, 1),
+            "rentable_units": len(rentable_units),
+            "occupied_units": int(occupied_month),
+        },
+        "ytd": {
+            "months": ytd_months,
+            "rent_charged": round(ytd_charged, 2),
+            "rent_collected": round(ytd_collected, 2),
+            "delinquency": round(ytd_charged - ytd_collected, 2),
+            "opex": round(ytd_opex, 2),
+            "capex": round(ytd_capex, 2),
+            "noi": round(ytd_noi, 2),
+            "debt_service": round(ytd_debt, 2),
+            "cash_flow": round(ytd_cash_flow, 2),
             "occupancy_pct": round(occ_pct, 1),
             "rentable_units": len(rentable_units),
             "occupied_units": int(occupied_month),
@@ -570,8 +628,8 @@ async def portfolio_report(
         try:
             report = await _property_metrics(prop.id, year, month_num, db)
             reports.append(report)
-        except Exception:
-            pass  # skip properties with errors
+        except Exception as exc:
+            logger.warning("Portfolio: skipping property %s — %s: %s", prop.id, type(exc).__name__, exc)
 
     # Aggregate portfolio totals
     def agg(key_path: list[str]) -> float:
@@ -593,6 +651,19 @@ async def portfolio_report(
             "noi": agg(["monthly", "noi"]),
             "debt_service": agg(["monthly", "debt_service"]),
             "cash_flow": agg(["monthly", "cash_flow"]),
+            "rentable_units": agg(["monthly", "rentable_units"]),
+            "occupied_units": agg(["monthly", "occupied_units"]),
+        },
+        "ytd": {
+            "months": month_num,
+            "rent_charged": agg(["ytd", "rent_charged"]),
+            "rent_collected": agg(["ytd", "rent_collected"]),
+            "delinquency": agg(["ytd", "delinquency"]),
+            "opex": agg(["ytd", "opex"]),
+            "capex": agg(["ytd", "capex"]),
+            "noi": agg(["ytd", "noi"]),
+            "debt_service": agg(["ytd", "debt_service"]),
+            "cash_flow": agg(["ytd", "cash_flow"]),
             "rentable_units": agg(["monthly", "rentable_units"]),
             "occupied_units": agg(["monthly", "occupied_units"]),
         },
