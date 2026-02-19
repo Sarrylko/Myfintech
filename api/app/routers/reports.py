@@ -294,12 +294,13 @@ async def _property_metrics(
     monthly_hoa       = category_monthly_equiv("hoa")
     monthly_other_fixed = monthly_fixed_costs - monthly_tax - monthly_insurance - monthly_hoa
 
-    def expense_bd(months: int, repairs: float, collected: float) -> dict:
+    def expense_bd(months: int, repairs: float, charged: float) -> dict:
         """Return per-category expense breakdown for a given period length."""
         # Management fee: only if property is managed by property manager
+        # Note: charged = gross rent billed to tenant, before PM takes their fee
         mgmt_fee = 0.0
         if prop.is_property_managed and prop.management_fee_pct:
-            mgmt_fee = collected * float(prop.management_fee_pct) / 100
+            mgmt_fee = charged * float(prop.management_fee_pct) / 100
 
         return {
             "loan_payment": round(monthly_debt_service * months, 2),
@@ -563,7 +564,7 @@ async def _property_metrics(
             "irr": irr_value,
             "current_equity": round(current_equity, 2),
             "total_equity_invested": round(total_equity_invested, 2),
-            "expense_breakdown": expense_bd(lt_months, lt_opex_m, lt_collected),
+            "expense_breakdown": expense_bd(lt_months, lt_opex_m, lt_charged),
         }
 
     quarter_num = (month - 1) // 3 + 1
@@ -586,7 +587,7 @@ async def _property_metrics(
             "occupancy_pct": round(occ_pct, 1),
             "rentable_units": len(rentable_units),
             "occupied_units": int(occupied_month),
-            "expense_breakdown": expense_bd(1, m_opex_maint, m_collected),
+            "expense_breakdown": expense_bd(1, m_opex_maint, m_charged),
         },
         "ytd": {
             "months": ytd_months,
@@ -601,7 +602,7 @@ async def _property_metrics(
             "occupancy_pct": round(occ_pct, 1),
             "rentable_units": len(rentable_units),
             "occupied_units": int(occupied_month),
-            "expense_breakdown": expense_bd(ytd_months, ytd_opex_maint, ytd_collected),
+            "expense_breakdown": expense_bd(ytd_months, ytd_opex_maint, ytd_charged),
         },
         "quarterly": {
             "rent_charged": round(q_charged, 2),
@@ -631,7 +632,7 @@ async def _property_metrics(
             "insurance_annual": round(insurance_total, 2),
             "total_equity_invested": round(total_equity_invested, 2),
             "current_equity": round(current_equity, 2),
-            "expense_breakdown": expense_bd(y_months, y_opex_maint, y_collected),
+            "expense_breakdown": expense_bd(y_months, y_opex_maint, y_charged),
         },
     }
     if lifetime_data is not None:
