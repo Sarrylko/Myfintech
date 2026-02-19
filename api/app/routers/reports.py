@@ -294,8 +294,13 @@ async def _property_metrics(
     monthly_hoa       = category_monthly_equiv("hoa")
     monthly_other_fixed = monthly_fixed_costs - monthly_tax - monthly_insurance - monthly_hoa
 
-    def expense_bd(months: int, repairs: float) -> dict:
+    def expense_bd(months: int, repairs: float, collected: float) -> dict:
         """Return per-category expense breakdown for a given period length."""
+        # Management fee: only if property is managed by property manager
+        mgmt_fee = 0.0
+        if prop.is_property_managed and prop.management_fee_pct:
+            mgmt_fee = collected * float(prop.management_fee_pct) / 100
+
         return {
             "loan_payment": round(monthly_debt_service * months, 2),
             "property_tax": round(monthly_tax * months, 2),
@@ -303,6 +308,7 @@ async def _property_metrics(
             "hoa":          round(monthly_hoa * months, 2),
             "other_fixed":  round(monthly_other_fixed * months, 2),
             "repairs":      round(repairs, 2),
+            "management_fee": round(mgmt_fee, 2),
         }
 
     # ── Loans → debt service (estimated) ──
@@ -557,7 +563,7 @@ async def _property_metrics(
             "irr": irr_value,
             "current_equity": round(current_equity, 2),
             "total_equity_invested": round(total_equity_invested, 2),
-            "expense_breakdown": expense_bd(lt_months, lt_opex_m),
+            "expense_breakdown": expense_bd(lt_months, lt_opex_m, lt_collected),
         }
 
     quarter_num = (month - 1) // 3 + 1
@@ -580,7 +586,7 @@ async def _property_metrics(
             "occupancy_pct": round(occ_pct, 1),
             "rentable_units": len(rentable_units),
             "occupied_units": int(occupied_month),
-            "expense_breakdown": expense_bd(1, m_opex_maint),
+            "expense_breakdown": expense_bd(1, m_opex_maint, m_collected),
         },
         "ytd": {
             "months": ytd_months,
@@ -595,7 +601,7 @@ async def _property_metrics(
             "occupancy_pct": round(occ_pct, 1),
             "rentable_units": len(rentable_units),
             "occupied_units": int(occupied_month),
-            "expense_breakdown": expense_bd(ytd_months, ytd_opex_maint),
+            "expense_breakdown": expense_bd(ytd_months, ytd_opex_maint, ytd_collected),
         },
         "quarterly": {
             "rent_charged": round(q_charged, 2),
@@ -625,7 +631,7 @@ async def _property_metrics(
             "insurance_annual": round(insurance_total, 2),
             "total_equity_invested": round(total_equity_invested, 2),
             "current_equity": round(current_equity, 2),
-            "expense_breakdown": expense_bd(12, y_opex_maint),
+            "expense_breakdown": expense_bd(y_months, y_opex_maint, y_collected),
         },
     }
     if lifetime_data is not None:
@@ -712,7 +718,7 @@ async def portfolio_report(
         return round(total, 2)
 
     def agg_bd(period: str) -> dict:
-        cats = ["loan_payment", "property_tax", "insurance", "hoa", "other_fixed", "repairs"]
+        cats = ["loan_payment", "property_tax", "insurance", "hoa", "other_fixed", "repairs", "management_fee"]
         return {c: agg([period, "expense_breakdown", c]) for c in cats}
 
     portfolio_total = {

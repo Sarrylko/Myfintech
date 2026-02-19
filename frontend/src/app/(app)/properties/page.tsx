@@ -203,6 +203,9 @@ interface DetailForm {
   purchase_price: string;
   purchase_date: string;
   closing_costs: string;
+  is_property_managed: boolean;
+  management_fee_pct: string;
+  leasing_fee_amount: string;
 }
 
 function toDetailForm(p: Property): DetailForm {
@@ -212,6 +215,9 @@ function toDetailForm(p: Property): DetailForm {
       ? new Date(p.purchase_date).toISOString().split("T")[0]
       : "",
     closing_costs: p.closing_costs ? String(Number(p.closing_costs)) : "",
+    is_property_managed: p.is_property_managed || false,
+    management_fee_pct: p.management_fee_pct ? String(Number(p.management_fee_pct)) : "",
+    leasing_fee_amount: p.leasing_fee_amount ? String(Number(p.leasing_fee_amount)) : "",
   };
 }
 
@@ -331,6 +337,13 @@ export default function PropertiesPage() {
       else payload.purchase_date = null;
       if (detailForm.closing_costs !== "") payload.closing_costs = Number(detailForm.closing_costs);
       else payload.closing_costs = null;
+
+      // Property management fields
+      payload.is_property_managed = detailForm.is_property_managed;
+      if (detailForm.management_fee_pct !== "") payload.management_fee_pct = Number(detailForm.management_fee_pct);
+      else payload.management_fee_pct = null;
+      if (detailForm.leasing_fee_amount !== "") payload.leasing_fee_amount = Number(detailForm.leasing_fee_amount);
+      else payload.leasing_fee_amount = null;
 
       const updated = await updateProperty(id, payload, token);
       setProperties((prev) => prev.map((p) => (p.id === id ? updated : p)));
@@ -596,7 +609,60 @@ export default function PropertiesPage() {
                         placeholder="8500"
                       />
                     </div>
-                    <div className="flex gap-3">
+
+                    {/* Property Management */}
+                    <div className="border-t border-gray-100 pt-4 mt-2">
+                      <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
+                        Property Management
+                      </p>
+                      <div className="mb-3">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={detailForm.is_property_managed}
+                            onChange={(e) => setDetailForm((f) => ({ ...f, is_property_managed: e.target.checked }))}
+                            className="w-4 h-4 text-primary-600 rounded focus:ring-2 focus:ring-primary-500"
+                          />
+                          <span className="text-sm text-gray-700 font-medium">
+                            Managed by Property Manager
+                          </span>
+                        </label>
+                        <p className="text-xs text-gray-400 ml-6 mt-1">
+                          Enable this if a property manager handles this property (management & leasing fees will be tracked)
+                        </p>
+                      </div>
+
+                      {detailForm.is_property_managed && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 ml-6">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">
+                              Management Fee (%)
+                            </label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              max="100"
+                              value={detailForm.management_fee_pct}
+                              onChange={(e) => setDetailForm((f) => ({ ...f, management_fee_pct: e.target.value }))}
+                              placeholder="8.00"
+                              className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                            />
+                            <p className="text-xs text-gray-400 mt-1">
+                              % of monthly rent collected (e.g., 8 for 8%)
+                            </p>
+                          </div>
+                          <CurrencyField
+                            label="Leasing Fee (per lease)"
+                            value={detailForm.leasing_fee_amount}
+                            onChange={(v) => setDetailForm((f) => ({ ...f, leasing_fee_amount: v }))}
+                            placeholder="500"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex gap-3 mt-4">
                       <button onClick={() => saveDetails(p.id)} disabled={savingDetails}
                         className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
                         {savingDetails ? "Saving..." : "Save Changes"}

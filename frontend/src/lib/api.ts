@@ -338,6 +338,9 @@ export interface Property {
   current_value: string | null;
   last_valuation_date: string | null;
   notes: string | null;
+  is_property_managed: boolean;
+  management_fee_pct: string | null;
+  leasing_fee_amount: string | null;
   created_at: string;
 }
 
@@ -352,6 +355,9 @@ export interface PropertyCreate {
   closing_costs?: number;
   current_value?: number;
   notes?: string;
+  is_property_managed?: boolean;
+  management_fee_pct?: number;
+  leasing_fee_amount?: number;
 }
 
 export async function listProperties(token: string): Promise<Property[]> {
@@ -879,6 +885,7 @@ export interface ExpenseBreakdown {
   hoa: number;
   other_fixed: number;
   repairs: number;
+  management_fee: number;
 }
 
 export interface MonthlyReport {

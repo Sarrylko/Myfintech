@@ -1739,12 +1739,13 @@ function ReportsTab({
       {!loading && !loadingTimeSeries && (report || portfolio || timeSeriesData) && (() => {
         // Expense bar definitions — order = bottom→top in the stack
         const EXP_BARS: { key: keyof ExpenseBreakdown; label: string; color: string }[] = [
-          { key: "loan_payment",  label: "Loan Payment",  color: "#6366f1" },
-          { key: "property_tax",  label: "Property Tax",  color: "#f97316" },
-          { key: "insurance",     label: "Insurance",     color: "#eab308" },
-          { key: "hoa",           label: "HOA",           color: "#a855f7" },
-          { key: "other_fixed",   label: "Other Fixed",   color: "#ec4899" },
-          { key: "repairs",       label: "Repairs",       color: "#f87171" },
+          { key: "loan_payment",    label: "Loan Payment",    color: "#6366f1" },
+          { key: "property_tax",    label: "Property Tax",    color: "#f97316" },
+          { key: "insurance",       label: "Insurance",       color: "#eab308" },
+          { key: "hoa",             label: "HOA",             color: "#a855f7" },
+          { key: "management_fee",  label: "Mgmt Fee",        color: "#14b8a6" }, // teal
+          { key: "other_fixed",     label: "Other Fixed",     color: "#ec4899" },
+          { key: "repairs",         label: "Repairs",         color: "#f87171" },
         ];
 
         type ChartRow = { name: string; Payments: number } & Record<string, number>;
@@ -1757,6 +1758,7 @@ function ReportsTab({
             property_tax: bd.property_tax,
             insurance:    bd.insurance,
             hoa:          bd.hoa,
+            management_fee: bd.management_fee,
             other_fixed:  bd.other_fixed,
             repairs:      bd.repairs,
           };
