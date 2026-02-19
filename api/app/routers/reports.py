@@ -805,6 +805,8 @@ async def tax_export(
     # Write header
     writer.writerow([
         "Property Address",
+        "Purchase Date",
+        "Purchase Price",
         "Gross Rents Received",
         "Management Fees",
         "Insurance",
@@ -949,9 +951,17 @@ async def tax_export(
         total_opex = mgmt_fees + insurance_annual + property_tax_annual + hoa_annual + repairs_annual + other_fixed_annual
         noi = gross_rents - total_opex
 
+        # Format purchase date
+        purchase_date_str = ""
+        if prop.purchase_date:
+            pd = prop.purchase_date.date() if hasattr(prop.purchase_date, 'date') else prop.purchase_date
+            purchase_date_str = pd.strftime("%Y-%m-%d")
+
         # Write property row
         writer.writerow([
             prop.address,
+            purchase_date_str,
+            f"{float(prop.purchase_price or 0):.2f}",
             f"{gross_rents:.2f}",
             f"{mgmt_fees:.2f}",
             f"{insurance_annual:.2f}",
@@ -981,6 +991,8 @@ async def tax_export(
     # Write portfolio total row
     writer.writerow([
         "PORTFOLIO TOTAL",
+        "",  # No purchase date for total
+        "",  # No purchase price for total
         f"{portfolio_totals['gross_rents']:.2f}",
         f"{portfolio_totals['mgmt_fees']:.2f}",
         f"{portfolio_totals['insurance']:.2f}",
