@@ -11,7 +11,9 @@
       "Bash(npx tsc:*)",
       "Bash(node_modules/.bin/tsc:*)",
       "Bash(./node_modules/.bin/tsc:*)",
-      "Bash(node_modules/typescript/bin/tsc:*)"
+      "Bash(node_modules/typescript/bin/tsc:*)",
+      "Bash(tail:*)",
+      "Bash(head:*)"
     ]
   }
 }

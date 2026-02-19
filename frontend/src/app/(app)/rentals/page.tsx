@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, memo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   getToken,
@@ -1689,8 +1689,20 @@ function ReportsTab({
           </div>
         </div>
 
-        {/* Re-calculate action */}
-        <div className="flex justify-end pt-1 border-t border-gray-100">
+        {/* Actions */}
+        <div className="flex justify-between items-center pt-1 border-t border-gray-100">
+          <button
+            onClick={() => {
+              const url = `/api/v1/reports/tax-export?year=${year}`;
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `rental_tax_report_${year}.csv`;
+              a.click();
+            }}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-semibold transition-colors"
+          >
+            📊 Download Tax Report (CSV)
+          </button>
           <button
             onClick={loadReport}
             disabled={loading}
@@ -1888,6 +1900,87 @@ function ReportsTab({
 
 const METHODS = ["cash", "check", "ach", "zelle", "other"];
 
+const PaymentEditForm = memo(function PaymentEditForm({
+  editForm,
+  onFormChange,
+  onSave,
+  onCancel,
+  saving,
+}: {
+  editForm: Partial<PaymentCreate>;
+  onFormChange: (updates: Partial<PaymentCreate>) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  const handleDateChange = useCallback((v: string) => {
+    onFormChange({ payment_date: v });
+  }, [onFormChange]);
+
+  const handleAmountChange = useCallback((v: string) => {
+    onFormChange({ amount: v ? Number(v) : undefined });
+  }, [onFormChange]);
+
+  const handleMethodChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    onFormChange({ method: e.target.value || undefined });
+  }, [onFormChange]);
+
+  const handleNotesChange = useCallback((v: string) => {
+    onFormChange({ notes: v || undefined });
+  }, [onFormChange]);
+
+  return (
+    <div className="p-4 bg-blue-50 space-y-3">
+      <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Edit Payment</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <TextInput
+          label="Date"
+          type="date"
+          value={editForm.payment_date ?? ""}
+          onChange={handleDateChange}
+        />
+        <CurrencyInput
+          label="Amount"
+          value={String(editForm.amount ?? "")}
+          onChange={handleAmountChange}
+        />
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Method</label>
+          <select
+            value={editForm.method ?? ""}
+            onChange={handleMethodChange}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+          >
+            <option value="">No method</option>
+            {METHODS.map((m) => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
+          </select>
+        </div>
+      </div>
+      <TextInput
+        label="Notes"
+        value={editForm.notes ?? ""}
+        onChange={handleNotesChange}
+        placeholder="Optional notes"
+      />
+      <div className="flex gap-2">
+        <button
+          onClick={onSave}
+          disabled={saving}
+          className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50"
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+        <button
+          onClick={onCancel}
+          className="text-sm text-gray-400 hover:text-gray-600 px-3 py-1.5"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+});
+
 function PaymentsTab({
   allLeases, tenants, properties, allUnits, token,
 }: {
@@ -1979,6 +2072,10 @@ function PaymentsTab({
     } catch { /* ignore */ }
     finally { setDeletingId(null); }
   }
+
+  const handleFormChange = useCallback((updates: Partial<PaymentCreate>) => {
+    setEditForm((prev) => ({ ...prev, ...updates }));
+  }, []);
 
   function leaseLabel(lease: Lease): string {
     const tenant = tenants.find((t) => t.id === lease.tenant_id);
@@ -2178,55 +2275,13 @@ function PaymentsTab({
             {payments.map((p) => (
               <div key={p.id} className="border border-gray-100 rounded-lg overflow-hidden">
                 {editId === p.id ? (
-                  /* ── Inline edit form ── */
-                  <div className="p-4 bg-blue-50 space-y-3">
-                    <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Edit Payment</p>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <TextInput
-                        label="Date"
-                        type="date"
-                        value={editForm.payment_date ?? ""}
-                        onChange={(v) => setEditForm((f) => ({ ...f, payment_date: v }))}
-                      />
-                      <CurrencyInput
-                        label="Amount"
-                        value={String(editForm.amount ?? "")}
-                        onChange={(v) => setEditForm((f) => ({ ...f, amount: v ? Number(v) : undefined }))}
-                      />
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Method</label>
-                        <select
-                          value={editForm.method ?? ""}
-                          onChange={(e) => setEditForm((f) => ({ ...f, method: e.target.value || undefined }))}
-                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        >
-                          <option value="">No method</option>
-                          {METHODS.map((m) => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                    <TextInput
-                      label="Notes"
-                      value={editForm.notes ?? ""}
-                      onChange={(v) => setEditForm((f) => ({ ...f, notes: v || undefined }))}
-                      placeholder="Optional notes"
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleSaveEdit(p.id)}
-                        disabled={editSaving}
-                        className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50"
-                      >
-                        {editSaving ? "Saving..." : "Save"}
-                      </button>
-                      <button
-                        onClick={() => setEditId(null)}
-                        className="text-sm text-gray-400 hover:text-gray-600 px-3 py-1.5"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
+                  <PaymentEditForm
+                    editForm={editForm}
+                    onFormChange={handleFormChange}
+                    onSave={() => handleSaveEdit(p.id)}
+                    onCancel={() => setEditId(null)}
+                    saving={editSaving}
+                  />
                 ) : (
                   /* ── Read row ── */
                   <div className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition group">

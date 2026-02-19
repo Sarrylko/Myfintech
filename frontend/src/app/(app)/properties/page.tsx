@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, memo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   getToken,
@@ -1180,6 +1180,50 @@ const BLANK_EXPENSE: MaintenanceExpenseCreate = {
   expense_date: "", amount: 0, category: "other", description: "", vendor: "", is_capex: false, notes: "",
 };
 
+type ExpenseForm = Partial<MaintenanceExpenseCreate> & { amount: number | string };
+
+const ExpenseFormFields = memo(function ExpenseFormFields({
+  form, onFormChange,
+}: {
+  form: ExpenseForm;
+  onFormChange: (updates: Partial<ExpenseForm>) => void;
+}) {
+  const handleDateChange = useCallback((v: string) => onFormChange({ expense_date: v }), [onFormChange]);
+  const handleAmountChange = useCallback((v: string) => onFormChange({ amount: v as unknown as number }), [onFormChange]);
+  const handleCategoryChange = useCallback((v: string) => onFormChange({ category: v }), [onFormChange]);
+  const handleDescriptionChange = useCallback((v: string) => onFormChange({ description: v }), [onFormChange]);
+  const handleVendorChange = useCallback((v: string) => onFormChange({ vendor: v }), [onFormChange]);
+  const handleNotesChange = useCallback((v: string) => onFormChange({ notes: v }), [onFormChange]);
+  const handleCapexChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => onFormChange({ is_capex: e.target.checked }), [onFormChange]);
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <Field label="Date" type="date" value={form.expense_date ?? ""} onChange={handleDateChange} />
+      <CurrencyField label="Amount" value={String(form.amount === 0 ? "" : form.amount)} onChange={handleAmountChange} />
+      <SelectField label="Category" value={form.category ?? "other"} onChange={handleCategoryChange} options={EXPENSE_CATEGORIES} />
+      <div className="md:col-span-2">
+        <Field label="Description" value={form.description ?? ""} onChange={handleDescriptionChange} placeholder="e.g. HVAC repair" />
+      </div>
+      <Field label="Vendor (optional)" value={form.vendor ?? ""} onChange={handleVendorChange} placeholder="e.g. ABC Plumbing" />
+      <div className="md:col-span-3">
+        <Field label="Notes (optional)" value={form.notes ?? ""} onChange={handleNotesChange} />
+      </div>
+      <div className="md:col-span-3">
+        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={Boolean(form.is_capex)}
+            onChange={handleCapexChange}
+            className="rounded"
+          />
+          <span>Capital Expenditure (CapEx)</span>
+          <span className="text-xs text-gray-400">— excluded from NOI calculation</span>
+        </label>
+      </div>
+    </div>
+  );
+});
+
 function MaintenanceTab({
   propertyId, expenses, token, onUpdate,
 }: {
@@ -1309,42 +1353,13 @@ function MaintenanceTab({
     .reduce((sum, e) => sum + Number(e.amount), 0);
   const allTotal = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
 
-  function ExpenseFormFields({
-    form, setForm,
-  }: { form: typeof addForm; setForm: React.Dispatch<React.SetStateAction<typeof addForm>> }) {
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <Field label="Date" type="date" value={form.expense_date}
-          onChange={(v) => setForm((f) => ({ ...f, expense_date: v }))} />
-        <CurrencyField label="Amount" value={String(form.amount === 0 ? "" : form.amount)}
-          onChange={(v) => setForm((f) => ({ ...f, amount: v as unknown as number }))} />
-        <SelectField label="Category" value={form.category}
-          onChange={(v) => setForm((f) => ({ ...f, category: v }))} options={EXPENSE_CATEGORIES} />
-        <div className="md:col-span-2">
-          <Field label="Description" value={form.description}
-            onChange={(v) => setForm((f) => ({ ...f, description: v }))} placeholder="e.g. HVAC repair" />
-        </div>
-        <Field label="Vendor (optional)" value={form.vendor ?? ""}
-          onChange={(v) => setForm((f) => ({ ...f, vendor: v }))} placeholder="e.g. ABC Plumbing" />
-        <div className="md:col-span-3">
-          <Field label="Notes (optional)" value={form.notes ?? ""}
-            onChange={(v) => setForm((f) => ({ ...f, notes: v }))} />
-        </div>
-        <div className="md:col-span-3">
-          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={Boolean(form.is_capex)}
-              onChange={(e) => setForm((f) => ({ ...f, is_capex: e.target.checked }))}
-              className="rounded"
-            />
-            <span>Capital Expenditure (CapEx)</span>
-            <span className="text-xs text-gray-400">— excluded from NOI calculation</span>
-          </label>
-        </div>
-      </div>
-    );
-  }
+  const handleAddFormChange = useCallback((updates: Partial<ExpenseForm>) => {
+    setAddForm((prev) => ({ ...prev, ...updates }));
+  }, []);
+
+  const handleEditFormChange = useCallback((updates: Partial<ExpenseForm>) => {
+    setEditForm((prev) => ({ ...prev, ...updates }));
+  }, []);
 
   return (
     <div className="mt-4 pt-3 border-t border-gray-100">
@@ -1362,7 +1377,7 @@ function MaintenanceTab({
           <div key={e.id}>
             {editId === e.id ? (
               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                <ExpenseFormFields form={editForm} setForm={setEditForm} />
+                <ExpenseFormFields form={editForm} onFormChange={handleEditFormChange} />
                 <div className="mt-3 flex gap-2">
                   <button onClick={() => handleEdit(e.id)} disabled={editSaving}
                     className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
@@ -1403,7 +1418,7 @@ function MaintenanceTab({
 
       {showAdd ? (
         <div className="mt-3 bg-gray-50 rounded-lg p-4 border border-gray-200">
-          <ExpenseFormFields form={addForm} setForm={setAddForm} />
+          <ExpenseFormFields form={addForm} onFormChange={handleAddFormChange} />
           <div className="mt-3 flex gap-2">
             <button onClick={handleAdd} disabled={addSaving || !addForm.expense_date || !addForm.description}
               className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">

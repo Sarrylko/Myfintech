@@ -11,6 +11,9 @@ from datetime import date
 from math import isfinite
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+import io
+import csv
 
 logger = logging.getLogger(__name__)
 from sqlalchemy import and_, func, or_, select
@@ -768,3 +771,246 @@ async def portfolio_report(
         "properties": reports,
         "portfolio_total": portfolio_total,
     }
+
+
+# ─── Tax Export (CSV for CPA) ─────────────────────────────────────────────────
+
+@router.get("/tax-export")
+async def tax_export(
+    year: int = Query(..., description="Tax year (e.g., 2025)"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate a CSV tax report for all properties for the given year.
+    Format matches IRS Schedule E (Supplemental Income and Loss).
+    """
+    # Get all properties for the household
+    props_result = await db.execute(
+        select(Property).where(Property.household_id == user.household_id)
+    )
+    properties = list(props_result.scalars().all())
+
+    if not properties:
+        raise HTTPException(status_code=404, detail="No properties found")
+
+    # Date range for the tax year
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+
+    # Prepare CSV data
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    writer.writerow([
+        "Property Address",
+        "Gross Rents Received",
+        "Management Fees",
+        "Insurance",
+        "Property Taxes",
+        "HOA Fees",
+        "Repairs & Maintenance",
+        "Other Fixed Costs",
+        "Total Operating Expenses",
+        "Net Operating Income",
+        "Capital Expenditures (Separate - For Depreciation)",
+        "Loan Balance (End of Year)",
+        "Notes"
+    ])
+
+    portfolio_totals = {
+        "gross_rents": 0.0,
+        "mgmt_fees": 0.0,
+        "insurance": 0.0,
+        "property_tax": 0.0,
+        "hoa": 0.0,
+        "repairs": 0.0,
+        "other_fixed": 0.0,
+        "total_opex": 0.0,
+        "noi": 0.0,
+        "capex": 0.0,
+    }
+
+    for prop in properties:
+        # Get units for this property
+        units_result = await db.execute(
+            select(Unit).where(Unit.property_id == prop.id)
+        )
+        units = list(units_result.scalars().all())
+        unit_ids = [u.id for u in units]
+
+        # Get leases for these units
+        if unit_ids:
+            leases_result = await db.execute(
+                select(Lease).where(Lease.unit_id.in_(unit_ids))
+            )
+            leases = list(leases_result.scalars().all())
+            lease_ids = [l.id for l in leases]
+        else:
+            lease_ids = []
+
+        # Calculate gross rents received (actual payments)
+        gross_rents = 0.0
+        if lease_ids:
+            payments_result = await db.execute(
+                select(func.sum(Payment.amount)).where(
+                    and_(
+                        Payment.lease_id.in_(lease_ids),
+                        Payment.payment_date >= year_start,
+                        Payment.payment_date <= year_end,
+                    )
+                )
+            )
+            gross_rents = float(payments_result.scalar() or 0)
+
+        # Calculate rent charged (for management fee calculation)
+        rent_charged = 0.0
+        if lease_ids:
+            charges_result = await db.execute(
+                select(func.sum(RentCharge.amount)).where(
+                    and_(
+                        RentCharge.lease_id.in_(lease_ids),
+                        RentCharge.charge_date >= year_start,
+                        RentCharge.charge_date <= year_end,
+                    )
+                )
+            )
+            rent_charged = float(charges_result.scalar() or 0)
+
+        # Get active property costs
+        costs_result = await db.execute(
+            select(PropertyCost).where(
+                PropertyCost.property_id == prop.id,
+                PropertyCost.is_active == True,
+            )
+        )
+        costs = list(costs_result.scalars().all())
+
+        # Calculate annual amounts for each cost category
+        def annual_amount(cost: PropertyCost) -> float:
+            amt = float(cost.amount)
+            if cost.frequency == "monthly":
+                return amt * 12
+            elif cost.frequency == "quarterly":
+                return amt * 4
+            elif cost.frequency == "annual":
+                return amt
+            else:  # one_time
+                return amt
+
+        insurance_annual = sum(annual_amount(c) for c in costs if c.category == "insurance")
+        property_tax_annual = sum(annual_amount(c) for c in costs if c.category == "property_tax")
+        hoa_annual = sum(annual_amount(c) for c in costs if c.category == "hoa")
+        other_fixed_annual = sum(
+            annual_amount(c) for c in costs
+            if c.category not in ("insurance", "property_tax", "hoa")
+        )
+
+        # Get maintenance expenses (repairs only, not CapEx)
+        repairs_result = await db.execute(
+            select(func.sum(MaintenanceExpense.amount)).where(
+                and_(
+                    MaintenanceExpense.property_id == prop.id,
+                    MaintenanceExpense.expense_date >= year_start,
+                    MaintenanceExpense.expense_date <= year_end,
+                    MaintenanceExpense.is_capex == False,
+                )
+            )
+        )
+        repairs_annual = float(repairs_result.scalar() or 0)
+
+        # Get CapEx separately (for depreciation schedule)
+        capex_result = await db.execute(
+            select(func.sum(MaintenanceExpense.amount)).where(
+                and_(
+                    MaintenanceExpense.property_id == prop.id,
+                    MaintenanceExpense.expense_date >= year_start,
+                    MaintenanceExpense.expense_date <= year_end,
+                    MaintenanceExpense.is_capex == True,
+                )
+            )
+        )
+        capex_annual = float(capex_result.scalar() or 0)
+
+        # Calculate management fees (based on rent charged, not collected)
+        mgmt_fees = 0.0
+        if prop.is_property_managed and prop.management_fee_pct:
+            mgmt_fees = rent_charged * float(prop.management_fee_pct) / 100
+
+        # Get loan balance at end of year
+        loans_result = await db.execute(
+            select(Loan).where(Loan.property_id == prop.id)
+        )
+        loans = list(loans_result.scalars().all())
+        total_loan_balance = sum(float(l.current_balance or 0) for l in loans)
+
+        # Calculate totals
+        total_opex = mgmt_fees + insurance_annual + property_tax_annual + hoa_annual + repairs_annual + other_fixed_annual
+        noi = gross_rents - total_opex
+
+        # Write property row
+        writer.writerow([
+            prop.address,
+            f"{gross_rents:.2f}",
+            f"{mgmt_fees:.2f}",
+            f"{insurance_annual:.2f}",
+            f"{property_tax_annual:.2f}",
+            f"{hoa_annual:.2f}",
+            f"{repairs_annual:.2f}",
+            f"{other_fixed_annual:.2f}",
+            f"{total_opex:.2f}",
+            f"{noi:.2f}",
+            f"{capex_annual:.2f}",
+            f"{total_loan_balance:.2f}",
+            "See loan statements for mortgage interest breakdown"
+        ])
+
+        # Accumulate portfolio totals
+        portfolio_totals["gross_rents"] += gross_rents
+        portfolio_totals["mgmt_fees"] += mgmt_fees
+        portfolio_totals["insurance"] += insurance_annual
+        portfolio_totals["property_tax"] += property_tax_annual
+        portfolio_totals["hoa"] += hoa_annual
+        portfolio_totals["repairs"] += repairs_annual
+        portfolio_totals["other_fixed"] += other_fixed_annual
+        portfolio_totals["total_opex"] += total_opex
+        portfolio_totals["noi"] += noi
+        portfolio_totals["capex"] += capex_annual
+
+    # Write portfolio total row
+    writer.writerow([
+        "PORTFOLIO TOTAL",
+        f"{portfolio_totals['gross_rents']:.2f}",
+        f"{portfolio_totals['mgmt_fees']:.2f}",
+        f"{portfolio_totals['insurance']:.2f}",
+        f"{portfolio_totals['property_tax']:.2f}",
+        f"{portfolio_totals['hoa']:.2f}",
+        f"{portfolio_totals['repairs']:.2f}",
+        f"{portfolio_totals['other_fixed']:.2f}",
+        f"{portfolio_totals['total_opex']:.2f}",
+        f"{portfolio_totals['noi']:.2f}",
+        f"{portfolio_totals['capex']:.2f}",
+        "",
+        ""
+    ])
+
+    # Add notes section
+    writer.writerow([])
+    writer.writerow(["IMPORTANT NOTES FOR CPA:"])
+    writer.writerow(["1. Gross Rents = Actual payments received (cash basis)"])
+    writer.writerow(["2. Repairs & Maintenance = Operating expenses (deductible in current year)"])
+    writer.writerow(["3. Capital Expenditures = Must be depreciated over time (NOT deductible in current year)"])
+    writer.writerow(["4. Mortgage Interest: See loan statements - only INTEREST is deductible, not principal"])
+    writer.writerow(["5. Management Fees = Based on gross rents charged (before manager takes cut)"])
+    writer.writerow(["6. This report does NOT include: Depreciation, Mortgage Interest breakdown, or Prior year carryover losses"])
+
+    # Return CSV as downloadable file
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=rental_tax_report_{year}.csv"
+        }
+    )
