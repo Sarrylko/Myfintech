@@ -66,25 +66,7 @@ const SUBTYPES: Record<string, { value: string; label: string }[]> = {
   ],
 };
 
-function fmt(value: string | number | null, currency = "USD"): string {
-  if (value === null || value === undefined) return "—";
-  const n = typeof value === "number" ? value : parseFloat(value as string);
-  if (isNaN(n)) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency,
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(n);
-}
 
-function typeColor(type: string): string {
-  switch (type.toLowerCase()) {
-    case "depository": return "bg-blue-100 text-blue-700";
-    case "credit": return "bg-orange-100 text-orange-700";
-    case "investment": return "bg-green-100 text-green-700";
-    case "loan": return "bg-red-100 text-red-700";
-    default: return "bg-gray-100 text-gray-600";
-  }
-}
 
 function capitalize(s: string | null | undefined): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
@@ -308,14 +290,6 @@ export default function AccountsPage() {
     if (!accountsByItem[key]) accountsByItem[key] = [];
     accountsByItem[key].push(acct);
   }
-
-  const totalAssets = accounts
-    .filter((a) => a.type === "depository" || a.type === "investment")
-    .reduce((s, a) => s + (a.current_balance ? parseFloat(a.current_balance) : 0), 0);
-  const totalLiabilities = accounts
-    .filter((a) => a.type === "credit" || a.type === "loan")
-    .reduce((s, a) => s + (a.current_balance ? parseFloat(a.current_balance) : 0), 0);
-  const netWorth = totalAssets - totalLiabilities;
 
   const subtypeOptions = SUBTYPES[manualForm.type] ?? [];
 
@@ -762,23 +736,6 @@ PLAID_ENV=sandbox`}
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>
       )}
 
-      {/* Summary cards */}
-      {accounts.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Total Assets</p>
-            <p className="text-2xl font-bold text-gray-900">{fmt(totalAssets)}</p>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Total Liabilities</p>
-            <p className="text-2xl font-bold text-gray-900">{fmt(totalLiabilities)}</p>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Worth</p>
-            <p className={`text-2xl font-bold ${netWorth >= 0 ? "text-green-600" : "text-red-600"}`}>{fmt(netWorth)}</p>
-          </div>
-        </div>
-      )}
 
       {loading && (
         <div className="bg-white rounded-lg shadow border border-gray-100 p-12 text-center text-gray-400">Loading accounts...</div>

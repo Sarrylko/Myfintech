@@ -1691,35 +1691,7 @@ function ReportsTab({
         </div>
 
         {/* Actions */}
-        <div className="flex justify-between items-center pt-1 border-t border-gray-100">
-          <button
-            onClick={async () => {
-              try {
-                const response = await fetch(`/api/v1/reports/tax-export?year=${year}`, {
-                  headers: { Authorization: `Bearer ${token}` }
-                });
-                if (!response.ok) {
-                  const errorText = await response.text();
-                  console.error("Download failed:", response.status, errorText);
-                  alert(`Download failed (${response.status}): ${errorText.substring(0, 200)}`);
-                  return;
-                }
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `rental_tax_report_${year}.csv`;
-                a.click();
-                window.URL.revokeObjectURL(url);
-              } catch (err) {
-                console.error("Download error:", err);
-                alert(`Failed to download tax report: ${err instanceof Error ? err.message : String(err)}`);
-              }
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-semibold transition-colors"
-          >
-            📊 Download Tax Report (CSV)
-          </button>
+        <div className="flex justify-end items-center pt-1 border-t border-gray-100">
           <button
             onClick={loadReport}
             disabled={loading}
