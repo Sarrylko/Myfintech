@@ -293,6 +293,46 @@ export default function AccountsPage() {
 
   const subtypeOptions = SUBTYPES[manualForm.type] ?? [];
 
+  // ── Summary buckets ────────────────────────────────────────────────────────
+  function sumBal(list: Account[]) {
+    return list.reduce((s, a) => s + (a.current_balance ? parseFloat(a.current_balance) : 0), 0);
+  }
+  function fmtK(n: number) {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency", currency: "USD",
+      minimumFractionDigits: 0, maximumFractionDigits: 0,
+    }).format(n);
+  }
+
+  const visibleAccounts = accounts.filter((a) => !a.is_hidden);
+  const CHECKING_SUBTYPES = new Set(["checking", "prepaid"]);
+  const SAVINGS_SUBTYPES  = new Set(["savings", "cd", "money market", "cash management"]);
+
+  const checkingAccounts   = visibleAccounts.filter((a) => a.type === "depository" && CHECKING_SUBTYPES.has((a.subtype ?? "").toLowerCase()));
+  const savingsAccounts    = visibleAccounts.filter((a) => a.type === "depository" && SAVINGS_SUBTYPES.has((a.subtype ?? "").toLowerCase()));
+  const otherDepository    = visibleAccounts.filter((a) => a.type === "depository" && !CHECKING_SUBTYPES.has((a.subtype ?? "").toLowerCase()) && !SAVINGS_SUBTYPES.has((a.subtype ?? "").toLowerCase()));
+  const creditAccounts     = visibleAccounts.filter((a) => a.type === "credit");
+  const investmentAccounts = visibleAccounts.filter((a) => a.type === "investment");
+  const loanAccounts       = visibleAccounts.filter((a) => a.type === "loan");
+
+  const totalChecking   = sumBal(checkingAccounts);
+  const totalSavings    = sumBal(savingsAccounts);
+  const totalCards      = sumBal(creditAccounts);
+  const totalInvest     = sumBal(investmentAccounts);
+  const totalLoans      = sumBal(loanAccounts);
+  const totalOtherDep   = sumBal(otherDepository);
+  const netCash         = totalChecking + totalSavings + totalOtherDep - totalCards;
+
+  const summaryBuckets = [
+    ...(checkingAccounts.length   > 0 ? [{ label: "Checking",   amount: totalChecking,  count: checkingAccounts.length,   color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-100",  icon: "🏧" }] : []),
+    ...(savingsAccounts.length    > 0 ? [{ label: "Savings",    amount: totalSavings,   count: savingsAccounts.length,    color: "text-teal-700",   bg: "bg-teal-50",   border: "border-teal-100",  icon: "🏦" }] : []),
+    ...(otherDepository.length    > 0 ? [{ label: "Other Bank", amount: totalOtherDep,  count: otherDepository.length,    color: "text-sky-700",    bg: "bg-sky-50",    border: "border-sky-100",   icon: "🏛️" }] : []),
+    ...(creditAccounts.length     > 0 ? [{ label: "Card Balances", amount: -totalCards, count: creditAccounts.length,    color: "text-orange-700", bg: "bg-orange-50", border: "border-orange-100", icon: "💳", debt: true }] : []),
+    ...(investmentAccounts.length > 0 ? [{ label: "Investments", amount: totalInvest,  count: investmentAccounts.length, color: "text-green-700",  bg: "bg-green-50",  border: "border-green-100", icon: "📈" }] : []),
+    ...(loanAccounts.length       > 0 ? [{ label: "Loans",      amount: -totalLoans,   count: loanAccounts.length,       color: "text-red-700",    bg: "bg-red-50",    border: "border-red-100",   icon: "📋", debt: true }] : []),
+    { label: "Net Cash", amount: netCash, count: null, color: netCash >= 0 ? "text-gray-900" : "text-red-700", bg: "bg-gray-900", border: "border-gray-800", icon: "💰", netCard: true },
+  ] as const;
+
   return (
     <div>
       {/* Header */}
@@ -736,6 +776,51 @@ PLAID_ENV=sandbox`}
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>
       )}
 
+      {/* Account-type summary strip */}
+      {!loading && visibleAccounts.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
+          {summaryBuckets.map((b) => (
+            <div
+              key={b.label}
+              className={`rounded-xl border p-4 flex flex-col gap-1 ${
+                (b as { netCard?: boolean }).netCard
+                  ? "bg-gray-900 border-gray-800"
+                  : `${b.bg} ${b.border}`
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-base">{b.icon}</span>
+                {(b as { count?: number | null }).count !== null && (
+                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${
+                    (b as { netCard?: boolean }).netCard ? "bg-gray-700 text-gray-300" : "bg-white/60 text-gray-500"
+                  }`}>
+                    {(b as { count?: number | null }).count}
+                  </span>
+                )}
+              </div>
+              <p className={`text-xs font-medium mt-1 ${
+                (b as { netCard?: boolean }).netCard ? "text-gray-400" : "text-gray-500"
+              }`}>
+                {b.label}
+              </p>
+              <p className={`text-lg font-bold leading-tight ${
+                (b as { netCard?: boolean }).netCard
+                  ? (b.amount >= 0 ? "text-white" : "text-red-400")
+                  : (b as { debt?: boolean }).debt
+                  ? (b.amount < 0 ? "text-red-600" : b.color)
+                  : b.color
+              }`}>
+                {(b as { debt?: boolean }).debt && b.amount < 0 ? `−${fmtK(-b.amount)}` : fmtK(Math.abs(b.amount))}
+              </p>
+              {(b as { debt?: boolean }).debt && (
+                <p className={`text-xs ${(b as { netCard?: boolean }).netCard ? "text-gray-500" : "text-gray-400"}`}>
+                  owed
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {loading && (
         <div className="bg-white rounded-lg shadow border border-gray-100 p-12 text-center text-gray-400">Loading accounts...</div>
