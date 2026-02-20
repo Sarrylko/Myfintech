@@ -38,6 +38,12 @@ class RefreshResult(BaseModel):
     refreshed: int
 
 
+class TickerInfo(BaseModel):
+    symbol: str
+    name: str | None
+    found: bool
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/market-status", response_model=MarketStatus)
@@ -114,6 +120,26 @@ async def get_refresh_settings(
         price_refresh_enabled=hh.price_refresh_enabled if hh else True,
         price_refresh_interval_minutes=hh.price_refresh_interval_minutes if hh else 15,
     )
+
+
+@router.get("/ticker-info", response_model=TickerInfo)
+async def get_ticker_info(
+    symbol: str,
+    user: User = Depends(get_current_user),
+):
+    """Look up a ticker symbol and return its company name via yfinance."""
+    import yfinance as yf
+
+    sym = symbol.upper().strip()
+    if not sym:
+        return TickerInfo(symbol=sym, name=None, found=False)
+    try:
+        t = yf.Ticker(sym)
+        info = t.info
+        name = info.get("longName") or info.get("shortName")
+        return TickerInfo(symbol=sym, name=name, found=bool(name))
+    except Exception:
+        return TickerInfo(symbol=sym, name=None, found=False)
 
 
 @router.patch("/settings", response_model=InvestmentRefreshSettings)

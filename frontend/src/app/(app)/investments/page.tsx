@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   getToken, listAccounts, listHouseholdMembers, listHoldings,
-  createHolding, updateHolding, deleteHolding,
+  createHolding, updateHolding, deleteHolding, getTickerInfo,
   getRefreshStatus, getMarketStatus, refreshInvestmentPrices,
   Account, Holding, HoldingCreate, HoldingUpdate,
   UserResponse, RefreshStatus, MarketStatus,
@@ -101,6 +101,31 @@ function HoldingsTable({
   const [addForm, setAddForm] = useState<HoldingCreate>(BLANK_ADD);
   const [saving, setSaving] = useState(false);
   const [rowError, setRowError] = useState("");
+  const [lookingUpTicker, setLookingUpTicker] = useState(false);
+  const tickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function scheduleLookup(ticker: string, isAdd: boolean) {
+    if (tickerTimer.current) clearTimeout(tickerTimer.current);
+    if (!ticker) return;
+    tickerTimer.current = setTimeout(async () => {
+      const token = getToken();
+      if (!token) return;
+      setLookingUpTicker(true);
+      try {
+        const info = await getTickerInfo(ticker, token);
+        const resolvedName = info.found ? (info.name ?? "Unknown") : "Unknown";
+        if (isAdd) {
+          setAddForm((p) => ({ ...p, name: resolvedName }));
+        } else {
+          setEditForm((p) => ({ ...p, name: resolvedName }));
+        }
+      } catch {
+        // silently ignore lookup errors
+      } finally {
+        setLookingUpTicker(false);
+      }
+    }, 600);
+  }
 
   function startEdit(h: Holding) {
     setEditingId(h.id);
@@ -204,10 +229,10 @@ function HoldingsTable({
                 return (
                   <tr key={h.id} className="border-t border-blue-100 bg-blue-50/40">
                     <td className="px-4 py-2">
-                      <input className={inp} placeholder="AAPL" value={editForm.ticker_symbol ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, ticker_symbol: e.target.value.toUpperCase() }))} />
+                      <input className={inp} placeholder="AAPL" value={editForm.ticker_symbol ?? ""} onChange={(e) => { const val = e.target.value.toUpperCase(); setEditForm((p) => ({ ...p, ticker_symbol: val })); scheduleLookup(val, false); }} />
                     </td>
                     <td className="px-4 py-2">
-                      <input className={inp} placeholder="Apple Inc." value={editForm.name ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))} />
+                      <input className={inp} placeholder={lookingUpTicker ? "Looking up…" : "Apple Inc."} value={editForm.name ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))} />
                     </td>
                     <td className="px-4 py-2">
                       <input className={`${inp} text-right`} type="number" step="any" placeholder="10" value={editForm.quantity ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, quantity: e.target.value }))} />
@@ -282,10 +307,10 @@ function HoldingsTable({
             {showAddForm && (
               <tr className="border-t border-green-100 bg-green-50/40">
                 <td className="px-4 py-2">
-                  <input className={inp} placeholder="AAPL" value={addForm.ticker_symbol ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, ticker_symbol: e.target.value.toUpperCase() }))} />
+                  <input className={inp} placeholder="AAPL" value={addForm.ticker_symbol ?? ""} onChange={(e) => { const val = e.target.value.toUpperCase(); setAddForm((p) => ({ ...p, ticker_symbol: val })); scheduleLookup(val, true); }} />
                 </td>
                 <td className="px-4 py-2">
-                  <input className={inp} placeholder="Company name (optional)" value={addForm.name ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))} />
+                  <input className={inp} placeholder={lookingUpTicker ? "Looking up…" : "Auto-filled from ticker"} value={addForm.name ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))} />
                 </td>
                 <td className="px-4 py-2">
                   <input className={`${inp} text-right`} type="number" step="any" placeholder="Shares *" value={addForm.quantity} onChange={(e) => setAddForm((p) => ({ ...p, quantity: e.target.value }))} />

@@ -905,12 +905,22 @@ export interface HoldingCreate {
 
 export type HoldingUpdate = Partial<HoldingCreate>;
 
+export interface TickerInfo {
+  symbol: string;
+  name: string | null;
+  found: boolean;
+}
+
+export async function getTickerInfo(symbol: string, token: string): Promise<TickerInfo> {
+  return apiFetch<TickerInfo>(`/api/v1/investments/ticker-info?symbol=${encodeURIComponent(symbol)}`, { token });
+}
+
 export async function createHolding(accountId: string, data: HoldingCreate, token: string): Promise<Holding> {
-  return apiFetch<Holding>(`/api/v1/accounts/${accountId}/holdings`, { token, method: "POST", body: data });
+  return apiFetch<Holding>(`/api/v1/accounts/${accountId}/holdings`, { token, method: "POST", body: JSON.stringify(data) });
 }
 
 export async function updateHolding(holdingId: string, data: HoldingUpdate, token: string): Promise<Holding> {
-  return apiFetch<Holding>(`/api/v1/accounts/holdings/${holdingId}`, { token, method: "PATCH", body: data });
+  return apiFetch<Holding>(`/api/v1/accounts/holdings/${holdingId}`, { token, method: "PATCH", body: JSON.stringify(data) });
 }
 
 export async function deleteHolding(holdingId: string, token: string): Promise<void> {
@@ -1226,7 +1236,7 @@ export async function updateInvestmentSettings(
   return apiFetch<InvestmentRefreshSettings>("/api/v1/investments/settings", {
     token,
     method: "PATCH",
-    body: data,
+    body: JSON.stringify(data),
   });
 }
 
