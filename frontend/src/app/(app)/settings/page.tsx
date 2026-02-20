@@ -19,6 +19,9 @@ import {
   createCustomCategory,
   deleteCustomCategory,
   CustomCategory,
+  getInvestmentSettings,
+  updateInvestmentSettings,
+  InvestmentRefreshSettings,
 } from "@/lib/api";
 
 const PROPERTY_TYPES = [
@@ -150,6 +153,7 @@ export default function SettingsPage() {
     if (!token) { router.replace("/login"); return; }
     listCustomCategories(token).then(setCustomCats).catch(() => {});
     listHouseholdMembers(token).then(setMembers).catch(() => {});
+    getInvestmentSettings(token).then(setRefreshSettings).catch(() => {});
     getProfile(token).then((u) => {
       setProfile(u);
       setProfileForm({
@@ -199,6 +203,15 @@ export default function SettingsPage() {
       setProfileSaving(false);
     }
   }
+
+  // ── Investment price refresh settings ──────────────────────────────
+  const [refreshSettings, setRefreshSettings] = useState<InvestmentRefreshSettings>({
+    price_refresh_enabled: true,
+    price_refresh_interval_minutes: 15,
+  });
+  const [refreshSaving, setRefreshSaving] = useState(false);
+  const [refreshSuccess, setRefreshSuccess] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
 
   // ── Password change ────────────────────────────────────────────────
   const [pwForm, setPwForm] = useState({ current: "", next: "", confirm: "" });
@@ -266,6 +279,25 @@ export default function SettingsPage() {
       alert(err instanceof Error ? err.message : "Failed to remove member");
     } finally {
       setRemovingMemberId(null);
+    }
+  }
+
+  // ── Investment refresh settings handler ────────────────────────────
+  async function handleSaveRefreshSettings(e: React.FormEvent) {
+    e.preventDefault();
+    const token = getToken();
+    if (!token) { router.replace("/login"); return; }
+    setRefreshSaving(true);
+    setRefreshError("");
+    try {
+      const updated = await updateInvestmentSettings(refreshSettings, token);
+      setRefreshSettings(updated);
+      setRefreshSuccess(true);
+      setTimeout(() => setRefreshSuccess(false), 3000);
+    } catch (err) {
+      setRefreshError(err instanceof Error ? err.message : "Failed to save settings");
+    } finally {
+      setRefreshSaving(false);
     }
   }
 
@@ -783,6 +815,67 @@ export default function SettingsPage() {
           <button className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition text-sm">
             Export Transactions (CSV)
           </button>
+        </section>
+
+        {/* ── Investment Price Refresh ───────────────────────────────── */}
+        <section className="bg-white rounded-lg shadow border border-gray-100 p-6">
+          <h3 className="font-semibold text-lg mb-1">Investment Price Refresh</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            Automatically update holding prices during NYSE market hours (Mon–Fri, 9:30 AM – 4:00 PM ET).
+          </p>
+          <form onSubmit={handleSaveRefreshSettings} className="space-y-4">
+            {/* Enable toggle */}
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={refreshSettings.price_refresh_enabled}
+                  onChange={(e) =>
+                    setRefreshSettings((prev) => ({ ...prev, price_refresh_enabled: e.target.checked }))
+                  }
+                  className="sr-only peer"
+                />
+                <div className="w-10 h-6 bg-gray-200 rounded-full peer peer-checked:bg-blue-600 transition-colors" />
+                <div className="absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
+              </div>
+              <span className="text-sm font-medium text-gray-700">
+                {refreshSettings.price_refresh_enabled ? "Auto-refresh enabled" : "Auto-refresh disabled"}
+              </span>
+            </label>
+
+            {/* Interval selector — only shown when enabled */}
+            {refreshSettings.price_refresh_enabled && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Refresh interval
+                </label>
+                <select
+                  value={refreshSettings.price_refresh_interval_minutes}
+                  onChange={(e) =>
+                    setRefreshSettings((prev) => ({ ...prev, price_refresh_interval_minutes: Number(e.target.value) }))
+                  }
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value={5}>Every 5 minutes</option>
+                  <option value={10}>Every 10 minutes</option>
+                  <option value={15}>Every 15 minutes (default)</option>
+                  <option value={30}>Every 30 minutes</option>
+                  <option value={60}>Every hour</option>
+                </select>
+              </div>
+            )}
+
+            {refreshError && <p className="text-red-600 text-sm">{refreshError}</p>}
+            {refreshSuccess && <p className="text-green-600 text-sm">Settings saved.</p>}
+
+            <button
+              type="submit"
+              disabled={refreshSaving}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 transition"
+            >
+              {refreshSaving ? "Saving…" : "Save"}
+            </button>
+          </form>
         </section>
 
         {/* ── Categorization Rules link ──────────────────────────────── */}

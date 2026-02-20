@@ -29,3 +29,8 @@ cryptography==44.0.0
 # ─── Utilities ────────────────────────────────
 httpx==0.28.1
 python-dateutil==2.9.0
+
+pytz==2024.2
+
+# ─── Market data ──────
+yfinance==0.2.54

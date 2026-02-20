@@ -1168,3 +1168,56 @@ export async function getPortfolioReport(
     { token }
   );
 }
+
+// ─── Investment Price Refresh ──────────────────────────────────────────────────
+
+export interface InvestmentRefreshSettings {
+  price_refresh_enabled: boolean;
+  price_refresh_interval_minutes: number;
+}
+
+export interface RefreshStatus {
+  last_refresh: string | null;
+  next_refresh: string | null;
+  enabled: boolean;
+  interval_minutes: number;
+}
+
+export interface MarketStatus {
+  is_open: boolean;
+  next_open: string | null;
+}
+
+export interface RefreshResult {
+  refreshed: number;
+}
+
+export async function getInvestmentSettings(token: string): Promise<InvestmentRefreshSettings> {
+  return apiFetch<InvestmentRefreshSettings>("/api/v1/investments/settings", { token });
+}
+
+export async function updateInvestmentSettings(
+  data: InvestmentRefreshSettings,
+  token: string
+): Promise<InvestmentRefreshSettings> {
+  return apiFetch<InvestmentRefreshSettings>("/api/v1/investments/settings", {
+    token,
+    method: "PATCH",
+    body: data,
+  });
+}
+
+export async function getRefreshStatus(token: string): Promise<RefreshStatus> {
+  return apiFetch<RefreshStatus>("/api/v1/investments/refresh-status", { token });
+}
+
+export async function getMarketStatus(token: string): Promise<MarketStatus> {
+  return apiFetch<MarketStatus>("/api/v1/investments/market-status", { token });
+}
+
+export async function refreshInvestmentPrices(token: string): Promise<RefreshResult> {
+  return apiFetch<RefreshResult>("/api/v1/investments/refresh-prices", {
+    token,
+    method: "POST",
+  });
+}

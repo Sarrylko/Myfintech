@@ -34,6 +34,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.services.property.refresh_valuations",
         "schedule": crontab(hour=8, minute=0, day_of_week=1),
     },
+    "refresh-investment-prices": {
+        "task": "app.services.price_refresh.refresh_investment_prices",
+        "schedule": crontab(minute="*/5"),  # every 5 min; task handles per-household interval check
+    },
 }
 
 # Auto-discover tasks in services/

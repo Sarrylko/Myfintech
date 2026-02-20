@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { getToken, listAccounts, listHouseholdMembers, listHoldings, Account, Holding, UserResponse } from "@/lib/api";
+import {
+  getToken, listAccounts, listHouseholdMembers, listHoldings,
+  getRefreshStatus, getMarketStatus, refreshInvestmentPrices,
+  Account, Holding, UserResponse, RefreshStatus, MarketStatus,
+} from "@/lib/api";
 
 // ─── Subtype classification ───────────────────────────────────────────────────
 
@@ -61,6 +65,15 @@ function subtypeBadgeColor(subtype: string | null): string {
   if (["brokerage"].includes(s)) return "bg-orange-100 text-orange-700";
   if (["crypto exchange"].includes(s)) return "bg-yellow-100 text-yellow-700";
   return "bg-gray-100 text-gray-600";
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return "Never";
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 60) return "Just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`;
+  return new Date(iso).toLocaleDateString();
 }
 
 function totalBalance(accounts: Account[]): number {
@@ -275,6 +288,12 @@ export default function InvestmentsPage() {
   const [holdingsMap, setHoldingsMap] = useState<Record<string, Holding[]>>({});
   const [holdingsLoadingMap, setHoldingsLoadingMap] = useState<Record<string, boolean>>({});
 
+  // ── Price refresh state ──────────────────────────────────────────────────
+  const [refreshStatus, setRefreshStatus] = useState<RefreshStatus | null>(null);
+  const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshToast, setRefreshToast] = useState("");
+
   useEffect(() => {
     const token = getToken();
     if (!token) return;
@@ -286,6 +305,46 @@ export default function InvestmentsPage() {
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load data"))
       .finally(() => setLoading(false));
   }, []);
+
+  // Fetch refresh + market status; poll every 60s
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    function fetchStatus() {
+      getRefreshStatus(token!).then(setRefreshStatus).catch(() => {});
+      getMarketStatus(token!).then(setMarketStatus).catch(() => {});
+    }
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  async function handleRefreshNow() {
+    const token = getToken();
+    if (!token || refreshing) return;
+    setRefreshing(true);
+    try {
+      const result = await refreshInvestmentPrices(token);
+      // Re-fetch holdings for all currently expanded accounts
+      const expanded = Object.keys(holdingsMap);
+      for (const id of expanded) {
+        setHoldingsLoadingMap((lm) => ({ ...lm, [id]: true }));
+        listHoldings(id, token)
+          .then((h) => setHoldingsMap((m) => ({ ...m, [id]: h })))
+          .catch(() => {})
+          .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [id]: false })));
+      }
+      // Update refresh status
+      getRefreshStatus(token).then(setRefreshStatus).catch(() => {});
+      setRefreshToast(`Updated ${result.refreshed} holding${result.refreshed !== 1 ? "s" : ""}`);
+      setTimeout(() => setRefreshToast(""), 4000);
+    } catch {
+      setRefreshToast("Refresh failed");
+      setTimeout(() => setRefreshToast(""), 3000);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const handleToggle = useCallback((accountId: string) => {
     setExpandedId((prev) => {
@@ -368,6 +427,54 @@ export default function InvestmentsPage() {
           <p className="text-2xl font-bold text-purple-600">{loading ? "…" : fmt(totalRetirement)}</p>
           <p className="text-xs text-gray-400 mt-1">{retirement.length} account{retirement.length !== 1 ? "s" : ""}</p>
         </div>
+      </div>
+
+      {/* Price refresh status bar */}
+      <div className="flex flex-wrap items-center gap-3 mb-5 bg-white rounded-xl shadow border border-gray-100 px-4 py-3">
+        {/* Market status badge */}
+        {marketStatus && (
+          <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${
+            marketStatus.is_open
+              ? "bg-green-100 text-green-700"
+              : "bg-gray-100 text-gray-500"
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${marketStatus.is_open ? "bg-green-500" : "bg-gray-400"}`} />
+            {marketStatus.is_open ? "Market Open" : "Market Closed"}
+          </span>
+        )}
+
+        {/* Last updated */}
+        <span className="text-xs text-gray-400">
+          Updated: <span className="text-gray-600 font-medium">
+            {refreshStatus ? relativeTime(refreshStatus.last_refresh) : "—"}
+          </span>
+        </span>
+
+        <div className="flex-1" />
+
+        {/* Toast */}
+        {refreshToast && (
+          <span className="text-xs font-medium text-green-600">{refreshToast}</span>
+        )}
+
+        {/* Refresh Now button */}
+        <button
+          onClick={handleRefreshNow}
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 bg-blue-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
+        >
+          {refreshing ? (
+            <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+          ) : (
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          )}
+          {refreshing ? "Refreshing…" : "Refresh Now"}
+        </button>
       </div>
 
       {loading ? (
