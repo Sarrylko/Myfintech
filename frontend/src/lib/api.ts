@@ -812,6 +812,26 @@ export async function deletePropertyValuation(id: string, token: string): Promis
   return apiFetch<void>(`/api/v1/valuations/${id}`, { method: "DELETE", token });
 }
 
+// ─── Investment Holdings ─────────────────────────────────────────────────────
+
+export interface Holding {
+  id: string;
+  account_id: string;
+  security_id: string | null;
+  ticker_symbol: string | null;
+  name: string | null;
+  quantity: string;        // Decimal as string
+  cost_basis: string | null;
+  current_value: string | null;
+  currency_code: string;
+  as_of_date: string | null;
+  created_at: string;
+}
+
+export async function listHoldings(accountId: string, token: string): Promise<Holding[]> {
+  return apiFetch<Holding[]>(`/api/v1/accounts/${accountId}/holdings`, { token });
+}
+
 // ─── Categorization Rules ───────────────────────────────────────────────────
 
 export interface Rule {

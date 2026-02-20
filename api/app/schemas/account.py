@@ -95,3 +95,19 @@ class CategoryResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class HoldingResponse(BaseModel):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    security_id: str | None
+    ticker_symbol: str | None
+    name: str | None
+    quantity: Decimal
+    cost_basis: Decimal | None
+    current_value: Decimal | None
+    currency_code: str
+    as_of_date: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

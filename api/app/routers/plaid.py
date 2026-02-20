@@ -113,6 +113,52 @@ async def _sync_item(item: PlaidItem, client, db: AsyncSession) -> dict:
 
     await db.flush()
 
+    # ── 1.5 Sync investment holdings ──────────────────────────────────────────
+    try:
+        from plaid.model.investments_holdings_get_request import InvestmentsHoldingsGetRequest
+        from app.models.investment import Holding
+
+        holdings_resp = client.investments_holdings_get(
+            InvestmentsHoldingsGetRequest(access_token=access_token)
+        )
+        sec_map = {s.security_id: s for s in (holdings_resp.securities or [])}
+
+        # Get all account UUIDs for this Plaid item
+        item_accts_result = await db.execute(
+            select(Account).where(Account.plaid_item_id == item.id)
+        )
+        item_acct_ids = [a.id for a in item_accts_result.scalars().all()]
+
+        # Delete stale holdings for this item's accounts
+        for acct_id in item_acct_ids:
+            old_h_result = await db.execute(select(Holding).where(Holding.account_id == acct_id))
+            for old_h in old_h_result.scalars().all():
+                await db.delete(old_h)
+        await db.flush()
+
+        # Insert fresh holdings
+        for ph in (holdings_resp.holdings or []):
+            a_result = await db.execute(
+                select(Account).where(Account.plaid_account_id == ph.account_id)
+            )
+            h_acct = a_result.scalar_one_or_none()
+            if not h_acct:
+                continue
+            sec = sec_map.get(ph.security_id)
+            db.add(Holding(
+                account_id=h_acct.id,
+                household_id=item.household_id,
+                security_id=ph.security_id,
+                ticker_symbol=sec.ticker_symbol if sec else None,
+                name=sec.name if sec else None,
+                quantity=Decimal(str(ph.quantity)),
+                cost_basis=Decimal(str(ph.cost_basis)) if ph.cost_basis is not None else None,
+                current_value=Decimal(str(ph.institution_value)) if ph.institution_value is not None else None,
+                as_of_date=datetime.now(timezone.utc),
+            ))
+    except Exception:
+        pass  # Item may not have investments product enabled
+
     # Load active household rules once for the whole sync
     rules_result = await db.execute(
         select(CategorizationRule)
@@ -226,6 +272,7 @@ async def create_link_token(user: User = Depends(get_current_user)):
         user=LinkTokenCreateRequestUser(client_user_id=str(user.id)),
         client_name="MyFintech",
         products=[Products("transactions")],
+        optional_products=[Products("investments")],
         country_codes=[CountryCode("US")],
         language="en",
     )

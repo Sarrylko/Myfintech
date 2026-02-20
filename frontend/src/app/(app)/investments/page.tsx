@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getToken, listAccounts, listHouseholdMembers, Account, UserResponse } from "@/lib/api";
+import { useEffect, useState, useCallback } from "react";
+import { getToken, listAccounts, listHouseholdMembers, listHoldings, Account, Holding, UserResponse } from "@/lib/api";
 
 // ─── Subtype classification ───────────────────────────────────────────────────
 
@@ -22,37 +22,31 @@ function isRetirement(subtype: string | null): boolean {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmt(val: string | number | null | undefined): string {
+function fmt(val: string | number | null | undefined, decimals = 0): string {
   if (val === null || val === undefined || val === "") return "—";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
   }).format(Number(val));
+}
+
+function fmtQty(val: string | null): string {
+  if (!val) return "—";
+  const n = Number(val);
+  return n % 1 === 0 ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
 function subtypeLabel(subtype: string | null): string {
   if (!subtype) return "Investment";
   const map: Record<string, string> = {
-    "401k": "401(k)",
-    "401a": "401(a)",
-    "403b": "403(b)",
-    "457b": "457(b)",
-    "ira": "IRA",
-    "roth": "Roth IRA",
-    "roth 401k": "Roth 401(k)",
-    "sep ira": "SEP IRA",
-    "simple ira": "SIMPLE IRA",
-    "529": "529 Plan",
-    "hsa": "HSA",
-    "pension": "Pension",
-    "keogh": "Keogh",
-    "brokerage": "Brokerage",
-    "cash management": "Cash Mgmt",
-    "crypto exchange": "Crypto",
-    "ugma": "UGMA",
-    "utma": "UTMA",
+    "401k": "401(k)", "401a": "401(a)", "403b": "403(b)", "457b": "457(b)",
+    "ira": "IRA", "roth": "Roth IRA", "roth 401k": "Roth 401(k)",
+    "sep ira": "SEP IRA", "simple ira": "SIMPLE IRA",
+    "529": "529 Plan", "hsa": "HSA", "pension": "Pension", "keogh": "Keogh",
+    "brokerage": "Brokerage", "cash management": "Cash Mgmt",
+    "crypto exchange": "Crypto", "ugma": "UGMA", "utma": "UTMA",
   };
   return map[subtype.toLowerCase()] ?? subtype.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -73,39 +67,146 @@ function totalBalance(accounts: Account[]): number {
   return accounts.reduce((sum, a) => sum + (a.current_balance ? Number(a.current_balance) : 0), 0);
 }
 
+// ─── Holdings Table ───────────────────────────────────────────────────────────
+
+function HoldingsTable({ holdings, loading }: { holdings: Holding[]; loading: boolean }) {
+  if (loading) {
+    return <div className="px-5 py-4 text-center text-sm text-gray-400">Loading holdings…</div>;
+  }
+  if (holdings.length === 0) {
+    return (
+      <div className="px-5 py-4 text-center text-sm text-gray-400">
+        No holdings data — sync with Plaid to import positions.
+      </div>
+    );
+  }
+
+  const totalValue = holdings.reduce((s, h) => s + Number(h.current_value ?? 0), 0);
+  const allHaveCost = holdings.every((h) => h.cost_basis !== null);
+  const totalCost = allHaveCost ? holdings.reduce((s, h) => s + Number(h.cost_basis ?? 0), 0) : null;
+  const totalGain = totalCost !== null ? totalValue - totalCost : null;
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+            <th className="px-4 py-2 text-left font-medium">Ticker</th>
+            <th className="px-4 py-2 text-left font-medium">Name</th>
+            <th className="px-4 py-2 text-right font-medium">Shares</th>
+            <th className="px-4 py-2 text-right font-medium">Current Value</th>
+            <th className="px-4 py-2 text-right font-medium">Cost Basis</th>
+            <th className="px-4 py-2 text-right font-medium">Gain / Loss</th>
+          </tr>
+        </thead>
+        <tbody>
+          {holdings.map((h) => {
+            const value = Number(h.current_value ?? 0);
+            const cost = Number(h.cost_basis ?? 0);
+            const hasCost = h.cost_basis !== null && cost > 0;
+            const gain = hasCost ? value - cost : null;
+            const gainPct = hasCost ? ((value - cost) / cost) * 100 : null;
+            const gainPositive = gain !== null && gain >= 0;
+
+            return (
+              <tr key={h.id} className="border-t border-gray-100 hover:bg-gray-50">
+                <td className="px-4 py-2.5 font-mono font-semibold text-gray-800">
+                  {h.ticker_symbol ?? <span className="text-gray-400 font-sans font-normal">—</span>}
+                </td>
+                <td className="px-4 py-2.5 text-gray-700 max-w-[200px] truncate">{h.name ?? "—"}</td>
+                <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums">{fmtQty(h.quantity)}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-gray-900 tabular-nums">{fmt(h.current_value, 2)}</td>
+                <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{hasCost ? fmt(h.cost_basis, 2) : "—"}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums">
+                  {gain !== null ? (
+                    <span className={gainPositive ? "text-green-600" : "text-red-600"}>
+                      {gainPositive ? "+" : ""}{fmt(gain, 2)}
+                      <span className="ml-1 text-xs opacity-75">({gainPositive ? "+" : ""}{gainPct!.toFixed(1)}%)</span>
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold text-xs text-gray-600">
+            <td colSpan={3} className="px-4 py-2">{holdings.length} position{holdings.length !== 1 ? "s" : ""}</td>
+            <td className="px-4 py-2 text-right tabular-nums">{fmt(totalValue, 2)}</td>
+            <td className="px-4 py-2 text-right tabular-nums text-gray-500">{totalCost !== null ? fmt(totalCost, 2) : "—"}</td>
+            <td className="px-4 py-2 text-right tabular-nums">
+              {totalGain !== null ? (
+                <span className={totalGain >= 0 ? "text-green-600" : "text-red-600"}>
+                  {totalGain >= 0 ? "+" : ""}{fmt(totalGain, 2)}
+                </span>
+              ) : <span className="text-gray-400">—</span>}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 // ─── Account Row ─────────────────────────────────────────────────────────────
 
-function AccountRow({ account, ownerName }: { account: Account; ownerName?: string }) {
+function AccountRow({
+  account, ownerName, expanded, onToggle, holdings, holdingsLoading,
+}: {
+  account: Account;
+  ownerName?: string;
+  expanded: boolean;
+  onToggle: () => void;
+  holdings: Holding[];
+  holdingsLoading: boolean;
+}) {
   return (
-    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center shrink-0 text-base font-semibold text-gray-500">
-          {(account.institution_name ?? account.name).charAt(0).toUpperCase()}
-        </div>
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">
-            {account.name}
-            {account.mask && <span className="ml-1.5 text-gray-400 font-normal">···{account.mask}</span>}
-          </p>
-          <p className="text-xs text-gray-400 truncate">
-            {account.institution_name ?? "Manual"}
-          </p>
-        </div>
-        <span className={`ml-2 shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${subtypeBadgeColor(account.subtype)}`}>
-          {subtypeLabel(account.subtype)}
-        </span>
-        {ownerName && (
-          <span className="shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
-            {ownerName}
+    <div className="border-b border-gray-50 last:border-0">
+      <button
+        className="w-full flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition text-left"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center shrink-0 text-base font-semibold text-gray-500">
+            {(account.institution_name ?? account.name).charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-900 truncate">
+              {account.name}
+              {account.mask && <span className="ml-1.5 text-gray-400 font-normal">···{account.mask}</span>}
+            </p>
+            <p className="text-xs text-gray-400 truncate">{account.institution_name ?? "Manual"}</p>
+          </div>
+          <span className={`ml-2 shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${subtypeBadgeColor(account.subtype)}`}>
+            {subtypeLabel(account.subtype)}
           </span>
-        )}
-      </div>
-      <div className="text-right shrink-0 ml-4">
-        <p className="text-sm font-semibold text-gray-900">{fmt(account.current_balance)}</p>
-        {account.is_manual && (
-          <p className="text-xs text-gray-400">manual</p>
-        )}
-      </div>
+          {ownerName && (
+            <span className="shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
+              {ownerName}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3 shrink-0 ml-4">
+          <div className="text-right">
+            <p className="text-sm font-semibold text-gray-900">{fmt(account.current_balance)}</p>
+            {account.is_manual && <p className="text-xs text-gray-400">manual</p>}
+          </div>
+          <svg
+            className={`w-4 h-4 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-gray-100 bg-gray-50/50">
+          <HoldingsTable holdings={holdings} loading={holdingsLoading} />
+        </div>
+      )}
     </div>
   );
 }
@@ -114,6 +215,7 @@ function AccountRow({ account, ownerName }: { account: Account; ownerName?: stri
 
 function Segment({
   title, subtitle, accounts, accentClass, emptyText, memberMap,
+  expandedId, onToggle, holdingsMap, holdingsLoadingMap,
 }: {
   title: string;
   subtitle: string;
@@ -121,6 +223,10 @@ function Segment({
   accentClass: string;
   emptyText: string;
   memberMap: Record<string, string>;
+  expandedId: string | null;
+  onToggle: (id: string) => void;
+  holdingsMap: Record<string, Holding[]>;
+  holdingsLoadingMap: Record<string, boolean>;
 }) {
   const total = totalBalance(accounts);
   return (
@@ -140,7 +246,15 @@ function Segment({
       ) : (
         <div>
           {accounts.map((a) => (
-            <AccountRow key={a.id} account={a} ownerName={a.owner_user_id ? memberMap[a.owner_user_id] : undefined} />
+            <AccountRow
+              key={a.id}
+              account={a}
+              ownerName={a.owner_user_id ? memberMap[a.owner_user_id] : undefined}
+              expanded={expandedId === a.id}
+              onToggle={() => onToggle(a.id)}
+              holdings={holdingsMap[a.id] ?? []}
+              holdingsLoading={holdingsLoadingMap[a.id] ?? false}
+            />
           ))}
         </div>
       )}
@@ -157,13 +271,14 @@ export default function InvestmentsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [holdingsMap, setHoldingsMap] = useState<Record<string, Holding[]>>({});
+  const [holdingsLoadingMap, setHoldingsLoadingMap] = useState<Record<string, boolean>>({});
+
   useEffect(() => {
     const token = getToken();
     if (!token) return;
-    Promise.all([
-      listAccounts(token),
-      listHouseholdMembers(token),
-    ])
+    Promise.all([listAccounts(token), listHouseholdMembers(token)])
       .then(([all, mems]) => {
         setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden));
         setMembers(mems);
@@ -172,9 +287,30 @@ export default function InvestmentsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const handleToggle = useCallback((accountId: string) => {
+    setExpandedId((prev) => {
+      if (prev === accountId) return null;
+
+      // Fetch holdings on first expand
+      setHoldingsMap((m) => {
+        if (m[accountId] !== undefined) return m; // already loaded
+        const token = getToken();
+        if (token) {
+          setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: true }));
+          listHoldings(accountId, token)
+            .then((h) => setHoldingsMap((cur) => ({ ...cur, [accountId]: h })))
+            .catch(() => setHoldingsMap((cur) => ({ ...cur, [accountId]: [] })))
+            .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: false })));
+        }
+        return m;
+      });
+
+      return accountId;
+    });
+  }, []);
+
   const memberMap: Record<string, string> = Object.fromEntries(members.map((m) => [m.id, m.full_name]));
 
-  // Apply owner filter
   const filtered = ownerFilter === "all"
     ? accounts
     : ownerFilter === "shared"
@@ -247,6 +383,7 @@ export default function InvestmentsPage() {
         </div>
       ) : (
         <div className="space-y-5">
+          <p className="text-xs text-gray-400">Click an account row to view individual holdings and positions.</p>
           <Segment
             title="Brokerage & Taxable"
             subtitle="Standard taxable investment accounts"
@@ -254,6 +391,10 @@ export default function InvestmentsPage() {
             accentClass="text-orange-600"
             emptyText="No brokerage accounts linked."
             memberMap={memberMap}
+            expandedId={expandedId}
+            onToggle={handleToggle}
+            holdingsMap={holdingsMap}
+            holdingsLoadingMap={holdingsLoadingMap}
           />
           <Segment
             title="Retirement & Tax-Advantaged"
@@ -262,6 +403,10 @@ export default function InvestmentsPage() {
             accentClass="text-purple-600"
             emptyText="No retirement accounts linked."
             memberMap={memberMap}
+            expandedId={expandedId}
+            onToggle={handleToggle}
+            holdingsMap={holdingsMap}
+            holdingsLoadingMap={holdingsLoadingMap}
           />
         </div>
       )}

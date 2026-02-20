@@ -13,9 +13,11 @@ from app.models.account import Account, Transaction
 from app.models.property_details import Loan
 from app.models.rule import CategorizationRule
 from app.models.user import User
+from app.models.investment import Holding
 from app.schemas.account import (
     AccountResponse,
     AccountUpdate,
+    HoldingResponse,
     ManualAccountCreate,
     TransactionResponse,
     TransactionUpdate,
@@ -357,6 +359,30 @@ async def import_csv_transactions(
         "errors": errors,
         "total_rows": i - 1 if imported + len(errors) + duplicates > 0 else 0,
     }
+
+
+@router.get("/{account_id}/holdings", response_model=list[HoldingResponse])
+async def list_holdings(
+    account_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all holdings for an investment account."""
+    acct_result = await db.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.household_id == user.household_id,
+        )
+    )
+    if not acct_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    result = await db.execute(
+        select(Holding)
+        .where(Holding.account_id == account_id)
+        .order_by(Holding.current_value.desc())
+    )
+    return result.scalars().all()
 
 
 @router.patch(
