@@ -812,6 +812,68 @@ export async function deletePropertyValuation(id: string, token: string): Promis
   return apiFetch<void>(`/api/v1/valuations/${id}`, { method: "DELETE", token });
 }
 
+// ─── Recurring Transactions ──────────────────────────────────────────────────
+
+export interface RecurringCandidate {
+  key: string;
+  name: string;
+  merchant_name: string | null;
+  amount: string;          // Decimal as string
+  frequency: string;       // weekly | biweekly | monthly | quarterly | annual
+  last_date: string;       // ISO date
+  next_expected: string;   // ISO date
+  occurrences: number;
+  confidence: number;      // 0–1
+  transaction_ids: string[];
+}
+
+export interface RecurringTransaction {
+  id: string;
+  household_id: string;
+  name: string;
+  merchant_name: string | null;
+  amount: string;
+  frequency: string;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+}
+
+export async function detectRecurring(token: string): Promise<RecurringCandidate[]> {
+  return apiFetch<RecurringCandidate[]>("/api/v1/recurring/detect", { method: "POST", token });
+}
+
+export async function confirmRecurring(
+  candidates: RecurringCandidate[],
+  token: string
+): Promise<RecurringTransaction[]> {
+  return apiFetch<RecurringTransaction[]>("/api/v1/recurring/confirm", {
+    method: "POST",
+    body: JSON.stringify({ candidates }),
+    token,
+  });
+}
+
+export async function listRecurring(token: string): Promise<RecurringTransaction[]> {
+  return apiFetch<RecurringTransaction[]>("/api/v1/recurring/", { token });
+}
+
+export async function updateRecurring(
+  id: string,
+  data: { name?: string; is_active?: boolean; notes?: string; frequency?: string },
+  token: string
+): Promise<RecurringTransaction> {
+  return apiFetch<RecurringTransaction>(`/api/v1/recurring/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function deleteRecurring(id: string, token: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/recurring/${id}`, { method: "DELETE", token });
+}
+
 // ─── Investment Holdings ─────────────────────────────────────────────────────
 
 export interface Holding {

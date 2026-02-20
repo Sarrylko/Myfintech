@@ -74,6 +74,7 @@ const navItems = [
   { href: "/properties", label: "Real Estate", icon: "🏠" },
   { href: "/rentals", label: "Rentals", icon: "🏘" },
   { href: "/taxes", label: "Tax Center", icon: "📊" },
+  { href: "/recurring", label: "Recurring", icon: "🔁" },
   { href: "/rules", label: "Rules", icon: "⚡" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
