@@ -124,7 +124,18 @@ function HoldingsTable({ holdings, loading }: { holdings: Holding[]; loading: bo
             return (
               <tr key={h.id} className="border-t border-gray-100 hover:bg-gray-50">
                 <td className="px-4 py-2.5 font-mono font-semibold text-gray-800">
-                  {h.ticker_symbol ?? <span className="text-gray-400 font-sans font-normal">—</span>}
+                  {h.ticker_symbol ? (
+                    <a
+                      href={`https://finance.yahoo.com/quote/${h.ticker_symbol}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-800 hover:underline"
+                    >
+                      {h.ticker_symbol}
+                    </a>
+                  ) : (
+                    <span className="text-gray-400 font-sans font-normal">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-2.5 text-gray-700 max-w-[200px] truncate">{h.name ?? "—"}</td>
                 <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums">{fmtQty(h.quantity)}</td>
