@@ -151,11 +151,12 @@ export default function RentalsPage() {
         listTenants(token),
         listLeases(token),
       ]);
-      setProperties(props);
+      setProperties(props.filter((p) => !p.is_primary_residence));
       setTenants(tnts);
       setAllLeases(lses);
       // Load all units for all properties to enable property-name lookup in PaymentsTab
-      const unitLists = await Promise.all(props.map((p) => listUnits(p.id, token).catch(() => [])));
+      const rentalProps = props.filter((p) => !p.is_primary_residence);
+      const unitLists = await Promise.all(rentalProps.map((p) => listUnits(p.id, token).catch(() => [])));
       setAllUnits(unitLists.flat());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");

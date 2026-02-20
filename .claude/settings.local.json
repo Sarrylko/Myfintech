@@ -13,7 +13,12 @@
       "Bash(./node_modules/.bin/tsc:*)",
       "Bash(node_modules/typescript/bin/tsc:*)",
       "Bash(tail:*)",
-      "Bash(head:*)"
+      "Bash(head:*)",
+      "Bash(cmd /c 'schtasks /create /tn \"\"MyFintech Daily Backup\"\" /tr \"\"C:\\\\\\\\Github\\\\\\\\MyFinTech\\\\\\\\Myfintech\\\\\\\\scripts\\\\\\\\backup.bat\"\" /sc daily /st 22:00 /f')",
+      "Bash(powershell -Command \"schtasks /create /tn ''MyFintech Daily Backup'' /tr ''C:\\\\Github\\\\MyFinTech\\\\Myfintech\\\\scripts\\\\backup.bat'' /sc daily /st 22:00 /f\")",
+      "Bash(powershell -Command:*)",
+      "Bash(bash /c/Github/MyFinTech/Myfintech/scripts/backup.sh)",
+      "Bash(ls:*)"
     ]
   }
 }

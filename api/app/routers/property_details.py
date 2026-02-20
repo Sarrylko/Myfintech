@@ -1,7 +1,7 @@
 import csv
 import io
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.property import Property
+from app.models.property import Property, PropertyValuation
 from app.models.property_details import Loan, MaintenanceExpense, PropertyCost
 from app.models.user import User
 from app.schemas.property_details import (
@@ -23,6 +23,8 @@ from app.schemas.property_details import (
     PropertyCostCreate,
     PropertyCostResponse,
     PropertyCostUpdate,
+    PropertyValuationCreate,
+    PropertyValuationResponse,
 )
 
 router = APIRouter(tags=["property-details"])
@@ -389,3 +391,67 @@ async def import_expenses_csv(
         imported += 1
 
     return {"imported": imported, "errors": errors, "total_rows": imported + len(errors)}
+
+
+# ─── Property Valuations (Value History) ─────────────────────────────────────
+
+@router.get("/properties/{property_id}/valuations", response_model=list[PropertyValuationResponse])
+async def list_valuations(
+    property_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_property(property_id, user, db)
+    result = await db.execute(
+        select(PropertyValuation)
+        .where(PropertyValuation.property_id == property_id)
+        .order_by(PropertyValuation.valuation_date.desc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/properties/{property_id}/valuations", response_model=PropertyValuationResponse, status_code=201)
+async def create_valuation(
+    property_id: uuid.UUID,
+    payload: PropertyValuationCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    prop = await _get_property(property_id, user, db)
+    now = datetime.now(timezone.utc)
+    valuation = PropertyValuation(
+        property_id=property_id,
+        value=payload.value,
+        source=payload.source,
+        valuation_date=payload.valuation_date or now,
+        notes=payload.notes,
+    )
+    db.add(valuation)
+
+    # Keep property.current_value in sync with the latest snapshot
+    prop.current_value = payload.value
+    prop.last_valuation_date = valuation.valuation_date
+
+    await db.flush()
+    await db.refresh(valuation)
+    return valuation
+
+
+@router.delete("/valuations/{valuation_id}", status_code=204)
+async def delete_valuation(
+    valuation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(PropertyValuation)
+        .join(Property, PropertyValuation.property_id == Property.id)
+        .where(
+            PropertyValuation.id == valuation_id,
+            Property.household_id == user.household_id,
+        )
+    )
+    valuation = result.scalar_one_or_none()
+    if not valuation:
+        raise HTTPException(status_code=404, detail="Valuation not found")
+    await db.delete(valuation)

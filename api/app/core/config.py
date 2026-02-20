@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # ─── Encryption ───────────────────────────────
     encryption_key: str = "CHANGE_ME"
 
+    # ─── Domain ───────────────────────────────────
+    domain: str = "localhost"
+
     # ─── Property API ─────────────────────────────
     property_api_key: str = ""
     property_api_provider: str = ""

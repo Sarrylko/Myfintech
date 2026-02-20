@@ -183,9 +183,13 @@ async def _sync_item(item: PlaidItem, client, db: AsyncSession) -> dict:
             )
 
             # Apply household categorization rules (same as CSV import)
+            matched = False
             if rules:
                 account_type = account_type_map.get(pt.account_id, acct.type)
-                apply_rules_to_txn(txn, account_type, rules)
+                matched = apply_rules_to_txn(txn, account_type, rules)
+
+            if not matched:
+                txn.plaid_category = "Uncategorized"
 
             db.add(txn)
             added_count += 1

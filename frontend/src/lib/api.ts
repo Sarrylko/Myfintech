@@ -338,6 +338,7 @@ export interface Property {
   current_value: string | null;
   last_valuation_date: string | null;
   notes: string | null;
+  is_primary_residence: boolean;
   is_property_managed: boolean;
   management_fee_pct: string | null;
   leasing_fee_amount: string | null;
@@ -355,6 +356,7 @@ export interface PropertyCreate {
   closing_costs?: number;
   current_value?: number;
   notes?: string;
+  is_primary_residence?: boolean;
   is_property_managed?: boolean;
   management_fee_pct?: number;
   leasing_fee_amount?: number;
@@ -743,6 +745,35 @@ export async function importMaintenanceExpenses(
     throw new Error(body.detail || `Import error: ${res.status}`);
   }
   return res.json();
+}
+
+// ─── Property Valuations (Value History) ────────────────────────────────────
+
+export interface PropertyValuation {
+  id: string;
+  property_id: string;
+  value: string;           // Decimal serialized as string
+  source: string;          // manual | appraisal | zillow | redfin
+  valuation_date: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface PropertyValuationCreate {
+  value: number;
+  source?: string;
+  valuation_date?: string;
+  notes?: string;
+}
+
+export async function listPropertyValuations(propertyId: string, token: string): Promise<PropertyValuation[]> {
+  return apiFetch<PropertyValuation[]>(`/api/v1/properties/${propertyId}/valuations`, { token });
+}
+export async function createPropertyValuation(propertyId: string, data: PropertyValuationCreate, token: string): Promise<PropertyValuation> {
+  return apiFetch<PropertyValuation>(`/api/v1/properties/${propertyId}/valuations`, { method: "POST", body: JSON.stringify(data), token });
+}
+export async function deletePropertyValuation(id: string, token: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/valuations/${id}`, { method: "DELETE", token });
 }
 
 // ─── Categorization Rules ───────────────────────────────────────────────────

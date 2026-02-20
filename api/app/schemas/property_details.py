@@ -129,3 +129,24 @@ class MaintenanceExpenseResponse(BaseModel):
     is_capex: bool
     notes: str | None
     created_at: datetime
+
+
+# ─── PropertyValuation ────────────────────────────────────────────────────────
+
+class PropertyValuationCreate(BaseModel):
+    value: Decimal
+    source: str = "manual"  # manual | appraisal | zillow | redfin
+    valuation_date: datetime | None = None  # defaults to now() if not provided
+    notes: str | None = None
+
+
+class PropertyValuationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    property_id: uuid.UUID
+    value: Decimal
+    source: str
+    valuation_date: datetime
+    notes: str | None
+    created_at: datetime

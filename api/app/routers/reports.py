@@ -699,7 +699,10 @@ async def portfolio_report(
             raise HTTPException(status_code=400, detail="month must be YYYY-MM")
 
     props_result = await db.execute(
-        select(Property).where(Property.household_id == user.household_id)
+        select(Property).where(
+            Property.household_id == user.household_id,
+            Property.is_primary_residence == False,
+        )
     )
     properties = list(props_result.scalars().all())
 
@@ -785,9 +788,12 @@ async def tax_export(
     Generate a CSV tax report for all properties for the given year.
     Format matches IRS Schedule E (Supplemental Income and Loss).
     """
-    # Get all properties for the household
+    # Get all rental properties for the household (exclude primary residence)
     props_result = await db.execute(
-        select(Property).where(Property.household_id == user.household_id)
+        select(Property).where(
+            Property.household_id == user.household_id,
+            Property.is_primary_residence == False,
+        )
     )
     properties = list(props_result.scalars().all())
 

@@ -9,6 +9,7 @@ x-common-env: &common-env
   PLAID_SECRET: ${PLAID_SECRET}
   PLAID_ENV: ${PLAID_ENV}
   ENVIRONMENT: ${ENVIRONMENT}
+  DOMAIN: ${DOMAIN}
 
 services:
   # ─── Reverse Proxy ────────────────────────────

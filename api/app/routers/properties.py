@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.property import Property
+from app.models.property import Property, PropertyValuation
 from app.models.user import User
 from app.schemas.property import PropertyCreate, PropertyResponse, PropertyUpdate
 
@@ -73,7 +73,14 @@ async def update_property(
         setattr(prop, field, value)
 
     if payload.current_value is not None:
-        prop.last_valuation_date = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        prop.last_valuation_date = now
+        db.add(PropertyValuation(
+            property_id=prop.id,
+            value=payload.current_value,
+            source="manual",
+            valuation_date=now,
+        ))
 
     await db.flush()
     await db.refresh(prop)

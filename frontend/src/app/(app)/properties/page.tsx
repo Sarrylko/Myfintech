@@ -20,6 +20,9 @@ import {
   updateMaintenanceExpense,
   deleteMaintenanceExpense,
   importMaintenanceExpenses,
+  listPropertyValuations,
+  createPropertyValuation,
+  deletePropertyValuation,
   Property,
   Loan,
   LoanCreate,
@@ -27,7 +30,9 @@ import {
   PropertyCostCreate,
   MaintenanceExpense,
   MaintenanceExpenseCreate,
+  PropertyValuation,
 } from "@/lib/api";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -81,6 +86,16 @@ function costBasis(p: Property): number {
 
 function totalLoanBalance(loans: Loan[]): number {
   return loans.reduce((s, l) => s + Number(l.current_balance ?? 0), 0);
+}
+
+function totalMonthlyLoanPayment(loans: Loan[]): number {
+  return loans.reduce((s, l) => s + Number(l.monthly_payment ?? 0), 0);
+}
+
+function totalMonthlyRecurringCosts(costs: PropertyCost[]): number {
+  return costs
+    .filter((c) => c.is_active)
+    .reduce((s, c) => s + toMonthly(Number(c.amount), c.frequency), 0);
 }
 
 // Monthly equivalent of any frequency
@@ -203,6 +218,7 @@ interface DetailForm {
   purchase_price: string;
   purchase_date: string;
   closing_costs: string;
+  is_primary_residence: boolean;
   is_property_managed: boolean;
   management_fee_pct: string;
   leasing_fee_amount: string;
@@ -215,6 +231,7 @@ function toDetailForm(p: Property): DetailForm {
       ? new Date(p.purchase_date).toISOString().split("T")[0]
       : "",
     closing_costs: p.closing_costs ? String(Number(p.closing_costs)) : "",
+    is_primary_residence: p.is_primary_residence || false,
     is_property_managed: p.is_property_managed || false,
     management_fee_pct: p.management_fee_pct ? String(Number(p.management_fee_pct)) : "",
     leasing_fee_amount: p.leasing_fee_amount ? String(Number(p.leasing_fee_amount)) : "",
@@ -248,6 +265,7 @@ export default function PropertiesPage() {
   const [loans, setLoans] = useState<Record<string, Loan[]>>({});
   const [costs, setCosts] = useState<Record<string, PropertyCost[]>>({});
   const [expenses, setExpenses] = useState<Record<string, MaintenanceExpense[]>>({});
+  const [valuations, setValuations] = useState<Record<string, PropertyValuation[]>>({});
 
   const token = getToken();
 
@@ -263,10 +281,14 @@ export default function PropertiesPage() {
     try {
       const props = await listProperties(token);
       setProperties(props);
-      // Load loans for all properties to power the equity bar
+      // Load loans + costs for all properties upfront (powers equity bar + monthly cost summary)
       if (props.length > 0) {
-        const allLoans = await Promise.all(props.map((p) => listLoans(p.id, token)));
+        const [allLoans, allCosts] = await Promise.all([
+          Promise.all(props.map((p) => listLoans(p.id, token))),
+          Promise.all(props.map((p) => listPropertyCosts(p.id, token))),
+        ]);
         setLoans(Object.fromEntries(props.map((p, i) => [p.id, allLoans[i]])));
+        setCosts(Object.fromEntries(props.map((p, i) => [p.id, allCosts[i]])));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load properties");
@@ -299,6 +321,14 @@ export default function PropertiesPage() {
         setExpenses((prev) => ({ ...prev, [propertyId]: data }));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load expenses");
+      }
+    }
+    if (tab === "valuations" && valuations[propertyId] === undefined) {
+      try {
+        const data = await listPropertyValuations(propertyId, token);
+        setValuations((prev) => ({ ...prev, [propertyId]: data }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load value history");
       }
     }
   }
@@ -338,7 +368,8 @@ export default function PropertiesPage() {
       if (detailForm.closing_costs !== "") payload.closing_costs = Number(detailForm.closing_costs);
       else payload.closing_costs = null;
 
-      // Property management fields
+      // Residence + management flags
+      payload.is_primary_residence = detailForm.is_primary_residence;
       payload.is_property_managed = detailForm.is_property_managed;
       if (detailForm.management_fee_pct !== "") payload.management_fee_pct = Number(detailForm.management_fee_pct);
       else payload.management_fee_pct = null;
@@ -425,7 +456,11 @@ export default function PropertiesPage() {
             const basis = costBasis(p);
             const isEditingDetails = editingDetails === p.id;
             const propLoans = loans[p.id] ?? [];
+            const propCosts = costs[p.id] ?? [];
             const loanBalance = totalLoanBalance(propLoans);
+            const monthlyLoanPayment = totalMonthlyLoanPayment(propLoans);
+            const monthlyRecurring = totalMonthlyRecurringCosts(propCosts);
+            const monthlyCarrying = monthlyLoanPayment + monthlyRecurring;
             const curTab = activeTab[p.id] ?? null;
 
             return (
@@ -440,6 +475,11 @@ export default function PropertiesPage() {
                       <span className="text-xs bg-gray-100 text-gray-500 rounded px-2 py-0.5">
                         {typeLabel(p.property_type)}
                       </span>
+                      {p.is_primary_residence && (
+                        <span className="text-xs bg-green-100 text-green-700 rounded px-2 py-0.5 font-medium">
+                          Primary Residence
+                        </span>
+                      )}
                     </div>
                     {(p.city || p.state || p.zip_code) && (
                       <p className="text-sm text-gray-500 ml-7">
@@ -531,6 +571,23 @@ export default function PropertiesPage() {
                       </button>
                     )}
                   </div>
+                  {loanBalance > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Liability</p>
+                      <p className="font-medium text-red-500">{fmt(loanBalance)}</p>
+                    </div>
+                  )}
+                  {monthlyCarrying > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Monthly Cost</p>
+                      <p className="font-medium text-orange-600">{fmt(monthlyCarrying)}<span className="text-xs text-gray-400 font-normal">/mo</span></p>
+                      {monthlyLoanPayment > 0 && monthlyRecurring > 0 && (
+                        <p className="text-xs text-gray-400">
+                          {fmt(monthlyLoanPayment)} mortgage + {fmt(monthlyRecurring)} costs
+                        </p>
+                      )}
+                    </div>
+                  )}
                   {p.current_value && basis > 0 && (
                     <div>
                       <p className="text-xs text-gray-400 mb-0.5">Gain / Loss</p>
@@ -610,6 +667,22 @@ export default function PropertiesPage() {
                       />
                     </div>
 
+                    {/* Primary Residence */}
+                    <div className="border-t border-gray-100 pt-4 mt-2 mb-4">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={detailForm.is_primary_residence}
+                          onChange={(e) => setDetailForm((f) => ({ ...f, is_primary_residence: e.target.checked }))}
+                          className="w-4 h-4 text-primary-600 rounded focus:ring-2 focus:ring-primary-500"
+                        />
+                        <span className="text-sm text-gray-700 font-medium">Primary Residence</span>
+                      </label>
+                      <p className="text-xs text-gray-400 ml-6 mt-1">
+                        Primary residences are excluded from the Rentals section
+                      </p>
+                    </div>
+
                     {/* Property Management */}
                     <div className="border-t border-gray-100 pt-4 mt-2">
                       <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
@@ -685,6 +758,9 @@ export default function PropertiesPage() {
                   <TabBtn active={curTab === "maintenance"} onClick={() => toggleTab(p.id, "maintenance")}>
                     Maintenance Log {expenses[p.id] && expenses[p.id].length > 0 && `(${expenses[p.id].length})`}
                   </TabBtn>
+                  <TabBtn active={curTab === "valuations"} onClick={() => toggleTab(p.id, "valuations")}>
+                    Value History {valuations[p.id] && valuations[p.id].length > 0 && `(${valuations[p.id].length})`}
+                  </TabBtn>
                 </div>
 
                 {/* ── Loans tab ── */}
@@ -714,6 +790,17 @@ export default function PropertiesPage() {
                     expenses={expenses[p.id] ?? []}
                     token={token!}
                     onUpdate={(updated) => setExpenses((prev) => ({ ...prev, [p.id]: updated }))}
+                  />
+                )}
+
+                {/* ── Value History tab ── */}
+                {curTab === "valuations" && (
+                  <ValuationsTab
+                    propertyId={p.id}
+                    purchasePrice={p.purchase_price ? Number(p.purchase_price) : null}
+                    valuations={valuations[p.id] ?? []}
+                    token={token!}
+                    onUpdate={(updated) => setValuations((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
               </div>
@@ -1507,6 +1594,182 @@ function MaintenanceTab({
             All-time: <span className="font-semibold text-gray-900">{fmtDec(allTotal)}</span>
           </span>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Value History Tab ────────────────────────────────────────────────────────
+
+const SOURCE_LABELS: Record<string, string> = {
+  manual: "Manual",
+  appraisal: "Appraisal",
+  zillow: "Zillow",
+  redfin: "Redfin",
+};
+
+const SOURCE_COLORS: Record<string, string> = {
+  manual: "bg-gray-100 text-gray-600",
+  appraisal: "bg-blue-100 text-blue-700",
+  zillow: "bg-indigo-100 text-indigo-700",
+  redfin: "bg-red-100 text-red-700",
+};
+
+function ValuationsTab({
+  propertyId, purchasePrice, valuations, token, onUpdate,
+}: {
+  propertyId: string;
+  purchasePrice: number | null;
+  valuations: PropertyValuation[];
+  token: string;
+  onUpdate: (updated: PropertyValuation[]) => void;
+}) {
+  const today = new Date().toISOString().split("T")[0];
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState({ value: "", source: "manual", valuation_date: today, notes: "" });
+  const [saving, setSaving] = useState(false);
+  const [tabError, setTabError] = useState("");
+
+  // Chart data — sorted ascending by date for left-to-right rendering
+  const chartData = [...valuations]
+    .sort((a, b) => new Date(a.valuation_date).getTime() - new Date(b.valuation_date).getTime())
+    .map((v) => ({
+      date: new Date(v.valuation_date).toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
+      value: Number(v.value),
+    }));
+
+  // Add purchase price as the first data point if it exists and is earlier
+  if (purchasePrice && chartData.length === 0) {
+    chartData.push({ date: "Purchase", value: purchasePrice });
+  }
+
+  async function handleAdd() {
+    if (!addForm.value) return;
+    setSaving(true);
+    setTabError("");
+    try {
+      const created = await createPropertyValuation(propertyId, {
+        value: Number(addForm.value),
+        source: addForm.source,
+        valuation_date: addForm.valuation_date ? new Date(addForm.valuation_date).toISOString() : undefined,
+        notes: addForm.notes || undefined,
+      }, token);
+      onUpdate([created, ...valuations]);
+      setAddForm({ value: "", source: "manual", valuation_date: today, notes: "" });
+      setShowAdd(false);
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("Delete this valuation snapshot?")) return;
+    try {
+      await deletePropertyValuation(id, token);
+      onUpdate(valuations.filter((v) => v.id !== id));
+    } catch (err) {
+      setTabError(err instanceof Error ? err.message : "Failed to delete");
+    }
+  }
+
+  return (
+    <div className="mt-4 pt-3 border-t border-gray-100">
+      {tabError && (
+        <div className="mb-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+          {tabError}
+        </div>
+      )}
+
+      {/* Chart */}
+      {chartData.length >= 2 && (
+        <div className="mb-4 bg-gray-50 rounded-lg p-4 border border-gray-100">
+          <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold mb-3">Value Over Time</p>
+          <ResponsiveContainer width="100%" height={160}>
+            <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
+              <YAxis
+                tick={{ fontSize: 11, fill: "#9ca3af" }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                width={52}
+              />
+              <Tooltip
+                formatter={(v: number) => [fmt(v), "Value"]}
+                contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+              />
+              <Line
+                type="monotone"
+                dataKey="value"
+                stroke="#6366f1"
+                strokeWidth={2}
+                dot={{ r: 3, fill: "#6366f1" }}
+                activeDot={{ r: 5 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* List */}
+      {valuations.length === 0 && !showAdd && (
+        <p className="text-sm text-gray-400 mb-3">No value snapshots yet. Add one to start tracking.</p>
+      )}
+      <div className="space-y-2 mb-3">
+        {valuations.map((v) => (
+          <div key={v.id} className="flex items-center justify-between py-2 px-3 rounded-lg bg-gray-50 border border-gray-100 text-sm">
+            <div className="flex items-center gap-3">
+              <span className="font-semibold text-gray-900">{fmt(v.value)}</span>
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SOURCE_COLORS[v.source] ?? "bg-gray-100 text-gray-600"}`}>
+                {SOURCE_LABELS[v.source] ?? v.source}
+              </span>
+              <span className="text-gray-400 text-xs">
+                {new Date(v.valuation_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              </span>
+              {v.notes && <span className="text-gray-400 text-xs italic">{v.notes}</span>}
+            </div>
+            <button
+              onClick={() => handleDelete(v.id)}
+              className="text-gray-300 hover:text-red-400 transition text-xs"
+              title="Delete snapshot"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Add form */}
+      {showAdd ? (
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <CurrencyField label="Estimated Value" value={addForm.value}
+              onChange={(v) => setAddForm((f) => ({ ...f, value: v }))} placeholder="500000" />
+            <SelectField label="Source" value={addForm.source}
+              onChange={(v) => setAddForm((f) => ({ ...f, source: v }))}
+              options={["manual", "appraisal", "zillow", "redfin"]} />
+            <Field label="Date" type="date" value={addForm.valuation_date}
+              onChange={(v) => setAddForm((f) => ({ ...f, valuation_date: v }))} />
+            <Field label="Notes (optional)" value={addForm.notes}
+              onChange={(v) => setAddForm((f) => ({ ...f, notes: v }))} placeholder="e.g. Post-renovation" />
+          </div>
+          <div className="mt-3 flex gap-2">
+            <button onClick={handleAdd} disabled={saving || !addForm.value}
+              className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+              {saving ? "Saving..." : "Save Snapshot"}
+            </button>
+            <button onClick={() => setShowAdd(false)} className="text-sm text-gray-400 hover:text-gray-600 px-3">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => setShowAdd(true)}
+          className="text-xs text-primary-600 hover:text-primary-700 font-medium border border-primary-200 hover:border-primary-400 px-3 py-1.5 rounded-lg transition"
+        >
+          + Add Snapshot
+        </button>
       )}
     </div>
   );

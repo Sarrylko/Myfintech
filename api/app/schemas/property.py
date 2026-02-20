@@ -16,6 +16,7 @@ class PropertyCreate(BaseModel):
     closing_costs: Decimal | None = None
     current_value: Decimal | None = None
     notes: str | None = None
+    is_primary_residence: bool = False
     is_property_managed: bool = False
     management_fee_pct: Decimal | None = None
     leasing_fee_amount: Decimal | None = None
@@ -32,6 +33,7 @@ class PropertyUpdate(BaseModel):
     closing_costs: Decimal | None = None
     current_value: Decimal | None = None
     notes: str | None = None
+    is_primary_residence: bool | None = None
     is_property_managed: bool | None = None
     management_fee_pct: Decimal | None = None
     leasing_fee_amount: Decimal | None = None
@@ -52,6 +54,7 @@ class PropertyResponse(BaseModel):
     current_value: Decimal | None
     last_valuation_date: datetime | None
     notes: str | None
+    is_primary_residence: bool
     is_property_managed: bool
     management_fee_pct: Decimal | None
     leasing_fee_amount: Decimal | None

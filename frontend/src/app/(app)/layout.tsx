@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { getToken, clearTokens } from "@/lib/api";
+import { APP_VERSION } from "@/lib/version";
 
 export default function AppLayout({
   children,
@@ -54,6 +55,7 @@ export default function AppLayout({
           >
             Sign Out
           </button>
+          <p className="mt-3 px-3 text-xs text-gray-600">v{APP_VERSION}</p>
         </div>
       </aside>
 

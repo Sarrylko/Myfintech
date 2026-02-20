@@ -29,6 +29,7 @@ class Property(Base):
     current_value: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     last_valuation_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
+    is_primary_residence: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     # Property management
     is_property_managed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     management_fee_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))  # e.g., 8.00 for 8%
@@ -48,8 +49,9 @@ class PropertyValuation(Base):
         UUID(as_uuid=True), ForeignKey("properties.id"), index=True
     )
     value: Mapped[Decimal] = mapped_column(Numeric(14, 2))
-    source: Mapped[str] = mapped_column(String(50))  # manual, api_provider, etc.
+    source: Mapped[str] = mapped_column(String(50))  # manual | appraisal | zillow | redfin
     valuation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

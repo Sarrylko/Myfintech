@@ -329,9 +329,13 @@ async def import_csv_transactions(
         )
 
         # Apply categorization rules (rules can override category and flip sign)
+        matched = False
         if rules:
             from app.routers.rules import apply_rules_to_txn
-            apply_rules_to_txn(txn, account.type, rules)
+            matched = apply_rules_to_txn(txn, account.type, rules)
+
+        if not matched and not txn.plaid_category:
+            txn.plaid_category = "Uncategorized"
 
         db.add(txn)
         imported += 1

@@ -22,11 +22,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=(
-        ["http://localhost:3000", "http://localhost"]
+        ["http://localhost:3000", "http://localhost", f"http://{settings.domain}"]
         if settings.environment == "development"
         else [f"https://{settings.domain}"]
-        if hasattr(settings, "domain")
-        else []
     ),
     allow_credentials=True,
     allow_methods=["*"],
