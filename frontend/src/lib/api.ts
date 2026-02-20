@@ -894,6 +894,29 @@ export async function listHoldings(accountId: string, token: string): Promise<Ho
   return apiFetch<Holding[]>(`/api/v1/accounts/${accountId}/holdings`, { token });
 }
 
+export interface HoldingCreate {
+  ticker_symbol?: string | null;
+  name?: string | null;
+  quantity: string;
+  cost_basis?: string | null;
+  current_value?: string | null;
+  currency_code?: string;
+}
+
+export type HoldingUpdate = Partial<HoldingCreate>;
+
+export async function createHolding(accountId: string, data: HoldingCreate, token: string): Promise<Holding> {
+  return apiFetch<Holding>(`/api/v1/accounts/${accountId}/holdings`, { token, method: "POST", body: data });
+}
+
+export async function updateHolding(holdingId: string, data: HoldingUpdate, token: string): Promise<Holding> {
+  return apiFetch<Holding>(`/api/v1/accounts/holdings/${holdingId}`, { token, method: "PATCH", body: data });
+}
+
+export async function deleteHolding(holdingId: string, token: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/accounts/holdings/${holdingId}`, { token, method: "DELETE" });
+}
+
 // ─── Categorization Rules ───────────────────────────────────────────────────
 
 export interface Rule {

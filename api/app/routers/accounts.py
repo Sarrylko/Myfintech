@@ -17,7 +17,9 @@ from app.models.investment import Holding
 from app.schemas.account import (
     AccountResponse,
     AccountUpdate,
+    HoldingCreate,
     HoldingResponse,
+    HoldingUpdate,
     ManualAccountCreate,
     TransactionResponse,
     TransactionUpdate,
@@ -416,3 +418,95 @@ async def update_transaction(
     await db.refresh(txn)
     await db.commit()
     return txn
+
+
+# ─── Holdings CRUD (manual accounts only) ────────────────────────────────────
+
+@router.post("/{account_id}/holdings", response_model=HoldingResponse, status_code=201)
+async def create_holding(
+    account_id: uuid.UUID,
+    payload: HoldingCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a manual holding to a manual investment account."""
+    acct_result = await db.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.household_id == user.household_id,
+        )
+    )
+    acct = acct_result.scalar_one_or_none()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if not acct.is_manual:
+        raise HTTPException(
+            status_code=400,
+            detail="Holdings can only be added manually to manual accounts; Plaid accounts are synced automatically.",
+        )
+
+    holding = Holding(
+        account_id=account_id,
+        household_id=user.household_id,
+        ticker_symbol=payload.ticker_symbol,
+        name=payload.name,
+        quantity=payload.quantity,
+        cost_basis=payload.cost_basis,
+        current_value=payload.current_value,
+        currency_code=payload.currency_code,
+        as_of_date=datetime.now(timezone.utc),
+    )
+    db.add(holding)
+    await db.flush()
+    await db.refresh(holding)
+    await db.commit()
+    return holding
+
+
+@router.patch("/holdings/{holding_id}", response_model=HoldingResponse)
+async def update_holding(
+    holding_id: uuid.UUID,
+    payload: HoldingUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update fields on a manually-managed holding."""
+    result = await db.execute(
+        select(Holding).where(
+            Holding.id == holding_id,
+            Holding.household_id == user.household_id,
+        )
+    )
+    holding = result.scalar_one_or_none()
+    if not holding:
+        raise HTTPException(status_code=404, detail="Holding not found")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(holding, field, value)
+
+    holding.as_of_date = datetime.now(timezone.utc)
+    await db.flush()
+    await db.refresh(holding)
+    await db.commit()
+    return holding
+
+
+@router.delete("/holdings/{holding_id}", status_code=204)
+async def delete_holding(
+    holding_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a holding (manual accounts only)."""
+    result = await db.execute(
+        select(Holding).where(
+            Holding.id == holding_id,
+            Holding.household_id == user.household_id,
+        )
+    )
+    holding = result.scalar_one_or_none()
+    if not holding:
+        raise HTTPException(status_code=404, detail="Holding not found")
+
+    await db.delete(holding)
+    await db.commit()
