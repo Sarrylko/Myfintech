@@ -19,6 +19,9 @@ class Loan(Base):
     property_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), index=True
     )
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     lender_name: Mapped[str | None] = mapped_column(String(255))
     loan_type: Mapped[str] = mapped_column(
         String(50), default="mortgage"

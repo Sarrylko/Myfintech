@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class AccountResponse(BaseModel):
     id: uuid.UUID
     plaid_item_id: uuid.UUID | None
+    owner_user_id: uuid.UUID | None
     name: str
     official_name: str | None
     institution_name: str | None
@@ -25,6 +26,7 @@ class AccountResponse(BaseModel):
 
 
 class ManualAccountCreate(BaseModel):
+    owner_user_id: uuid.UUID | None = None
     name: str
     institution_name: str | None = None
     type: str  # depository | credit | loan | investment | other
@@ -35,6 +37,7 @@ class ManualAccountCreate(BaseModel):
 
 
 class AccountUpdate(BaseModel):
+    owner_user_id: uuid.UUID | None = None
     name: str | None = None
     institution_name: str | None = None
     type: str | None = None

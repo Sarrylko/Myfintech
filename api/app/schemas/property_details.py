@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 # ─── Loan ─────────────────────────────────────────────────────────────────────
 
 class LoanCreate(BaseModel):
+    account_id: uuid.UUID | None = None
     lender_name: str | None = None
     loan_type: str = "mortgage"  # mortgage | heloc | second_mortgage | other
     original_amount: Decimal | None = None
@@ -24,6 +25,7 @@ class LoanCreate(BaseModel):
 
 
 class LoanUpdate(BaseModel):
+    account_id: uuid.UUID | None = None
     lender_name: str | None = None
     loan_type: str | None = None
     original_amount: Decimal | None = None
@@ -44,6 +46,7 @@ class LoanResponse(BaseModel):
 
     id: uuid.UUID
     property_id: uuid.UUID
+    account_id: uuid.UUID | None
     lender_name: str | None
     loan_type: str
     original_amount: Decimal | None

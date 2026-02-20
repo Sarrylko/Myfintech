@@ -66,3 +66,16 @@ class HouseholdResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class HouseholdMemberCreate(BaseModel):
+    full_name: str
+    email: EmailStr
+    password: str
+    role: str = "member"  # owner | member
+
+
+class HouseholdMemberUpdate(BaseModel):
+    full_name: str | None = None
+    email: EmailStr | None = None
+    role: str | None = None

@@ -13,10 +13,12 @@ import {
   createManualAccount,
   updateAccount,
   deleteAccount,
+  listHouseholdMembers,
   PlaidItem,
   Account,
   AccountUpdate,
   ManualAccountCreate,
+  UserResponse,
 } from "@/lib/api";
 
 declare global {
@@ -89,6 +91,7 @@ function capitalize(s: string | null | undefined): string {
 }
 
 const DEFAULT_MANUAL: ManualAccountCreate = {
+  owner_user_id: null,
   name: "",
   institution_name: "",
   type: "depository",
@@ -102,6 +105,7 @@ export default function AccountsPage() {
   const router = useRouter();
   const [items, setItems] = useState<PlaidItem[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [members, setMembers] = useState<UserResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [linking, setLinking] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
@@ -147,12 +151,14 @@ export default function AccountsPage() {
     const token = getToken();
     if (!token) { router.replace("/login"); return; }
     try {
-      const [fetchedItems, fetchedAccounts] = await Promise.all([
+      const [fetchedItems, fetchedAccounts, fetchedMembers] = await Promise.all([
         listPlaidItems(token),
         listAccounts(token),
+        listHouseholdMembers(token),
       ]);
       setItems(fetchedItems);
       setAccounts(fetchedAccounts);
+      setMembers(fetchedMembers);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load accounts");
     } finally {
@@ -232,6 +238,7 @@ export default function AccountsPage() {
     setEditTarget(acct);
     setEditError("");
     setEditForm({
+      owner_user_id: acct.owner_user_id ?? null,
       name: acct.name,
       institution_name: acct.institution_name ?? undefined,
       type: acct.type,
@@ -365,6 +372,22 @@ export default function AccountsPage() {
                 />
               </div>
 
+              {members.length > 1 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Account Owner</label>
+                  <select
+                    value={manualForm.owner_user_id ?? ""}
+                    onChange={(e) => setManualForm((p) => ({ ...p, owner_user_id: e.target.value || null }))}
+                    className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                  >
+                    <option value="">— Household (shared) —</option>
+                    {members.map((m) => (
+                      <option key={m.id} value={m.id}>{m.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Account Type <span className="text-red-500">*</span></label>
@@ -467,6 +490,23 @@ export default function AccountsPage() {
                   className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
               </div>
+
+              {/* Owner — shown when household has multiple members */}
+              {members.length > 1 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Account Owner</label>
+                  <select
+                    value={editForm.owner_user_id ?? ""}
+                    onChange={(e) => setEditForm((p) => ({ ...p, owner_user_id: e.target.value || null }))}
+                    className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                  >
+                    <option value="">— Household (shared) —</option>
+                    {members.map((m) => (
+                      <option key={m.id} value={m.id}>{m.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Type + Subtype — only for manual accounts */}
               {editTarget.is_manual && (
@@ -775,7 +815,7 @@ PLAID_ENV=sandbox`}
           </div>
           <div className="divide-y divide-gray-50">
             {manualAccounts.map((acct) => (
-              <AccountRow key={acct.id} acct={acct}
+              <AccountRow key={acct.id} acct={acct} members={members}
                 onEdit={() => openEdit(acct)}
                 onDelete={() => { setDeleteTarget(acct); setDeleteError(""); }} />
             ))}
@@ -827,7 +867,7 @@ PLAID_ENV=sandbox`}
             ) : (
               <div className="divide-y divide-gray-50">
                 {itemAccounts.map((acct) => (
-                  <AccountRow key={acct.id} acct={acct}
+                  <AccountRow key={acct.id} acct={acct} members={members}
                     onEdit={() => openEdit(acct)}
                     onDelete={() => { setDeleteTarget(acct); setDeleteError(""); }} />
                 ))}
@@ -840,8 +880,9 @@ PLAID_ENV=sandbox`}
   );
 }
 
-function AccountRow({ acct, onEdit, onDelete }: { acct: Account; onEdit: () => void; onDelete: () => void }) {
+function AccountRow({ acct, members, onEdit, onDelete }: { acct: Account; members: UserResponse[]; onEdit: () => void; onDelete: () => void }) {
   const addedDate = new Date(acct.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const owner = members.find((m) => m.id === acct.owner_user_id);
 
   return (
     <div className="flex items-center justify-between px-6 py-3 group">
@@ -862,6 +903,11 @@ function AccountRow({ acct, onEdit, onDelete }: { acct: Account; onEdit: () => v
           </span>
           {acct.institution_name && acct.is_manual && (
             <span className="text-xs text-gray-500">{acct.institution_name}</span>
+          )}
+          {owner && (
+            <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-medium" title="Account owner">
+              {owner.full_name}
+            </span>
           )}
           <span className="text-xs text-gray-400">Added {addedDate}</span>
         </div>

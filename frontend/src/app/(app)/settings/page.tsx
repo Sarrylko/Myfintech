@@ -9,6 +9,10 @@ import {
   getProfile,
   updateProfile,
   changePassword,
+  listHouseholdMembers,
+  addHouseholdMember,
+  removeHouseholdMember,
+  HouseholdMemberCreate,
   UserResponse,
   UserProfileUpdate,
   listCustomCategories,
@@ -132,10 +136,20 @@ export default function SettingsPage() {
   const [subForms, setSubForms] = useState<Record<string, string>>({});
   const [catSaving, setCatSaving] = useState(false);
 
+  // ── Household members state ─────────────────────────────────────────
+  const [members, setMembers] = useState<UserResponse[]>([]);
+  const [memberForm, setMemberForm] = useState<HouseholdMemberCreate>({ full_name: "", email: "", password: "", role: "member" });
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [memberSaving, setMemberSaving] = useState(false);
+  const [memberError, setMemberError] = useState("");
+  const [memberSuccess, setMemberSuccess] = useState("");
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+
   useEffect(() => {
     const token = getToken();
     if (!token) { router.replace("/login"); return; }
     listCustomCategories(token).then(setCustomCats).catch(() => {});
+    listHouseholdMembers(token).then(setMembers).catch(() => {});
     getProfile(token).then((u) => {
       setProfile(u);
       setProfileForm({
@@ -217,6 +231,41 @@ export default function SettingsPage() {
       setPwError(err instanceof Error ? err.message : "Failed to change password");
     } finally {
       setPwSaving(false);
+    }
+  }
+
+  // ── Household member handlers ───────────────────────────────────────
+  async function handleAddMember(e: React.FormEvent) {
+    e.preventDefault();
+    const token = getToken();
+    if (!token) return;
+    setMemberSaving(true); setMemberError("");
+    try {
+      const m = await addHouseholdMember(memberForm, token);
+      setMembers((prev) => [...prev, m]);
+      setMemberForm({ full_name: "", email: "", password: "", role: "member" });
+      setShowAddMember(false);
+      setMemberSuccess(`${m.full_name} added successfully.`);
+      setTimeout(() => setMemberSuccess(""), 4000);
+    } catch (err) {
+      setMemberError(err instanceof Error ? err.message : "Failed to add member");
+    } finally {
+      setMemberSaving(false);
+    }
+  }
+
+  async function handleRemoveMember(memberId: string) {
+    if (!confirm("Remove this member from the household?")) return;
+    const token = getToken();
+    if (!token) return;
+    setRemovingMemberId(memberId);
+    try {
+      await removeHouseholdMember(memberId, token);
+      setMembers((prev) => prev.filter((m) => m.id !== memberId));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to remove member");
+    } finally {
+      setRemovingMemberId(null);
     }
   }
 
@@ -598,15 +647,126 @@ export default function SettingsPage() {
           </form>
         </section>
 
-        {/* Household */}
+        {/* Household Members */}
         <section className="bg-white rounded-lg shadow border border-gray-100 p-6">
-          <h3 className="font-semibold text-lg mb-4">Household</h3>
-          <p className="text-sm text-gray-500 mb-4">
-            Manage household members and roles.
-          </p>
-          <button className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition text-sm">
-            Invite Member
-          </button>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-lg">Household Members</h3>
+            {profile?.role === "owner" && (
+              <button
+                onClick={() => { setShowAddMember((v) => !v); setMemberError(""); }}
+                className="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition"
+              >
+                + Add Member
+              </button>
+            )}
+          </div>
+
+          {memberSuccess && (
+            <div className="mb-3 bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-3 py-2">{memberSuccess}</div>
+          )}
+
+          {/* Member list */}
+          <div className="space-y-2 mb-4">
+            {members.map((m) => (
+              <div key={m.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-sm font-semibold shrink-0">
+                    {m.full_name.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">
+                      {m.full_name}
+                      {m.id === profile?.id && <span className="ml-1.5 text-xs text-gray-400">(you)</span>}
+                    </p>
+                    <p className="text-xs text-gray-400">{m.email}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${m.role === "owner" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>
+                    {m.role === "owner" ? "Owner" : "Member"}
+                  </span>
+                  {profile?.role === "owner" && m.id !== profile.id && (
+                    <button
+                      onClick={() => handleRemoveMember(m.id)}
+                      disabled={removingMemberId === m.id}
+                      className="text-xs text-gray-400 hover:text-red-500 transition disabled:opacity-40 ml-1"
+                      title="Remove from household"
+                    >
+                      {removingMemberId === m.id ? "Removing…" : "Remove"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {members.length === 0 && (
+              <p className="text-sm text-gray-400">No members yet.</p>
+            )}
+          </div>
+
+          {/* Add member form */}
+          {showAddMember && profile?.role === "owner" && (
+            <form onSubmit={handleAddMember} className="border border-gray-200 rounded-lg p-4 bg-gray-50 space-y-3">
+              <p className="text-sm font-medium text-gray-700">Add a Family Member</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Full Name <span className="text-red-500">*</span></label>
+                  <input
+                    required type="text"
+                    value={memberForm.full_name}
+                    onChange={(e) => setMemberForm((p) => ({ ...p, full_name: e.target.value }))}
+                    placeholder="Jane Doe"
+                    className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Email <span className="text-red-500">*</span></label>
+                  <input
+                    required type="email"
+                    value={memberForm.email}
+                    onChange={(e) => setMemberForm((p) => ({ ...p, email: e.target.value }))}
+                    placeholder="jane@example.com"
+                    className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Password <span className="text-red-500">*</span></label>
+                  <input
+                    required type="password" minLength={8}
+                    value={memberForm.password}
+                    onChange={(e) => setMemberForm((p) => ({ ...p, password: e.target.value }))}
+                    placeholder="Min 8 characters"
+                    className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
+                  <select
+                    value={memberForm.role}
+                    onChange={(e) => setMemberForm((p) => ({ ...p, role: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                  >
+                    <option value="member">Member (view & edit)</option>
+                    <option value="owner">Owner (full access)</option>
+                  </select>
+                </div>
+              </div>
+              {memberError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{memberError}</div>
+              )}
+              <div className="flex gap-2">
+                <button type="submit" disabled={memberSaving}
+                  className="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition">
+                  {memberSaving ? "Adding…" : "Add Member"}
+                </button>
+                <button type="button" onClick={() => setShowAddMember(false)}
+                  className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition">Cancel</button>
+              </div>
+            </form>
+          )}
+
+          {profile?.role !== "owner" && (
+            <p className="text-xs text-gray-400 mt-2">Only the household owner can add or remove members.</p>
+          )}
         </section>
 
         {/* Linked Accounts */}

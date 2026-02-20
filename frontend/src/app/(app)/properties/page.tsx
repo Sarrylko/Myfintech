@@ -11,6 +11,7 @@ import {
   createLoan,
   updateLoan,
   deleteLoan,
+  listAccounts,
   listPropertyCosts,
   createPropertyCost,
   updatePropertyCost,
@@ -23,6 +24,7 @@ import {
   listPropertyValuations,
   createPropertyValuation,
   deletePropertyValuation,
+  Account,
   Property,
   Loan,
   LoanCreate,
@@ -815,6 +817,7 @@ export default function PropertiesPage() {
 // ─── Loans Tab ────────────────────────────────────────────────────────────────
 
 const BLANK_LOAN: LoanCreate = {
+  account_id: null,
   lender_name: "", loan_type: "mortgage",
   original_amount: undefined, current_balance: undefined,
   interest_rate: undefined, monthly_payment: undefined,
@@ -830,7 +833,7 @@ function loanLabel(l: Loan): string {
 }
 
 function LoanForm({
-  form, setForm, onSave, onCancel, saving, saveLabel,
+  form, setForm, onSave, onCancel, saving, saveLabel, accounts,
 }: {
   form: LoanCreate & { [k: string]: unknown };
   setForm: React.Dispatch<React.SetStateAction<LoanCreate & { [k: string]: unknown }>>;
@@ -838,6 +841,7 @@ function LoanForm({
   onCancel: () => void;
   saving: boolean;
   saveLabel: string;
+  accounts: import("@/lib/api").Account[];
 }) {
   function numField(key: string): string {
     const v = form[key];
@@ -849,6 +853,25 @@ function LoanForm({
 
   return (
     <div className="mt-3 bg-gray-50 rounded-lg p-4 border border-gray-200">
+      {/* Account link row */}
+      <div className="mb-3">
+        <label className="block text-xs font-medium text-gray-600 mb-1">
+          Link to Account <span className="text-gray-400 font-normal">(optional — balance will auto-sync)</span>
+        </label>
+        <select
+          value={String(form.account_id ?? "")}
+          onChange={(e) => setForm((f) => ({ ...f, account_id: e.target.value || null }))}
+          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+        >
+          <option value="">— Not linked —</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {[a.institution_name, a.name, a.mask ? `···${a.mask}` : ""].filter(Boolean).join(" · ")}
+              {a.current_balance ? ` (${Number(a.current_balance).toLocaleString("en-US", { style: "currency", currency: "USD" })})` : ""}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <Field label="Lender Name" value={String(form.lender_name ?? "")}
           onChange={(v) => setForm((f) => ({ ...f, lender_name: v }))} placeholder="e.g. Chase" />
@@ -932,9 +955,23 @@ function LoansTab({
   const [editSaving, setEditSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [tabError, setTabError] = useState("");
+  const [accounts, setAccounts] = useState<Account[]>([]);
+
+  useEffect(() => {
+    listAccounts(token).then(setAccounts).catch(() => {});
+  }, [token]);
+
+  // Build a quick lookup: accountId → account name label
+  const accountMap = Object.fromEntries(
+    accounts.map((a) => [
+      a.id,
+      [a.institution_name, a.name, a.mask ? `···${a.mask}` : ""].filter(Boolean).join(" · "),
+    ])
+  );
 
   function loanToForm(l: Loan): LoanCreate & { [k: string]: unknown } {
     return {
+      account_id: l.account_id ?? null,
       lender_name: l.lender_name ?? "",
       loan_type: l.loan_type,
       original_amount: l.original_amount ? Number(l.original_amount) : undefined,
@@ -1011,13 +1048,18 @@ function LoansTab({
               <LoanForm
                 form={editForm} setForm={setEditForm}
                 onSave={() => handleEdit(l.id)} onCancel={() => setEditId(null)}
-                saving={editSaving} saveLabel="Save" />
+                saving={editSaving} saveLabel="Save" accounts={accounts} />
             ) : (
               <div className="flex items-start justify-between gap-4 bg-gray-50 rounded-lg px-4 py-3">
                 <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1">
                   <div>
                     <p className="text-xs text-gray-400">Loan</p>
                     <p className="text-sm font-medium text-gray-800">{loanLabel(l)}</p>
+                    {l.account_id && accountMap[l.account_id] && (
+                      <p className="text-xs text-emerald-600 mt-0.5" title="Balance syncs automatically from linked account">
+                        ⟳ {accountMap[l.account_id]}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <p className="text-xs text-gray-400">Balance</p>
@@ -1056,7 +1098,7 @@ function LoansTab({
         <LoanForm
           form={addForm} setForm={setAddForm}
           onSave={handleAdd} onCancel={() => { setShowAdd(false); setAddForm({ ...BLANK_LOAN }); }}
-          saving={addSaving} saveLabel="Add Loan" />
+          saving={addSaving} saveLabel="Add Loan" accounts={accounts} />
       ) : (
         <button onClick={() => setShowAdd(true)}
           className="mt-3 text-sm text-primary-600 hover:text-primary-700 font-medium">

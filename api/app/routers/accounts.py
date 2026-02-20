@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.account import Account, Transaction
+from app.models.property_details import Loan
 from app.models.rule import CategorizationRule
 from app.models.user import User
 from app.schemas.account import (
@@ -61,6 +62,7 @@ async def create_manual_account(
         plaid_item_id=None,
         plaid_account_id=None,
         household_id=user.household_id,
+        owner_user_id=payload.owner_user_id,
         name=payload.name,
         institution_name=payload.institution_name,
         type=payload.type,
@@ -173,6 +175,12 @@ async def update_account(
     data = payload.model_dump(exclude_unset=True)
     for field, value in data.items():
         setattr(account, field, value)
+
+    # Propagate new balance to any loan linked to this account
+    if "current_balance" in data and data["current_balance"] is not None:
+        linked_loans = await db.execute(select(Loan).where(Loan.account_id == account_id))
+        for loan in linked_loans.scalars().all():
+            loan.current_balance = data["current_balance"]
 
     await db.flush()
     await db.refresh(account)

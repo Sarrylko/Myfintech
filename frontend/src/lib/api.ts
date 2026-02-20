@@ -132,6 +132,37 @@ export async function changePassword(
   });
 }
 
+// ─── Household Members ───────────────────────────────────────────────────────
+
+export interface HouseholdMemberCreate {
+  full_name: string;
+  email: string;
+  password: string;
+  role?: string;
+}
+
+export async function listHouseholdMembers(token: string): Promise<UserResponse[]> {
+  return apiFetch<UserResponse[]>("/api/v1/users/household/members", { token });
+}
+
+export async function addHouseholdMember(
+  data: HouseholdMemberCreate,
+  token: string
+): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/users/household/members", {
+    method: "POST",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function removeHouseholdMember(memberId: string, token: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/users/household/members/${memberId}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
 // ─── Plaid / Accounts ──────────────────────────────────────────────────────
 
 export interface PlaidItem {
@@ -145,6 +176,7 @@ export interface PlaidItem {
 export interface Account {
   id: string;
   plaid_item_id: string | null;
+  owner_user_id: string | null;
   name: string;
   official_name: string | null;
   institution_name: string | null;
@@ -160,6 +192,7 @@ export interface Account {
 }
 
 export interface ManualAccountCreate {
+  owner_user_id?: string | null;
   name: string;
   institution_name?: string;
   type: string;
@@ -170,6 +203,7 @@ export interface ManualAccountCreate {
 }
 
 export interface AccountUpdate {
+  owner_user_id?: string | null;
   name?: string;
   institution_name?: string;
   type?: string;
@@ -609,6 +643,7 @@ export async function importPayments(
 export interface Loan {
   id: string;
   property_id: string;
+  account_id: string | null;
   lender_name: string | null;
   loan_type: string;
   original_amount: string | null;
@@ -626,6 +661,7 @@ export interface Loan {
 }
 
 export interface LoanCreate {
+  account_id?: string | null;
   lender_name?: string;
   loan_type?: string;
   original_amount?: number;

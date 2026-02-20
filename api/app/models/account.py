@@ -53,6 +53,9 @@ class Account(Base):
     name: Mapped[str] = mapped_column(String(255))
     official_name: Mapped[str | None] = mapped_column(String(255))
     institution_name: Mapped[str | None] = mapped_column(String(255))  # for manual accounts
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     type: Mapped[str] = mapped_column(String(50))          # depository, credit, loan, investment
     subtype: Mapped[str | None] = mapped_column(String(50))
     mask: Mapped[str | None] = mapped_column(String(10))   # last 4 digits

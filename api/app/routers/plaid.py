@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.security import decrypt_value, encrypt_value
 from app.models.account import Account, PlaidItem, Transaction
+from app.models.property_details import Loan
 from app.models.rule import CategorizationRule
 from app.models.user import User
 
@@ -86,6 +87,11 @@ async def _sync_item(item: PlaidItem, client, db: AsyncSession) -> dict:
         if acct:
             acct.current_balance = curr_bal
             acct.available_balance = avail_bal
+            # Propagate balance to any loan linked to this account
+            if curr_bal is not None:
+                linked_loans = await db.execute(select(Loan).where(Loan.account_id == acct.id))
+                for loan in linked_loans.scalars().all():
+                    loan.current_balance = curr_bal
         else:
             type_str = pa.type.value if hasattr(pa.type, "value") else str(pa.type)
             sub_str = pa.subtype.value if pa.subtype and hasattr(pa.subtype, "value") else (str(pa.subtype) if pa.subtype else None)
