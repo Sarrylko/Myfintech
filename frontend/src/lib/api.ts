@@ -27,7 +27,11 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `API error: ${res.status}`);
+    const detail = body.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((e: { msg?: string }) => e.msg ?? "Validation error").join("; ")
+      : detail || `API error: ${res.status}`;
+    throw new Error(message);
   }
 
   if (res.status === 204) return undefined as T;
@@ -908,6 +912,7 @@ export type HoldingUpdate = Partial<HoldingCreate>;
 export interface TickerInfo {
   symbol: string;
   name: string | null;
+  last_price: number | null;
   found: boolean;
 }
 

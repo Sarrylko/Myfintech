@@ -8,18 +8,49 @@ if the NYSE market is currently open before fetching prices.
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytz
-import yfinance as yf
+import requests as http_requests
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.account import Account
 from app.models.investment import Holding
 from app.models.user import Household
 from app.worker import celery_app
 
 logger = logging.getLogger(__name__)
+
+_YF_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+    "Referer": "https://finance.yahoo.com/",
+}
+
+
+def _fetch_price(sym: str) -> Decimal | None:
+    """Fetch last market price for a single ticker via Yahoo Finance chart API."""
+    try:
+        r = http_requests.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1d&interval=1d",
+            headers=_YF_HEADERS,
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return None
+        meta = r.json()["chart"]["result"][0]["meta"]
+        price = meta.get("regularMarketPrice") or meta.get("previousClose")
+        if price and price > 0:
+            return Decimal(str(round(float(price), 4)))
+    except Exception as exc:
+        logger.debug("Price fetch failed for %s: %s", sym, exc)
+    return None
 
 # ─── NYSE market holidays 2025-2027 ───────────────────────────────────────────
 # Source: NYSE holiday schedule (observed dates)
@@ -118,36 +149,34 @@ def refresh_prices_for_household(household_id: uuid.UUID, session: Session) -> i
         sym = h.ticker_symbol.upper()
         ticker_to_holdings.setdefault(sym, []).append(h)
 
-    tickers_str = " ".join(ticker_to_holdings.keys())
-
-    try:
-        tickers_obj = yf.Tickers(tickers_str)
-    except Exception as exc:
-        logger.error("yfinance Tickers() failed: %s", exc)
-        return 0
-
     updated = 0
     now_utc = datetime.now(timezone.utc)
+    account_ids: set[uuid.UUID] = set()
 
     for sym, h_list in ticker_to_holdings.items():
-        try:
-            ticker_obj = tickers_obj.tickers.get(sym)
-            if ticker_obj is None:
-                continue
-            price = ticker_obj.fast_info.get("last_price")
-            if price is None or price <= 0:
-                continue
-
-            from decimal import Decimal
-            price_dec = Decimal(str(price))
-
-            for h in h_list:
-                h.current_value = price_dec * h.quantity
-                h.as_of_date = now_utc
-                updated += 1
-        except Exception as exc:
-            logger.warning("Failed to fetch price for %s: %s", sym, exc)
+        price_dec = _fetch_price(sym)
+        if price_dec is None:
+            logger.debug("No price available for %s", sym)
             continue
+        for h in h_list:
+            h.current_value = price_dec * h.quantity
+            h.as_of_date = now_utc
+            if h.account_id:
+                account_ids.add(h.account_id)
+            updated += 1
+
+    # Sync current_balance on each affected account to sum of its holdings
+    for account_id in account_ids:
+        try:
+            account = session.get(Account, account_id)
+            if account and account.is_manual:
+                all_holdings = session.execute(
+                    select(Holding).where(Holding.account_id == account_id)
+                ).scalars().all()
+                total = sum(h.current_value or Decimal(0) for h in all_holdings)
+                account.current_balance = total
+        except Exception as exc:
+            logger.warning("Failed to sync balance for account %s: %s", account_id, exc)
 
     # Update household refresh timestamp
     household = session.get(Household, household_id)

@@ -1,5 +1,6 @@
 """Investment price refresh settings and manual trigger endpoints."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
@@ -41,6 +42,7 @@ class RefreshResult(BaseModel):
 class TickerInfo(BaseModel):
     symbol: str
     name: str | None
+    last_price: float | None
     found: bool
 
 
@@ -122,24 +124,72 @@ async def get_refresh_settings(
     )
 
 
+_YF_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+    "Referer": "https://finance.yahoo.com/",
+}
+
+
+def _sync_ticker_lookup(sym: str) -> dict:
+    """Direct Yahoo Finance API lookup — must be called via run_in_executor."""
+    import requests
+
+    last_price: float | None = None
+    name: str | None = None
+
+    # Price via chart API (works without authentication)
+    try:
+        r = requests.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1d&interval=1d",
+            headers=_YF_HEADERS,
+            timeout=8,
+        )
+        if r.status_code == 200:
+            meta = r.json()["chart"]["result"][0]["meta"]
+            lp = meta.get("regularMarketPrice") or meta.get("previousClose")
+            if lp and lp > 0:
+                last_price = round(float(lp), 4)
+            # chart meta sometimes has a name too
+            name = meta.get("longName") or meta.get("shortName")
+    except Exception:
+        pass
+
+    # Name via search API (more reliable for company names)
+    if not name:
+        try:
+            r = requests.get(
+                f"https://query1.finance.yahoo.com/v1/finance/search?q={sym}&quotesCount=3",
+                headers=_YF_HEADERS,
+                timeout=8,
+            )
+            if r.status_code == 200:
+                for quote in r.json().get("quotes", []):
+                    if quote.get("symbol", "").upper() == sym:
+                        name = quote.get("longname") or quote.get("shortname")
+                        break
+        except Exception:
+            pass
+
+    return {"name": name, "last_price": last_price, "found": bool(name or last_price)}
+
+
 @router.get("/ticker-info", response_model=TickerInfo)
 async def get_ticker_info(
     symbol: str,
     user: User = Depends(get_current_user),
 ):
-    """Look up a ticker symbol and return its company name via yfinance."""
-    import yfinance as yf
-
+    """Look up a ticker symbol and return its company name and last price via yfinance."""
     sym = symbol.upper().strip()
     if not sym:
-        return TickerInfo(symbol=sym, name=None, found=False)
-    try:
-        t = yf.Ticker(sym)
-        info = t.info
-        name = info.get("longName") or info.get("shortName")
-        return TickerInfo(symbol=sym, name=name, found=bool(name))
-    except Exception:
-        return TickerInfo(symbol=sym, name=None, found=False)
+        return TickerInfo(symbol=sym, name=None, last_price=None, found=False)
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(None, _sync_ticker_lookup, sym)
+    return TickerInfo(symbol=sym, **data)
 
 
 @router.patch("/settings", response_model=InvestmentRefreshSettings)

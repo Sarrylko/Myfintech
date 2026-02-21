@@ -86,6 +86,15 @@ function totalBalance(accounts: Account[]): number {
 
 const BLANK_ADD: HoldingCreate = { ticker_symbol: "", name: "", quantity: "", cost_basis: "", current_value: "" };
 
+// Convert empty strings to null so Pydantic accepts optional Decimal fields
+function nullifyEmpty<T extends Record<string, unknown>>(form: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(form)) {
+    out[k] = v === "" ? null : v;
+  }
+  return out as T;
+}
+
 function HoldingsTable({
   holdings, loading, isManual, accountId, onChanged,
 }: {
@@ -103,6 +112,14 @@ function HoldingsTable({
   const [rowError, setRowError] = useState("");
   const [lookingUpTicker, setLookingUpTicker] = useState(false);
   const tickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const addLastPrice = useRef<number | null>(null);
+  const editLastPrice = useRef<number | null>(null);
+
+  function calcValue(price: number | null, qty: string | number | null | undefined): string {
+    const q = Number(qty);
+    if (!price || !qty || q <= 0) return "";
+    return (price * q).toFixed(2);
+  }
 
   function scheduleLookup(ticker: string, isAdd: boolean) {
     if (tickerTimer.current) clearTimeout(tickerTimer.current);
@@ -114,10 +131,13 @@ function HoldingsTable({
       try {
         const info = await getTickerInfo(ticker, token);
         const resolvedName = info.found ? (info.name ?? "Unknown") : "Unknown";
+        const price = info.last_price ?? null;
         if (isAdd) {
-          setAddForm((p) => ({ ...p, name: resolvedName }));
+          addLastPrice.current = price;
+          setAddForm((p) => ({ ...p, name: resolvedName, current_value: calcValue(price, p.quantity) || p.current_value }));
         } else {
-          setEditForm((p) => ({ ...p, name: resolvedName }));
+          editLastPrice.current = price;
+          setEditForm((p) => ({ ...p, name: resolvedName, current_value: calcValue(price, p.quantity) || p.current_value }));
         }
       } catch {
         // silently ignore lookup errors
@@ -144,7 +164,7 @@ function HoldingsTable({
     if (!token || !editingId) return;
     setSaving(true); setRowError("");
     try {
-      await updateHolding(editingId, editForm, token);
+      await updateHolding(editingId, nullifyEmpty(editForm as Record<string, unknown>) as HoldingUpdate, token);
       setEditingId(null);
       onChanged();
     } catch (e) {
@@ -178,9 +198,10 @@ function HoldingsTable({
     }
     setSaving(true); setRowError("");
     try {
-      await createHolding(accountId, addForm, token);
+      await createHolding(accountId, nullifyEmpty(addForm as Record<string, unknown>) as HoldingCreate, token);
       setShowAddForm(false);
       setAddForm(BLANK_ADD);
+      addLastPrice.current = null;
       onChanged();
     } catch (e) {
       setRowError(e instanceof Error ? e.message : "Save failed");
@@ -235,7 +256,7 @@ function HoldingsTable({
                       <input className={inp} placeholder={lookingUpTicker ? "Looking up…" : "Apple Inc."} value={editForm.name ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))} />
                     </td>
                     <td className="px-4 py-2">
-                      <input className={`${inp} text-right`} type="number" step="any" placeholder="10" value={editForm.quantity ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, quantity: e.target.value }))} />
+                      <input className={`${inp} text-right`} type="number" step="any" placeholder="10" value={editForm.quantity ?? ""} onChange={(e) => { const qty = e.target.value; setEditForm((p) => ({ ...p, quantity: qty, current_value: calcValue(editLastPrice.current, qty) || p.current_value })); }} />
                     </td>
                     <td className="px-4 py-2">
                       <input className={`${inp} text-right`} type="number" step="any" placeholder="0.00" value={editForm.current_value ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, current_value: e.target.value }))} />
@@ -313,10 +334,10 @@ function HoldingsTable({
                   <input className={inp} placeholder={lookingUpTicker ? "Looking up…" : "Auto-filled from ticker"} value={addForm.name ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))} />
                 </td>
                 <td className="px-4 py-2">
-                  <input className={`${inp} text-right`} type="number" step="any" placeholder="Shares *" value={addForm.quantity} onChange={(e) => setAddForm((p) => ({ ...p, quantity: e.target.value }))} />
+                  <input className={`${inp} text-right`} type="number" step="any" placeholder="Shares *" value={addForm.quantity} onChange={(e) => { const qty = e.target.value; setAddForm((p) => ({ ...p, quantity: qty, current_value: calcValue(addLastPrice.current, qty) || p.current_value })); }} />
                 </td>
                 <td className="px-4 py-2">
-                  <input className={`${inp} text-right`} type="number" step="any" placeholder="Optional" value={addForm.current_value ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, current_value: e.target.value }))} />
+                  <input className={`${inp} text-right`} type="number" step="any" placeholder="Auto from price × qty" value={addForm.current_value ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, current_value: e.target.value }))} />
                 </td>
                 <td className="px-4 py-2">
                   <input className={`${inp} text-right`} type="number" step="any" placeholder="Total cost" value={addForm.cost_basis ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, cost_basis: e.target.value }))} />
@@ -325,7 +346,7 @@ function HoldingsTable({
                 <td className="px-4 py-2">
                   <div className="flex gap-1 justify-end">
                     <button onClick={handleSaveAdd} disabled={saving} className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50">Add</button>
-                    <button onClick={() => { setShowAddForm(false); setAddForm(BLANK_ADD); setRowError(""); }} className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs hover:bg-gray-200">Cancel</button>
+                    <button onClick={() => { setShowAddForm(false); setAddForm(BLANK_ADD); setRowError(""); addLastPrice.current = null; }} className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs hover:bg-gray-200">Cancel</button>
                   </div>
                 </td>
               </tr>
@@ -544,6 +565,10 @@ export default function InvestmentsPage() {
       .then((h) => setHoldingsMap((m) => ({ ...m, [accountId]: h })))
       .catch(() => {})
       .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: false })));
+    // Also refresh account list so Total Value cards stay in sync
+    listAccounts(token)
+      .then((all) => setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden)))
+      .catch(() => {});
   }
 
   async function handleRefreshNow() {
@@ -552,6 +577,10 @@ export default function InvestmentsPage() {
     setRefreshing(true);
     try {
       const result = await refreshInvestmentPrices(token);
+      // Re-fetch accounts to get updated current_balance (drives Total Value cards)
+      listAccounts(token)
+        .then((all) => setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden)))
+        .catch(() => {});
       // Re-fetch holdings for all currently expanded accounts
       const expanded = Object.keys(holdingsMap);
       for (const id of expanded) {

@@ -422,6 +422,18 @@ async def update_transaction(
 
 # ─── Holdings CRUD (manual accounts only) ────────────────────────────────────
 
+async def _sync_account_balance(account_id: uuid.UUID, db: AsyncSession) -> None:
+    """Recompute current_balance for a manual account from its holdings total."""
+    result = await db.execute(
+        select(Holding).where(Holding.account_id == account_id)
+    )
+    holdings = result.scalars().all()
+    from decimal import Decimal
+    total = sum(h.current_value or Decimal(0) for h in holdings)
+    acct = await db.get(Account, account_id)
+    if acct and acct.is_manual:
+        acct.current_balance = total
+
 @router.post("/{account_id}/holdings", response_model=HoldingResponse, status_code=201)
 async def create_holding(
     account_id: uuid.UUID,
@@ -459,6 +471,7 @@ async def create_holding(
     db.add(holding)
     await db.flush()
     await db.refresh(holding)
+    await _sync_account_balance(account_id, db)
     await db.commit()
     return holding
 
@@ -487,6 +500,8 @@ async def update_holding(
     holding.as_of_date = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(holding)
+    if holding.account_id:
+        await _sync_account_balance(holding.account_id, db)
     await db.commit()
     return holding
 
@@ -508,5 +523,9 @@ async def delete_holding(
     if not holding:
         raise HTTPException(status_code=404, detail="Holding not found")
 
+    account_id = holding.account_id
     await db.delete(holding)
+    await db.flush()
+    if account_id:
+        await _sync_account_balance(account_id, db)
     await db.commit()
