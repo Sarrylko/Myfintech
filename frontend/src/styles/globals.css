@@ -9,8 +9,47 @@
   --border: #e2e8f0;
 }
 
+.dark {
+  --background: #0f172a;
+  --foreground: #f1f5f9;
+  --card: #1e293b;
+  --border: #334155;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
+
+/* ── Global dark-mode overrides for hardcoded Tailwind utility classes ── */
+/* Uses higher specificity (.dark .class) so no !important needed.        */
+
+.dark .bg-white          { background-color: #1e293b; }
+.dark .bg-slate-50,
+.dark .bg-gray-50        { background-color: #0f172a; }
+.dark .bg-slate-100,
+.dark .bg-gray-100       { background-color: #1e293b; }
+.dark .bg-slate-200,
+.dark .bg-gray-200       { background-color: #334155; }
+
+.dark .text-gray-900,
+.dark .text-slate-900    { color: #f1f5f9; }
+.dark .text-gray-800,
+.dark .text-slate-800    { color: #e2e8f0; }
+.dark .text-gray-700,
+.dark .text-slate-700    { color: #cbd5e1; }
+.dark .text-gray-600,
+.dark .text-slate-600    { color: #94a3b8; }
+.dark .text-gray-500,
+.dark .text-slate-500    { color: #64748b; }
+
+.dark .border-gray-200,
+.dark .border-slate-200  { border-color: #334155; }
+.dark .border-gray-300,
+.dark .border-slate-300  { border-color: #475569; }
+
+.dark .divide-gray-200 > * + * { border-color: #334155; }
+
+.dark .shadow-sm  { box-shadow: 0 1px 2px 0 rgba(0,0,0,.4); }
+.dark .shadow     { box-shadow: 0 1px 3px 0 rgba(0,0,0,.5), 0 1px 2px -1px rgba(0,0,0,.5); }

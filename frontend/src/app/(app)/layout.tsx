@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { getToken, clearTokens } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
+import { useTheme } from "@/components/ThemeProvider";
 
 export default function AppLayout({
   children,
@@ -12,6 +13,7 @@ export default function AppLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     if (!getToken()) {
@@ -48,19 +50,30 @@ export default function AppLayout({
             ))}
           </nav>
         </div>
-        <div className="p-6 border-t border-gray-800">
+        <div className="p-6 border-t border-gray-800 space-y-1">
+          {/* Theme toggle */}
+          <button
+            onClick={toggleTheme}
+            className="w-full text-left text-sm text-gray-400 hover:text-white transition px-3 py-2 rounded-lg hover:bg-gray-800 flex items-center gap-2"
+            aria-label="Toggle theme"
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+            {theme === "dark" ? "Light Mode" : "Dark Mode"}
+          </button>
           <button
             onClick={handleSignOut}
             className="w-full text-left text-sm text-gray-400 hover:text-white transition px-3 py-2 rounded-lg hover:bg-gray-800"
           >
             Sign Out
           </button>
-          <p className="mt-3 px-3 text-xs text-gray-600">v{APP_VERSION}</p>
+          <p className="mt-2 px-3 text-xs text-gray-600">v{APP_VERSION}</p>
         </div>
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 p-8 bg-slate-50 min-h-screen">{children}</main>
+      <main className="flex-1 p-8 bg-slate-50 dark:bg-gray-950 min-h-screen">
+        {children}
+      </main>
     </div>
   );
 }
