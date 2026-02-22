@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import extract, func, select
+from sqlalchemy import extract, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -20,6 +20,36 @@ from app.schemas.budget import (
 
 router = APIRouter(prefix="/budgets", tags=["budgets"])
 
+# ─── Plaid category prefix map ─────────────────────────────────────────────────
+# Maps custom category name (lowercase) → Plaid category prefixes to match.
+# Transactions are matched if their plaid_category starts with any of these strings.
+# This lets budget actuals automatically count Plaid-imported transactions that
+# haven't been manually re-categorized with custom_category_id.
+
+_PLAID_PREFIXES: dict[str, list[str]] = {
+    "food & dining":     ["food & dining"],
+    "housing":           ["housing"],
+    "transportation":    ["transportation"],
+    "shopping":          ["shopping"],
+    "entertainment":     ["entertainment"],
+    "healthcare":        ["healthcare"],
+    "utilities":         ["bills & utilities", "utilities"],
+    "subscriptions":     ["service > subscription", "subscription"],
+    "education":         ["education"],
+    "personal care":     ["personal care"],
+    "savings":           ["savings & investments", "savings"],
+    "insurance":         ["insurance"],
+    "travel":            ["travel"],
+    "gifts & charity":   ["gifts & donations", "charitable"],
+    "pets":              ["pets"],
+    # income categories
+    "salary":            ["income > salary", "payroll"],
+    "freelance":         ["income > freelance", "income > self"],
+    "investment income": ["income > investment", "income > dividends"],
+    "rental income":     ["income > rental"],
+    "other income":      ["income"],
+}
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -27,29 +57,46 @@ async def _actual_spent(
     db: AsyncSession,
     household_id: uuid.UUID,
     category_id: uuid.UUID,
+    category_name: str,
     month: int,
     year: int,
     is_income: bool,
 ) -> Decimal:
     """
     Compute absolute spending for a budget category in a given month/year.
-    Expense categories: sum abs(amount) for negative transactions.
-    Income categories: sum amount for positive transactions.
-    Excludes ignored and pending transactions.
+
+    Matches transactions by:
+      1. custom_category_id (explicitly tagged by the user), OR
+      2. plaid_category prefix (automatic match for Plaid-imported transactions
+         that haven't been manually re-categorized yet).
+
+    Expense categories: sums positive-amount transactions (Plaid convention: spending = positive).
+    Income categories: sums abs(negative-amount) transactions (Plaid convention: deposits = negative).
+    Excludes ignored transactions; includes pending for a real-time view.
     """
     if is_income:
-        amount_filter = Transaction.amount > 0
-        amount_expr = func.coalesce(func.sum(Transaction.amount), 0)
-    else:
         amount_filter = Transaction.amount < 0
         amount_expr = func.coalesce(func.sum(func.abs(Transaction.amount)), 0)
+    else:
+        amount_filter = Transaction.amount > 0
+        amount_expr = func.coalesce(func.sum(Transaction.amount), 0)
+
+    # Build category match: explicitly tagged OR plaid_category prefix
+    prefixes = _PLAID_PREFIXES.get(category_name.lower(), [category_name.lower()])
+    plaid_conditions = [
+        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
+        for p in prefixes
+    ]
+    category_match = or_(
+        Transaction.custom_category_id == category_id,
+        *plaid_conditions,
+    )
 
     result = await db.execute(
         select(amount_expr).where(
             Transaction.household_id == household_id,
-            Transaction.custom_category_id == category_id,
+            category_match,
             Transaction.is_ignored == False,  # noqa: E712
-            Transaction.pending == False,      # noqa: E712
             extract("month", Transaction.date) == month,
             extract("year", Transaction.date) == year,
             amount_filter,
@@ -65,7 +112,7 @@ async def _enrich(
 ) -> BudgetWithActualResponse:
     spent = await _actual_spent(
         db, household_id, budget.category_id,
-        budget.month, budget.year, budget.category.is_income,
+        budget.category.name, budget.month, budget.year, budget.category.is_income,
     )
     remaining = budget.amount - spent
     percent = (spent / budget.amount * 100) if budget.amount else Decimal("0")
