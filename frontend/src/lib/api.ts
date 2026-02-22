@@ -27,7 +27,11 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `API error: ${res.status}`);
+    const detail = body.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((e: { msg?: string }) => e.msg ?? "Validation error").join("; ")
+      : detail || `API error: ${res.status}`;
+    throw new Error(message);
   }
 
   if (res.status === 204) return undefined as T;
@@ -176,6 +180,7 @@ export interface PlaidItem {
 export interface Account {
   id: string;
   plaid_item_id: string | null;
+  snaptrade_connection_id: string | null;
   owner_user_id: string | null;
   name: string;
   official_name: string | null;
@@ -894,6 +899,40 @@ export async function listHoldings(accountId: string, token: string): Promise<Ho
   return apiFetch<Holding[]>(`/api/v1/accounts/${accountId}/holdings`, { token });
 }
 
+export interface HoldingCreate {
+  ticker_symbol?: string | null;
+  name?: string | null;
+  quantity: string;
+  cost_basis?: string | null;
+  current_value?: string | null;
+  currency_code?: string;
+}
+
+export type HoldingUpdate = Partial<HoldingCreate>;
+
+export interface TickerInfo {
+  symbol: string;
+  name: string | null;
+  last_price: number | null;
+  found: boolean;
+}
+
+export async function getTickerInfo(symbol: string, token: string): Promise<TickerInfo> {
+  return apiFetch<TickerInfo>(`/api/v1/investments/ticker-info?symbol=${encodeURIComponent(symbol)}`, { token });
+}
+
+export async function createHolding(accountId: string, data: HoldingCreate, token: string): Promise<Holding> {
+  return apiFetch<Holding>(`/api/v1/accounts/${accountId}/holdings`, { token, method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateHolding(holdingId: string, data: HoldingUpdate, token: string): Promise<Holding> {
+  return apiFetch<Holding>(`/api/v1/accounts/holdings/${holdingId}`, { token, method: "PATCH", body: JSON.stringify(data) });
+}
+
+export async function deleteHolding(holdingId: string, token: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/accounts/holdings/${holdingId}`, { token, method: "DELETE" });
+}
+
 // ─── Categorization Rules ───────────────────────────────────────────────────
 
 export interface Rule {
@@ -987,6 +1026,13 @@ export async function createCustomCategory(
 export async function deleteCustomCategory(id: string, token: string): Promise<void> {
   return apiFetch<void>(`/api/v1/categories/${id}`, {
     method: "DELETE",
+    token,
+  });
+}
+
+export async function seedDefaultCategories(token: string): Promise<CustomCategory[]> {
+  return apiFetch<CustomCategory[]>("/api/v1/categories/seed-defaults", {
+    method: "POST",
     token,
   });
 }
@@ -1166,5 +1212,262 @@ export async function getPortfolioReport(
   return apiFetch<PortfolioReport>(
     `/api/v1/reports/portfolio?year=${year}&month=${month}`,
     { token }
+  );
+}
+
+// ─── Investment Price Refresh ──────────────────────────────────────────────────
+
+export interface InvestmentRefreshSettings {
+  price_refresh_enabled: boolean;
+  price_refresh_interval_minutes: number;
+}
+
+export interface RefreshStatus {
+  last_refresh: string | null;
+  next_refresh: string | null;
+  enabled: boolean;
+  interval_minutes: number;
+}
+
+export interface MarketStatus {
+  is_open: boolean;
+  next_open: string | null;
+}
+
+export interface RefreshResult {
+  refreshed: number;
+}
+
+export async function getInvestmentSettings(token: string): Promise<InvestmentRefreshSettings> {
+  return apiFetch<InvestmentRefreshSettings>("/api/v1/investments/settings", { token });
+}
+
+export async function updateInvestmentSettings(
+  data: InvestmentRefreshSettings,
+  token: string
+): Promise<InvestmentRefreshSettings> {
+  return apiFetch<InvestmentRefreshSettings>("/api/v1/investments/settings", {
+    token,
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getRefreshStatus(token: string): Promise<RefreshStatus> {
+  return apiFetch<RefreshStatus>("/api/v1/investments/refresh-status", { token });
+}
+
+export async function getMarketStatus(token: string): Promise<MarketStatus> {
+  return apiFetch<MarketStatus>("/api/v1/investments/market-status", { token });
+}
+
+export async function refreshInvestmentPrices(token: string): Promise<RefreshResult> {
+  return apiFetch<RefreshResult>("/api/v1/investments/refresh-prices", {
+    token,
+    method: "POST",
+  });
+}
+
+// ─── SnapTrade ──────────────────────────────────────────────────────────────
+
+export interface SnapTradeConnection {
+  id: string;
+  brokerage_name: string | null;
+  brokerage_slug: string | null;
+  snaptrade_authorization_id: string;
+  is_active: boolean;
+  last_synced_at: string | null;
+  account_count: number;
+}
+
+export interface SnapTradeRegisterResponse {
+  registered: boolean;
+  snaptrade_user_id: string;
+}
+
+export interface SnapTradeSyncResponse {
+  accounts_synced: number;
+  holdings_synced: number;
+}
+
+export async function registerSnapTradeUser(
+  token: string
+): Promise<SnapTradeRegisterResponse> {
+  return apiFetch<SnapTradeRegisterResponse>("/api/v1/snaptrade/register-user", {
+    token,
+    method: "POST",
+  });
+}
+
+export async function getSnapTradeConnectUrl(
+  token: string
+): Promise<{ redirect_url: string }> {
+  return apiFetch<{ redirect_url: string }>("/api/v1/snaptrade/connect-url", {
+    token,
+    method: "POST",
+  });
+}
+
+export async function listSnapTradeConnections(
+  token: string
+): Promise<SnapTradeConnection[]> {
+  return apiFetch<SnapTradeConnection[]>("/api/v1/snaptrade/connections", { token });
+}
+
+export async function syncSnapTradeAuthorizations(
+  token: string
+): Promise<SnapTradeConnection[]> {
+  return apiFetch<SnapTradeConnection[]>("/api/v1/snaptrade/sync-authorizations", {
+    token,
+    method: "POST",
+  });
+}
+
+export async function syncSnapTradeConnection(
+  connectionId: string,
+  token: string
+): Promise<SnapTradeSyncResponse> {
+  return apiFetch<SnapTradeSyncResponse>(
+    `/api/v1/snaptrade/connections/${connectionId}/sync`,
+    { token, method: "POST" }
+  );
+}
+
+export async function deleteSnapTradeConnection(
+  connectionId: string,
+  token: string
+): Promise<void> {
+  await apiFetch<void>(`/api/v1/snaptrade/connections/${connectionId}`, {
+    token,
+    method: "DELETE",
+  });
+}
+
+// ─── Budgets ──────────────────────────────────────────────────────────────────
+
+export type BudgetType = 'monthly' | 'annual' | 'quarterly' | 'custom';
+
+export interface BudgetCategory {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  is_income: boolean;
+}
+
+export interface BudgetCreate {
+  category_id: string;
+  amount: number;
+  budget_type?: BudgetType;
+  year: number;
+  month?: number;       // required only for monthly
+  start_date?: string;  // ISO date string, required for quarterly/custom
+  end_date?: string;    // ISO date string, required for quarterly/custom
+  rollover_enabled?: boolean;
+  alert_threshold?: number;
+}
+
+export interface BudgetUpdate {
+  amount?: number;
+  rollover_enabled?: boolean;
+  alert_threshold?: number;
+}
+
+export interface Budget {
+  id: string;
+  household_id: string;
+  category_id: string;
+  category: BudgetCategory;
+  amount: string; // Decimal serialized as string
+  budget_type: BudgetType;
+  month: number | null;
+  year: number;
+  start_date: string | null;
+  end_date: string | null;
+  rollover_enabled: boolean;
+  alert_threshold: number;
+  created_at: string;
+}
+
+export interface BudgetWithActual extends Budget {
+  actual_spent: string; // Decimal as string
+  remaining: string; // Decimal as string — negative if over budget
+  percent_used: string; // Decimal as string
+}
+
+export interface BudgetBulkCreate {
+  budgets: BudgetCreate[];
+}
+
+export async function listBudgets(
+  month: number,
+  year: number,
+  token: string
+): Promise<BudgetWithActual[]> {
+  return apiFetch<BudgetWithActual[]>(
+    `/api/v1/budgets/?month=${month}&year=${year}`,
+    { token }
+  );
+}
+
+export async function listLongTermBudgets(
+  year: number,
+  token: string
+): Promise<BudgetWithActual[]> {
+  return apiFetch<BudgetWithActual[]>(
+    `/api/v1/budgets/?year=${year}&budget_type=long_term`,
+    { token }
+  );
+}
+
+export async function createBudget(
+  data: BudgetCreate,
+  token: string
+): Promise<BudgetWithActual> {
+  return apiFetch<BudgetWithActual>("/api/v1/budgets/", {
+    method: "POST",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function createBudgetsBulk(
+  data: BudgetBulkCreate,
+  token: string
+): Promise<BudgetWithActual[]> {
+  return apiFetch<BudgetWithActual[]>("/api/v1/budgets/bulk", {
+    method: "POST",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function updateBudget(
+  id: string,
+  data: BudgetUpdate,
+  token: string
+): Promise<BudgetWithActual> {
+  return apiFetch<BudgetWithActual>(`/api/v1/budgets/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function deleteBudget(id: string, token: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/budgets/${id}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export async function copyBudgetsFromLastMonth(
+  month: number,
+  year: number,
+  token: string
+): Promise<BudgetWithActual[]> {
+  return apiFetch<BudgetWithActual[]>(
+    `/api/v1/budgets/copy-from-last-month?month=${month}&year=${year}`,
+    { method: "POST", token }
   );
 }

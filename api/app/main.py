@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import auth, accounts, capital_events, categories, health, plaid, properties, property_details, recurring, rentals, reports, rules, users
+from app.routers import auth, accounts, budget, capital_events, categories, health, investments, plaid, properties, property_details, recurring, rentals, reports, rules, snaptrade, users
 
 logging.basicConfig(
     level=getattr(logging, settings.api_log_level.upper()),
@@ -13,7 +13,7 @@ logging.basicConfig(
 
 app = FastAPI(
     title="MyFintech API",
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/docs" if settings.environment == "development" else None,
     redoc_url=None,
 )
@@ -41,7 +41,10 @@ app.include_router(rules.router, prefix="/api/v1")
 app.include_router(properties.router, prefix="/api/v1")
 app.include_router(property_details.router, prefix="/api/v1")
 app.include_router(capital_events.router, prefix="/api/v1")
+app.include_router(investments.router, prefix="/api/v1")
 app.include_router(recurring.router, prefix="/api/v1")
 app.include_router(rentals.router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
+app.include_router(budget.router, prefix="/api/v1")
+app.include_router(snaptrade.router, prefix="/api/v1")

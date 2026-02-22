@@ -24,8 +24,16 @@ redis==5.2.1
 plaid-python==27.0.0
 
 # ─── Encryption ───────────────────────────────
-cryptography==44.0.0
+cryptography==43.0.3
 
 # ─── Utilities ────────────────────────────────
 httpx==0.28.1
 python-dateutil==2.9.0
+
+pytz==2024.2
+
+# ─── Market data ──────
+yfinance==0.2.54
+
+# ─── SnapTrade ────────────────────────────────
+snaptrade-python-sdk==11.0.161

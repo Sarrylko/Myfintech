@@ -46,6 +46,13 @@ class Account(Base):
     plaid_item_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("plaid_items.id"), index=True, nullable=True
     )
+    snaptrade_connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("snaptrade_connections.id", ondelete="SET NULL"),
+        index=True, nullable=True,
+    )
+    snaptrade_account_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
     household_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("households.id"), index=True
     )
@@ -69,6 +76,7 @@ class Account(Base):
     )
 
     plaid_item: Mapped["PlaidItem | None"] = relationship(back_populates="accounts")
+    snaptrade_connection: Mapped["SnapTradeConnection | None"] = relationship(back_populates="accounts")  # type: ignore[name-defined]
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="account")
 
 

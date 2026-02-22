@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   getToken,
   getLinkToken,
@@ -14,11 +14,17 @@ import {
   updateAccount,
   deleteAccount,
   listHouseholdMembers,
+  getSnapTradeConnectUrl,
+  listSnapTradeConnections,
+  syncSnapTradeAuthorizations,
+  syncSnapTradeConnection,
+  deleteSnapTradeConnection,
   PlaidItem,
   Account,
   AccountUpdate,
   ManualAccountCreate,
   UserResponse,
+  SnapTradeConnection,
 } from "@/lib/api";
 
 declare global {
@@ -85,6 +91,9 @@ const DEFAULT_MANUAL: ManualAccountCreate = {
 
 export default function AccountsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const snapSyncedRef = useRef(false);
+
   const [items, setItems] = useState<PlaidItem[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [members, setMembers] = useState<UserResponse[]>([]);
@@ -94,6 +103,12 @@ export default function AccountsPage() {
   const [error, setError] = useState("");
   const [plaidReady, setPlaidReady] = useState(false);
   const [plaidNotConfigured, setPlaidNotConfigured] = useState(false);
+
+  // SnapTrade state
+  const [snapConnections, setSnapConnections] = useState<SnapTradeConnection[]>([]);
+  const [snapConnecting, setSnapConnecting] = useState(false);
+  const [syncingSnapId, setSyncingSnapId] = useState<string | null>(null);
+  const [snapError, setSnapError] = useState("");
 
   // Manual account modal
   const [showManual, setShowManual] = useState(false);
@@ -133,14 +148,16 @@ export default function AccountsPage() {
     const token = getToken();
     if (!token) { router.replace("/login"); return; }
     try {
-      const [fetchedItems, fetchedAccounts, fetchedMembers] = await Promise.all([
+      const [fetchedItems, fetchedAccounts, fetchedMembers, fetchedSnapConns] = await Promise.all([
         listPlaidItems(token),
         listAccounts(token),
         listHouseholdMembers(token),
+        listSnapTradeConnections(token).catch(() => [] as SnapTradeConnection[]),
       ]);
       setItems(fetchedItems);
       setAccounts(fetchedAccounts);
       setMembers(fetchedMembers);
+      setSnapConnections(fetchedSnapConns);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load accounts");
     } finally {
@@ -280,9 +297,73 @@ export default function AccountsPage() {
     }
   }
 
+  // SnapTrade handlers
+  async function handleConnectSnapTrade() {
+    const token = getToken();
+    if (!token) return;
+    setSnapConnecting(true); setSnapError("");
+    try {
+      const { redirect_url } = await getSnapTradeConnectUrl(token);
+      window.open(redirect_url, "_blank");
+    } catch (e) {
+      setSnapError(e instanceof Error ? e.message : "Failed to open SnapTrade portal");
+    } finally {
+      setSnapConnecting(false);
+    }
+  }
+
+  async function handleSyncSnapAuth() {
+    const token = getToken();
+    if (!token) return;
+    setSnapError("");
+    try {
+      const conns = await syncSnapTradeAuthorizations(token);
+      setSnapConnections(conns);
+      await loadData();
+    } catch (e) {
+      setSnapError(e instanceof Error ? e.message : "SnapTrade sync failed");
+    }
+  }
+
+  async function handleSyncSnapConnection(connId: string) {
+    const token = getToken();
+    if (!token) return;
+    setSyncingSnapId(connId); setSnapError("");
+    try {
+      await syncSnapTradeConnection(connId, token);
+      await loadData();
+    } catch (e) {
+      setSnapError(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncingSnapId(null);
+    }
+  }
+
+  async function handleDisconnectSnap(connId: string) {
+    if (!window.confirm("Disconnect this brokerage? Accounts will remain but will no longer sync.")) return;
+    const token = getToken();
+    if (!token) return;
+    setSnapError("");
+    try {
+      await deleteSnapTradeConnection(connId, token);
+      await loadData();
+    } catch (e) {
+      setSnapError(e instanceof Error ? e.message : "Disconnect failed");
+    }
+  }
+
+  // Detect ?snaptrade_connected=1 redirect and auto-sync authorizations
+  useEffect(() => {
+    if (searchParams?.get("snaptrade_connected") === "1" && !snapSyncedRef.current) {
+      snapSyncedRef.current = true;
+      handleSyncSnapAuth();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   // Group Plaid accounts by plaid_item_id
-  const plaidAccounts = accounts.filter((a) => !a.is_manual);
-  const manualAccounts = accounts.filter((a) => a.is_manual);
+  const plaidAccounts = accounts.filter((a) => !a.is_manual && !a.snaptrade_connection_id);
+  const manualAccounts = accounts.filter((a) => a.is_manual && !a.snaptrade_connection_id);
 
   const accountsByItem: Record<string, Account[]> = {};
   for (const acct of plaidAccounts) {
@@ -292,6 +373,46 @@ export default function AccountsPage() {
   }
 
   const subtypeOptions = SUBTYPES[manualForm.type] ?? [];
+
+  // ── Summary buckets ────────────────────────────────────────────────────────
+  function sumBal(list: Account[]) {
+    return list.reduce((s, a) => s + (a.current_balance ? parseFloat(a.current_balance) : 0), 0);
+  }
+  function fmtK(n: number) {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency", currency: "USD",
+      minimumFractionDigits: 0, maximumFractionDigits: 0,
+    }).format(n);
+  }
+
+  const visibleAccounts = accounts.filter((a) => !a.is_hidden);
+  const CHECKING_SUBTYPES = new Set(["checking", "prepaid"]);
+  const SAVINGS_SUBTYPES  = new Set(["savings", "cd", "money market", "cash management"]);
+
+  const checkingAccounts   = visibleAccounts.filter((a) => a.type === "depository" && CHECKING_SUBTYPES.has((a.subtype ?? "").toLowerCase()));
+  const savingsAccounts    = visibleAccounts.filter((a) => a.type === "depository" && SAVINGS_SUBTYPES.has((a.subtype ?? "").toLowerCase()));
+  const otherDepository    = visibleAccounts.filter((a) => a.type === "depository" && !CHECKING_SUBTYPES.has((a.subtype ?? "").toLowerCase()) && !SAVINGS_SUBTYPES.has((a.subtype ?? "").toLowerCase()));
+  const creditAccounts     = visibleAccounts.filter((a) => a.type === "credit");
+  const investmentAccounts = visibleAccounts.filter((a) => a.type === "investment");
+  const loanAccounts       = visibleAccounts.filter((a) => a.type === "loan");
+
+  const totalChecking   = sumBal(checkingAccounts);
+  const totalSavings    = sumBal(savingsAccounts);
+  const totalCards      = sumBal(creditAccounts);
+  const totalInvest     = sumBal(investmentAccounts);
+  const totalLoans      = sumBal(loanAccounts);
+  const totalOtherDep   = sumBal(otherDepository);
+  const netCash         = totalChecking + totalSavings + totalOtherDep - totalCards;
+
+  const summaryBuckets = [
+    ...(checkingAccounts.length   > 0 ? [{ label: "Checking",   amount: totalChecking,  count: checkingAccounts.length,   color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-100",  icon: "🏧" }] : []),
+    ...(savingsAccounts.length    > 0 ? [{ label: "Savings",    amount: totalSavings,   count: savingsAccounts.length,    color: "text-teal-700",   bg: "bg-teal-50",   border: "border-teal-100",  icon: "🏦" }] : []),
+    ...(otherDepository.length    > 0 ? [{ label: "Other Bank", amount: totalOtherDep,  count: otherDepository.length,    color: "text-sky-700",    bg: "bg-sky-50",    border: "border-sky-100",   icon: "🏛️" }] : []),
+    ...(creditAccounts.length     > 0 ? [{ label: "Card Balances", amount: -totalCards, count: creditAccounts.length,    color: "text-orange-700", bg: "bg-orange-50", border: "border-orange-100", icon: "💳", debt: true }] : []),
+    ...(investmentAccounts.length > 0 ? [{ label: "Investments", amount: totalInvest,  count: investmentAccounts.length, color: "text-green-700",  bg: "bg-green-50",  border: "border-green-100", icon: "📈" }] : []),
+    ...(loanAccounts.length       > 0 ? [{ label: "Loans",      amount: -totalLoans,   count: loanAccounts.length,       color: "text-red-700",    bg: "bg-red-50",    border: "border-red-100",   icon: "📋", debt: true }] : []),
+    { label: "Net Cash", amount: netCash, count: null, color: netCash >= 0 ? "text-gray-900" : "text-red-700", bg: "bg-gray-900", border: "border-gray-800", icon: "💰", netCard: true },
+  ] as const;
 
   return (
     <div>
@@ -312,8 +433,22 @@ export default function AccountsPage() {
           >
             {linking ? "Connecting..." : "🔗 Link via Plaid"}
           </button>
+          <button
+            onClick={handleConnectSnapTrade}
+            disabled={snapConnecting}
+            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm font-medium disabled:opacity-50"
+          >
+            {snapConnecting ? "Opening..." : "📊 Connect Brokerage"}
+          </button>
         </div>
       </div>
+
+      {/* SnapTrade error */}
+      {snapError && (
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+          {snapError}
+        </div>
+      )}
 
       {/* Manual Account Modal */}
       {showManual && (
@@ -736,6 +871,51 @@ PLAID_ENV=sandbox`}
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>
       )}
 
+      {/* Account-type summary strip */}
+      {!loading && visibleAccounts.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
+          {summaryBuckets.map((b) => (
+            <div
+              key={b.label}
+              className={`rounded-xl border p-4 flex flex-col gap-1 ${
+                (b as { netCard?: boolean }).netCard
+                  ? "bg-gray-900 border-gray-800"
+                  : `${b.bg} ${b.border}`
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-base">{b.icon}</span>
+                {(b as { count?: number | null }).count !== null && (
+                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${
+                    (b as { netCard?: boolean }).netCard ? "bg-gray-700 text-gray-300" : "bg-white/60 text-gray-500"
+                  }`}>
+                    {(b as { count?: number | null }).count}
+                  </span>
+                )}
+              </div>
+              <p className={`text-xs font-medium mt-1 ${
+                (b as { netCard?: boolean }).netCard ? "text-gray-400" : "text-gray-500"
+              }`}>
+                {b.label}
+              </p>
+              <p className={`text-lg font-bold leading-tight ${
+                (b as { netCard?: boolean }).netCard
+                  ? (b.amount >= 0 ? "text-white" : "text-red-400")
+                  : (b as { debt?: boolean }).debt
+                  ? (b.amount < 0 ? "text-red-600" : b.color)
+                  : b.color
+              }`}>
+                {(b as { debt?: boolean }).debt && b.amount < 0 ? `−${fmtK(-b.amount)}` : fmtK(Math.abs(b.amount))}
+              </p>
+              {(b as { debt?: boolean }).debt && (
+                <p className={`text-xs ${(b as { netCard?: boolean }).netCard ? "text-gray-500" : "text-gray-400"}`}>
+                  owed
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {loading && (
         <div className="bg-white rounded-lg shadow border border-gray-100 p-12 text-center text-gray-400">Loading accounts...</div>
@@ -779,6 +959,60 @@ PLAID_ENV=sandbox`}
           </div>
         </div>
       )}
+
+      {/* SnapTrade brokerage connection cards */}
+      {!loading && snapConnections.map((conn) => {
+        const snapAccounts = accounts.filter((a) => a.snaptrade_connection_id === conn.id);
+        const isSyncing = syncingSnapId === conn.id;
+        const lastSynced = conn.last_synced_at
+          ? new Date(conn.last_synced_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+          : null;
+
+        return (
+          <div key={conn.id} className="bg-white rounded-lg shadow border border-gray-100 mb-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-gray-900">{conn.brokerage_name ?? "Brokerage"}</h3>
+                  <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2 py-0.5 rounded-full font-medium">Via SnapTrade</span>
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {lastSynced ? `Last synced ${lastSynced}` : "Not yet synced"}
+                  {" · "}{conn.account_count} account{conn.account_count !== 1 ? "s" : ""}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleSyncSnapConnection(conn.id)}
+                  disabled={isSyncing}
+                  className="text-xs text-indigo-600 hover:text-indigo-700 border border-indigo-200 hover:border-indigo-400 px-3 py-1.5 rounded-md transition disabled:opacity-50"
+                >
+                  {isSyncing ? "Syncing..." : "↻ Sync"}
+                </button>
+                <button
+                  onClick={() => handleDisconnectSnap(conn.id)}
+                  className="text-xs text-gray-400 hover:text-red-600 border border-gray-200 hover:border-red-300 px-3 py-1.5 rounded-md transition"
+                  title="Disconnect brokerage"
+                >
+                  Disconnect
+                </button>
+              </div>
+            </div>
+
+            {snapAccounts.length === 0 ? (
+              <div className="px-6 py-4 text-sm text-gray-400">No accounts found — click Sync to pull from this brokerage.</div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {snapAccounts.map((acct) => (
+                  <AccountRow key={acct.id} acct={acct} members={members}
+                    onEdit={() => openEdit(acct)}
+                    onDelete={() => { setDeleteTarget(acct); setDeleteError(""); }} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
 
       {/* Plaid-linked institution cards */}
       {!loading && items.map((item) => {

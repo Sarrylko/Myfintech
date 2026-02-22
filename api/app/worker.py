@@ -34,7 +34,17 @@ celery_app.conf.beat_schedule = {
         "task": "app.services.property.refresh_valuations",
         "schedule": crontab(hour=8, minute=0, day_of_week=1),
     },
+    "refresh-investment-prices": {
+        "task": "app.services.price_refresh.refresh_investment_prices",
+        "schedule": crontab(minute="*/5"),  # every 5 min; task handles per-household interval check
+    },
 }
 
-# Auto-discover tasks in services/
-celery_app.autodiscover_tasks(["app.services"])
+# Explicitly include task modules so the worker registers them on startup.
+# autodiscover_tasks() only looks for a "tasks.py" file, which we don't use.
+celery_app.conf.include = [
+    "app.services.price_refresh",
+    "app.services.sync",
+    "app.services.networth",
+    "app.services.property",
+]

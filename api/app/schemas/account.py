@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class AccountResponse(BaseModel):
     id: uuid.UUID
     plaid_item_id: uuid.UUID | None
+    snaptrade_connection_id: uuid.UUID | None = None
     owner_user_id: uuid.UUID | None
     name: str
     official_name: str | None
@@ -111,3 +112,21 @@ class HoldingResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class HoldingCreate(BaseModel):
+    ticker_symbol: str | None = None
+    name: str | None = None
+    quantity: Decimal
+    cost_basis: Decimal | None = None
+    current_value: Decimal | None = None
+    currency_code: str = "USD"
+
+
+class HoldingUpdate(BaseModel):
+    ticker_symbol: str | None = None
+    name: str | None = None
+    quantity: Decimal | None = None
+    cost_basis: Decimal | None = None
+    current_value: Decimal | None = None
+    currency_code: str | None = None

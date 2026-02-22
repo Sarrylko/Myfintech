@@ -13,11 +13,13 @@ from app.models.account import Account, Transaction
 from app.models.property_details import Loan
 from app.models.rule import CategorizationRule
 from app.models.user import User
-from app.models.investment import Holding
+from app.models.investment import Holding, InvestmentTransaction
 from app.schemas.account import (
     AccountResponse,
     AccountUpdate,
+    HoldingCreate,
     HoldingResponse,
+    HoldingUpdate,
     ManualAccountCreate,
     TransactionResponse,
     TransactionUpdate,
@@ -136,6 +138,19 @@ async def delete_account(
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
+
+    # Always delete holdings and investment transactions (no orphan option for these)
+    holdings_result = await db.execute(
+        select(Holding).where(Holding.account_id == account_id)
+    )
+    for holding in holdings_result.scalars().all():
+        await db.delete(holding)
+
+    inv_txns_result = await db.execute(
+        select(InvestmentTransaction).where(InvestmentTransaction.account_id == account_id)
+    )
+    for inv_txn in inv_txns_result.scalars().all():
+        await db.delete(inv_txn)
 
     if delete_transactions:
         # Delete all transactions for this account
@@ -416,3 +431,114 @@ async def update_transaction(
     await db.refresh(txn)
     await db.commit()
     return txn
+
+
+# ─── Holdings CRUD (manual accounts only) ────────────────────────────────────
+
+async def _sync_account_balance(account_id: uuid.UUID, db: AsyncSession) -> None:
+    """Recompute current_balance for a manual account from its holdings total."""
+    result = await db.execute(
+        select(Holding).where(Holding.account_id == account_id)
+    )
+    holdings = result.scalars().all()
+    from decimal import Decimal
+    total = sum(h.current_value or Decimal(0) for h in holdings)
+    acct = await db.get(Account, account_id)
+    if acct and acct.is_manual:
+        acct.current_balance = total
+
+@router.post("/{account_id}/holdings", response_model=HoldingResponse, status_code=201)
+async def create_holding(
+    account_id: uuid.UUID,
+    payload: HoldingCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a manual holding to a manual investment account."""
+    acct_result = await db.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.household_id == user.household_id,
+        )
+    )
+    acct = acct_result.scalar_one_or_none()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if not acct.is_manual:
+        raise HTTPException(
+            status_code=400,
+            detail="Holdings can only be added manually to manual accounts; Plaid accounts are synced automatically.",
+        )
+
+    holding = Holding(
+        account_id=account_id,
+        household_id=user.household_id,
+        ticker_symbol=payload.ticker_symbol,
+        name=payload.name,
+        quantity=payload.quantity,
+        cost_basis=payload.cost_basis,
+        current_value=payload.current_value,
+        currency_code=payload.currency_code,
+        as_of_date=datetime.now(timezone.utc),
+    )
+    db.add(holding)
+    await db.flush()
+    await db.refresh(holding)
+    await _sync_account_balance(account_id, db)
+    await db.commit()
+    return holding
+
+
+@router.patch("/holdings/{holding_id}", response_model=HoldingResponse)
+async def update_holding(
+    holding_id: uuid.UUID,
+    payload: HoldingUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update fields on a manually-managed holding."""
+    result = await db.execute(
+        select(Holding).where(
+            Holding.id == holding_id,
+            Holding.household_id == user.household_id,
+        )
+    )
+    holding = result.scalar_one_or_none()
+    if not holding:
+        raise HTTPException(status_code=404, detail="Holding not found")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(holding, field, value)
+
+    holding.as_of_date = datetime.now(timezone.utc)
+    await db.flush()
+    await db.refresh(holding)
+    if holding.account_id:
+        await _sync_account_balance(holding.account_id, db)
+    await db.commit()
+    return holding
+
+
+@router.delete("/holdings/{holding_id}", status_code=204)
+async def delete_holding(
+    holding_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a holding (manual accounts only)."""
+    result = await db.execute(
+        select(Holding).where(
+            Holding.id == holding_id,
+            Holding.household_id == user.household_id,
+        )
+    )
+    holding = result.scalar_one_or_none()
+    if not holding:
+        raise HTTPException(status_code=404, detail="Holding not found")
+
+    account_id = holding.account_id
+    await db.delete(holding)
+    await db.flush()
+    if account_id:
+        await _sync_account_balance(account_id, db)
+    await db.commit()
