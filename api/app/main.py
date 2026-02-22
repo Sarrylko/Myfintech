@@ -13,7 +13,7 @@ logging.basicConfig(
 
 app = FastAPI(
     title="MyFintech API",
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/docs" if settings.environment == "development" else None,
     redoc_url=None,
 )

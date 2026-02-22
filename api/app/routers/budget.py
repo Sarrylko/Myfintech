@@ -1,9 +1,10 @@
 import uuid
+from calendar import monthrange
 from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import extract, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -53,17 +54,26 @@ _PLAID_PREFIXES: dict[str, list[str]] = {
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
+def _date_range(budget: Budget) -> tuple[date, date]:
+    """Return (start_date, end_date) for a budget based on its type."""
+    if budget.budget_type == "monthly":
+        last = monthrange(budget.year, budget.month)[1]
+        return date(budget.year, budget.month, 1), date(budget.year, budget.month, last)
+    # annual / quarterly / custom all store start_date and end_date
+    return budget.start_date, budget.end_date
+
+
 async def _actual_spent(
     db: AsyncSession,
     household_id: uuid.UUID,
     category_id: uuid.UUID,
     category_name: str,
-    month: int,
-    year: int,
+    start_date: date,
+    end_date: date,
     is_income: bool,
 ) -> Decimal:
     """
-    Compute absolute spending for a budget category in a given month/year.
+    Compute absolute spending for a budget category within a date range.
 
     Matches transactions by:
       1. custom_category_id (explicitly tagged by the user), OR
@@ -97,8 +107,8 @@ async def _actual_spent(
             Transaction.household_id == household_id,
             category_match,
             Transaction.is_ignored == False,  # noqa: E712
-            extract("month", Transaction.date) == month,
-            extract("year", Transaction.date) == year,
+            Transaction.date >= start_date,
+            Transaction.date <= end_date,
             amount_filter,
         )
     )
@@ -110,9 +120,10 @@ async def _enrich(
     db: AsyncSession,
     household_id: uuid.UUID,
 ) -> BudgetWithActualResponse:
+    start, end = _date_range(budget)
     spent = await _actual_spent(
         db, household_id, budget.category_id,
-        budget.category.name, budget.month, budget.year, budget.category.is_income,
+        budget.category.name, start, end, budget.category.is_income,
     )
     remaining = budget.amount - spent
     percent = (spent / budget.amount * 100) if budget.amount else Decimal("0")
@@ -122,8 +133,11 @@ async def _enrich(
         category_id=budget.category_id,
         category=budget.category,
         amount=budget.amount,
+        budget_type=budget.budget_type,
         month=budget.month,
         year=budget.year,
+        start_date=budget.start_date,
+        end_date=budget.end_date,
         rollover_enabled=budget.rollover_enabled,
         alert_threshold=budget.alert_threshold,
         created_at=budget.created_at,
@@ -131,6 +145,19 @@ async def _enrich(
         remaining=remaining,
         percent_used=percent.quantize(Decimal("0.01")),
     )
+
+
+def _duplicate_filters(item: BudgetCreate, household_id: uuid.UUID):
+    """Return SQLAlchemy WHERE conditions to detect a duplicate budget."""
+    base = [Budget.household_id == household_id, Budget.category_id == item.category_id]
+    if item.budget_type.value == "monthly":
+        return base + [Budget.month == item.month, Budget.year == item.year,
+                       Budget.budget_type == "monthly"]
+    elif item.budget_type.value == "annual":
+        return base + [Budget.budget_type == "annual", Budget.year == item.year]
+    else:
+        # quarterly / custom — match on exact date range
+        return base + [Budget.start_date == item.start_date, Budget.end_date == item.end_date]
 
 
 # ─── POST /budgets/bulk (BEFORE /{id} to avoid path collision) ────────────────
@@ -145,12 +172,7 @@ async def create_budgets_bulk(
     created = []
     for item in payload.budgets:
         existing = await db.execute(
-            select(Budget).where(
-                Budget.household_id == user.household_id,
-                Budget.category_id == item.category_id,
-                Budget.month == item.month,
-                Budget.year == item.year,
-            )
+            select(Budget).where(*_duplicate_filters(item, user.household_id))
         )
         if existing.scalar_one_or_none():
             continue
@@ -159,8 +181,11 @@ async def create_budgets_bulk(
             household_id=user.household_id,
             category_id=item.category_id,
             amount=item.amount,
+            budget_type=item.budget_type.value,
             month=item.month,
             year=item.year,
+            start_date=item.start_date,
+            end_date=item.end_date,
             rollover_enabled=item.rollover_enabled,
             alert_threshold=item.alert_threshold,
         )
@@ -185,7 +210,7 @@ async def copy_from_last_month(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Copy all budgets from previous month into target month/year. Skips existing."""
+    """Copy all monthly budgets from previous month into target month/year. Skips existing."""
     if month == 1:
         prev_month, prev_year = 12, year - 1
     else:
@@ -194,6 +219,7 @@ async def copy_from_last_month(
     prev_result = await db.execute(
         select(Budget).where(
             Budget.household_id == user.household_id,
+            Budget.budget_type == "monthly",
             Budget.month == prev_month,
             Budget.year == prev_year,
         )
@@ -212,6 +238,7 @@ async def copy_from_last_month(
             select(Budget).where(
                 Budget.household_id == user.household_id,
                 Budget.category_id == src.category_id,
+                Budget.budget_type == "monthly",
                 Budget.month == month,
                 Budget.year == year,
             )
@@ -223,6 +250,7 @@ async def copy_from_last_month(
             household_id=user.household_id,
             category_id=src.category_id,
             amount=src.amount,
+            budget_type="monthly",
             month=month,
             year=year,
             rollover_enabled=src.rollover_enabled,
@@ -242,22 +270,38 @@ async def copy_from_last_month(
 async def list_budgets(
     month: int | None = Query(default=None, ge=1, le=12),
     year: int | None = Query(default=None, ge=2000),
+    budget_type: str | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     today = date.today()
-    if month is None:
-        month = today.month
-    if year is None:
-        year = today.year
 
-    result = await db.execute(
-        select(Budget).where(
-            Budget.household_id == user.household_id,
-            Budget.month == month,
-            Budget.year == year,
+    if budget_type and budget_type != "monthly":
+        # Long-term view: return all non-monthly budgets for the given year
+        if year is None:
+            year = today.year
+        result = await db.execute(
+            select(Budget).where(
+                Budget.household_id == user.household_id,
+                Budget.budget_type != "monthly",
+                Budget.year == year,
+            )
         )
-    )
+    else:
+        # Monthly view (default)
+        if month is None:
+            month = today.month
+        if year is None:
+            year = today.year
+        result = await db.execute(
+            select(Budget).where(
+                Budget.household_id == user.household_id,
+                Budget.budget_type == "monthly",
+                Budget.month == month,
+                Budget.year == year,
+            )
+        )
+
     budgets = result.scalars().all()
     return [await _enrich(b, db, user.household_id) for b in budgets]
 
@@ -271,12 +315,7 @@ async def create_budget(
     db: AsyncSession = Depends(get_db),
 ):
     existing = await db.execute(
-        select(Budget).where(
-            Budget.household_id == user.household_id,
-            Budget.category_id == payload.category_id,
-            Budget.month == payload.month,
-            Budget.year == payload.year,
-        )
+        select(Budget).where(*_duplicate_filters(payload, user.household_id))
     )
     if existing.scalar_one_or_none():
         raise HTTPException(
@@ -288,8 +327,11 @@ async def create_budget(
         household_id=user.household_id,
         category_id=payload.category_id,
         amount=payload.amount,
+        budget_type=payload.budget_type.value,
         month=payload.month,
         year=payload.year,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
         rollover_enabled=payload.rollover_enabled,
         alert_threshold=payload.alert_threshold,
     )

@@ -3,12 +3,14 @@
 import { useState, useEffect, useRef } from "react";
 import {
   listBudgets,
+  listLongTermBudgets,
   createBudgetsBulk,
   updateBudget,
   deleteBudget,
   copyBudgetsFromLastMonth,
   listCustomCategories,
   seedDefaultCategories,
+  BudgetType,
   BudgetWithActual,
   BudgetUpdate,
   CustomCategory,
@@ -20,6 +22,13 @@ const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
+
+const QUARTER_RANGES: Record<number, [string, string]> = {
+  1: ["-01-01", "-03-31"],
+  2: ["-04-01", "-06-30"],
+  3: ["-07-01", "-09-30"],
+  4: ["-10-01", "-12-31"],
+};
 
 function navigateMonth(month: number, year: number, dir: -1 | 1) {
   let m = month + dir;
@@ -40,7 +49,31 @@ function getToken(): string {
   return localStorage.getItem("access_token") ?? "";
 }
 
+function formatBudgetPeriod(b: BudgetWithActual): string {
+  if (b.budget_type === "monthly") {
+    return `${MONTH_NAMES[(b.month ?? 1) - 1]} ${b.year}`;
+  }
+  if (b.budget_type === "annual") {
+    return `${b.year} (Full Year)`;
+  }
+  if (b.budget_type === "quarterly" && b.start_date) {
+    const q = Math.floor(new Date(b.start_date + "T00:00:00").getMonth() / 3) + 1;
+    return `Q${q} ${b.year}`;
+  }
+  // custom
+  if (b.start_date && b.end_date) {
+    const s = new Date(b.start_date + "T00:00:00");
+    const e = new Date(b.end_date + "T00:00:00");
+    const fmtDate = (d: Date) =>
+      d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return `${fmtDate(s)} – ${fmtDate(e)}, ${b.year}`;
+  }
+  return "";
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+type ViewTab = "monthly" | "longterm";
 
 interface WizardAmountEntry {
   categoryId: string;
@@ -52,8 +85,12 @@ interface WizardAmountEntry {
 
 interface WizardState {
   step: 1 | 2 | 3 | 4;
+  budgetType: BudgetType;
   month: number;
   year: number;
+  quarter: number;      // 1-4, used when budgetType=quarterly
+  startDate: string;    // ISO date for custom/quarterly/annual
+  endDate: string;      // ISO date for custom/quarterly/annual
   selectedCategoryIds: Set<string>;
   amounts: WizardAmountEntry[];
 }
@@ -98,10 +135,12 @@ function ProgressBar({ pct, alertThreshold }: { pct: number; alertThreshold: num
 
 function BudgetRow({
   budget,
+  showPeriod,
   onEdit,
   onDelete,
 }: {
   budget: BudgetWithActual;
+  showPeriod?: boolean;
   onEdit: (b: BudgetWithActual) => void;
   onDelete: (id: string) => void;
 }) {
@@ -122,6 +161,9 @@ function BudgetRow({
         </div>
         <div className="min-w-0">
           <p className="text-sm font-medium text-gray-900 truncate">{budget.category.name}</p>
+          {showPeriod && (
+            <p className="text-xs text-gray-400">{formatBudgetPeriod(budget)}</p>
+          )}
           {isAtAlert && (
             <p className="text-xs text-yellow-600 flex items-center gap-1">⚠ {budget.alert_threshold}% threshold</p>
           )}
@@ -182,11 +224,13 @@ function BudgetRow({
 function BudgetGroup({
   title,
   budgets,
+  showPeriod,
   onEdit,
   onDelete,
 }: {
   title: string;
   budgets: BudgetWithActual[];
+  showPeriod?: boolean;
   onEdit: (b: BudgetWithActual) => void;
   onDelete: (id: string) => void;
 }) {
@@ -196,7 +240,7 @@ function BudgetGroup({
         <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
       </div>
       {budgets.map((b) => (
-        <BudgetRow key={b.id} budget={b} onEdit={onEdit} onDelete={onDelete} />
+        <BudgetRow key={b.id} budget={b} showPeriod={showPeriod} onEdit={onEdit} onDelete={onDelete} />
       ))}
     </div>
   );
@@ -211,7 +255,7 @@ function EmptyState({ onCreateClick }: { onCreateClick: () => void }) {
         </svg>
       </div>
       <p className="text-gray-700 font-semibold text-lg mb-1">No budgets set up yet</p>
-      <p className="text-gray-400 text-sm mb-6">Create monthly budgets by category to track your spending goals.</p>
+      <p className="text-gray-400 text-sm mb-6">Create budgets by category to track your spending goals.</p>
       <button
         onClick={onCreateClick}
         className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition"
@@ -262,34 +306,190 @@ function StepIndicator({ step }: { step: number }) {
 }
 
 function WizardStep1({ wizard, setWizard, onNext }: { wizard: WizardState; setWizard: React.Dispatch<React.SetStateAction<WizardState>>; onNext: () => void }) {
+  const BUDGET_TYPES: { value: BudgetType; label: string; desc: string }[] = [
+    { value: "monthly", label: "Monthly", desc: "Track spending for a single month" },
+    { value: "annual", label: "Annual", desc: "Plan for an entire year" },
+    { value: "quarterly", label: "Quarterly", desc: "Budget by quarter (Q1–Q4)" },
+    { value: "custom", label: "Custom", desc: "Any date range you choose" },
+  ];
+
+  function handleTypeChange(type: BudgetType) {
+    setWizard((prev) => {
+      const year = prev.year;
+      let startDate = prev.startDate;
+      let endDate = prev.endDate;
+      // Reset dates on type change
+      if (type === "quarterly") {
+        startDate = `${year}${QUARTER_RANGES[prev.quarter][0]}`;
+        endDate = `${year}${QUARTER_RANGES[prev.quarter][1]}`;
+      } else if (type === "annual") {
+        startDate = `${year}-01-01`;
+        endDate = `${year}-12-31`;
+      } else {
+        startDate = "";
+        endDate = "";
+      }
+      return { ...prev, budgetType: type, startDate, endDate };
+    });
+  }
+
+  function handleQuarterChange(q: number) {
+    setWizard((prev) => ({
+      ...prev,
+      quarter: q,
+      startDate: `${prev.year}${QUARTER_RANGES[q][0]}`,
+      endDate: `${prev.year}${QUARTER_RANGES[q][1]}`,
+    }));
+  }
+
+  function handleYearChange(year: number) {
+    setWizard((prev) => {
+      let startDate = prev.startDate;
+      let endDate = prev.endDate;
+      if (prev.budgetType === "quarterly") {
+        startDate = `${year}${QUARTER_RANGES[prev.quarter][0]}`;
+        endDate = `${year}${QUARTER_RANGES[prev.quarter][1]}`;
+      } else if (prev.budgetType === "annual") {
+        startDate = `${year}-01-01`;
+        endDate = `${year}-12-31`;
+      }
+      return { ...prev, year, startDate, endDate };
+    });
+  }
+
+  const canProceed =
+    wizard.budgetType === "monthly"
+      ? wizard.month >= 1 && wizard.year >= 2000
+      : wizard.budgetType === "custom"
+      ? !!wizard.startDate && !!wizard.endDate && wizard.endDate >= wizard.startDate
+      : wizard.year >= 2000; // annual & quarterly always valid once year set
+
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-gray-500">Which month would you like to budget for?</p>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Month</label>
-          <select
-            value={wizard.month}
-            onChange={(e) => setWizard((p) => ({ ...p, month: Number(e.target.value) }))}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {MONTH_NAMES.map((name, i) => <option key={i + 1} value={i + 1}>{name}</option>)}
-          </select>
+    <div className="space-y-5">
+      {/* Budget type selector */}
+      <div>
+        <p className="text-xs font-medium text-gray-600 mb-2">Budget Type</p>
+        <div className="grid grid-cols-2 gap-2">
+          {BUDGET_TYPES.map(({ value, label, desc }) => (
+            <button
+              key={value}
+              onClick={() => handleTypeChange(value)}
+              className={`text-left px-3 py-2.5 rounded-lg border text-sm transition ${wizard.budgetType === value ? "border-blue-600 bg-blue-50 text-blue-700" : "border-gray-200 hover:border-blue-300 bg-white text-gray-700"}`}
+            >
+              <p className="font-medium">{label}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
+            </button>
+          ))}
         </div>
+      </div>
+
+      {/* Period picker — varies by type */}
+      {wizard.budgetType === "monthly" && (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Month</label>
+            <select
+              value={wizard.month}
+              onChange={(e) => setWizard((p) => ({ ...p, month: Number(e.target.value) }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {MONTH_NAMES.map((name, i) => <option key={i + 1} value={i + 1}>{name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Year</label>
+            <input
+              type="number"
+              value={wizard.year}
+              onChange={(e) => setWizard((p) => ({ ...p, year: Number(e.target.value) }))}
+              min={2020}
+              max={2035}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+      )}
+
+      {wizard.budgetType === "annual" && (
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Year</label>
           <input
             type="number"
             value={wizard.year}
-            onChange={(e) => setWizard((p) => ({ ...p, year: Number(e.target.value) }))}
+            onChange={(e) => handleYearChange(Number(e.target.value))}
             min={2020}
             max={2035}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+          <p className="text-xs text-gray-400 mt-1">Covers Jan 1 – Dec 31, {wizard.year}</p>
         </div>
-      </div>
+      )}
+
+      {wizard.budgetType === "quarterly" && (
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Year</label>
+            <input
+              type="number"
+              value={wizard.year}
+              onChange={(e) => handleYearChange(Number(e.target.value))}
+              min={2020}
+              max={2035}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-2">Quarter</label>
+            <div className="grid grid-cols-4 gap-2">
+              {[1, 2, 3, 4].map((q) => (
+                <button
+                  key={q}
+                  onClick={() => handleQuarterChange(q)}
+                  className={`py-2 rounded-lg border text-sm font-medium transition ${wizard.quarter === q ? "border-blue-600 bg-blue-50 text-blue-700" : "border-gray-200 hover:border-blue-300 bg-white text-gray-700"}`}
+                >
+                  Q{q}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              {wizard.startDate && wizard.endDate
+                ? `${new Date(wizard.startDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(wizard.endDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                : ""}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {wizard.budgetType === "custom" && (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Start Date</label>
+            <input
+              type="date"
+              value={wizard.startDate}
+              onChange={(e) => setWizard((p) => ({ ...p, startDate: e.target.value, year: e.target.value ? new Date(e.target.value).getFullYear() : p.year }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">End Date</label>
+            <input
+              type="date"
+              value={wizard.endDate}
+              min={wizard.startDate}
+              onChange={(e) => setWizard((p) => ({ ...p, endDate: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-end pt-2">
-        <button onClick={onNext} className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-5 py-2 rounded-lg transition">
+        <button
+          onClick={onNext}
+          disabled={!canProceed}
+          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-5 py-2 rounded-lg transition"
+        >
           Next →
         </button>
       </div>
@@ -325,6 +525,17 @@ function WizardStep2({
     });
   }
 
+  function periodLabel(): string {
+    if (wizard.budgetType === "monthly") return `${MONTH_NAMES[wizard.month - 1]} ${wizard.year}`;
+    if (wizard.budgetType === "annual") return `${wizard.year} (Full Year)`;
+    if (wizard.budgetType === "quarterly") {
+      return `Q${wizard.quarter} ${wizard.year}`;
+    }
+    return wizard.startDate && wizard.endDate
+      ? `${wizard.startDate} to ${wizard.endDate}`
+      : "custom period";
+  }
+
   function CategoryChip({ cat }: { cat: CustomCategory }) {
     const alreadySet = existingCategoryIds.has(cat.id);
     const selected = wizard.selectedCategoryIds.has(cat.id);
@@ -347,7 +558,7 @@ function WizardStep2({
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-500">
-        Select categories to budget for <strong>{MONTH_NAMES[wizard.month - 1]} {wizard.year}</strong>.
+        Select categories to budget for <strong>{periodLabel()}</strong>.
       </p>
       {expenseCategories.length > 0 && (
         <div>
@@ -421,9 +632,17 @@ function WizardStep3({
 
   const hasAnyAmount = wizard.amounts.some((a) => parseFloat(a.amount) > 0);
 
+  const periodLabel = wizard.budgetType === "monthly"
+    ? "monthly limit"
+    : wizard.budgetType === "annual"
+    ? "annual limit"
+    : wizard.budgetType === "quarterly"
+    ? `Q${wizard.quarter} limit`
+    : "budget limit";
+
   return (
     <div className="space-y-3">
-      <p className="text-sm text-gray-500">Set a monthly limit for each selected category.</p>
+      <p className="text-sm text-gray-500">Set a {periodLabel} for each selected category.</p>
       {wizard.amounts.map((entry) => {
         const cat = catMap.get(entry.categoryId);
         if (!cat) return null;
@@ -458,7 +677,7 @@ function WizardStep3({
                 <label className="flex items-center justify-between text-sm">
                   <div>
                     <span className="text-gray-700 font-medium">Roll over unspent amount</span>
-                    <p className="text-xs text-gray-400">Carry remainder to next month</p>
+                    <p className="text-xs text-gray-400">Carry remainder to next period</p>
                   </div>
                   <input
                     type="checkbox"
@@ -517,6 +736,15 @@ function WizardStep4({
   const validEntries = wizard.amounts.filter((a) => parseFloat(a.amount) > 0);
   const total = validEntries.reduce((s, e) => s + parseFloat(e.amount), 0);
 
+  function periodLabel(): string {
+    if (wizard.budgetType === "monthly") return `${MONTH_NAMES[wizard.month - 1]} ${wizard.year}`;
+    if (wizard.budgetType === "annual") return `${wizard.year} (Full Year)`;
+    if (wizard.budgetType === "quarterly") return `Q${wizard.quarter} ${wizard.year}`;
+    return wizard.startDate && wizard.endDate
+      ? `${wizard.startDate} to ${wizard.endDate}`
+      : "custom period";
+  }
+
   if (validEntries.length === 0) {
     return (
       <div className="text-center py-8">
@@ -529,7 +757,7 @@ function WizardStep4({
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-500">
-        Review your budgets for <strong>{MONTH_NAMES[wizard.month - 1]} {wizard.year}</strong>
+        Review your budgets for <strong>{periodLabel()}</strong>
       </p>
       <div className="border border-gray-200 rounded-xl divide-y divide-gray-100">
         {validEntries.map((entry) => {
@@ -586,11 +814,16 @@ function EditModal({
   const [rollover, setRollover] = useState(budget.rollover_enabled);
   const [threshold, setThreshold] = useState(budget.alert_threshold);
 
+  const periodLabel = formatBudgetPeriod(budget);
+
   return (
     <ModalShell title={`Edit — ${budget.category.name}`} onClose={onClose}>
       <div className="space-y-4">
+        {periodLabel && (
+          <p className="text-xs text-gray-400 -mt-1">{periodLabel}</p>
+        )}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Monthly Budget</label>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Budget Amount</label>
           <div className="flex items-center gap-2">
             <span className="text-gray-400 text-sm">$</span>
             <input
@@ -606,7 +839,7 @@ function EditModal({
         <label className="flex items-center justify-between text-sm py-2">
           <div>
             <span className="text-gray-700 font-medium">Roll over unspent amount</span>
-            <p className="text-xs text-gray-400">Carry remainder to next month</p>
+            <p className="text-xs text-gray-400">Carry remainder to next period</p>
           </div>
           <input
             type="checkbox"
@@ -648,10 +881,115 @@ function EditModal({
   );
 }
 
+// ─── Long-term Tab View ───────────────────────────────────────────────────────
+
+function LongTermView({
+  onEdit,
+  onDelete,
+  onCreateClick,
+}: {
+  onEdit: (b: BudgetWithActual) => void;
+  onDelete: (id: string) => void;
+  onCreateClick: () => void;
+}) {
+  const today = new Date();
+  const [ltYear, setLtYear] = useState(today.getFullYear());
+  const [ltBudgets, setLtBudgets] = useState<BudgetWithActual[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    setLoading(true);
+    setError("");
+    listLongTermBudgets(ltYear, token)
+      .then(setLtBudgets)
+      .catch((e) => setError(e.message ?? "Failed to load budgets"))
+      .finally(() => setLoading(false));
+  }, [ltYear]);
+
+  const annualBudgets = ltBudgets.filter((b) => b.budget_type === "annual");
+  const quarterlyBudgets = ltBudgets
+    .filter((b) => b.budget_type === "quarterly")
+    .sort((a, b) => (a.start_date ?? "") < (b.start_date ?? "") ? -1 : 1);
+  const customBudgets = ltBudgets
+    .filter((b) => b.budget_type === "custom")
+    .sort((a, b) => (a.start_date ?? "") < (b.start_date ?? "") ? -1 : 1);
+
+  const totalBudgeted = ltBudgets.reduce((s, b) => s + parseFloat(b.amount), 0);
+  const totalSpent = ltBudgets.reduce((s, b) => s + parseFloat(b.actual_spent), 0);
+  const totalRemaining = totalBudgeted - totalSpent;
+
+  return (
+    <div>
+      {/* Year navigation */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+          <button
+            onClick={() => setLtYear((y) => y - 1)}
+            className="px-3 py-2 hover:bg-gray-50 text-gray-500 hover:text-blue-600 transition text-lg leading-none"
+          >‹</button>
+          <span className="text-sm font-semibold px-4 min-w-[80px] text-center text-gray-700">{ltYear}</span>
+          <button
+            onClick={() => setLtYear((y) => y + 1)}
+            className="px-3 py-2 hover:bg-gray-50 text-gray-500 hover:text-blue-600 transition text-lg leading-none"
+          >›</button>
+        </div>
+        <button
+          onClick={onCreateClick}
+          className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg shadow-sm transition"
+        >
+          + Create Budget
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-12 text-center text-gray-400">
+          Loading budgets…
+        </div>
+      ) : ltBudgets.length === 0 ? (
+        <EmptyState onCreateClick={onCreateClick} />
+      ) : (
+        <>
+          {/* Summary cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <SummaryCard label="Total Budgeted" value={totalBudgeted} valueColor="text-gray-900" />
+            <SummaryCard label="Total Spent" value={totalSpent} valueColor="text-gray-900" />
+            <SummaryCard
+              label="Remaining"
+              value={Math.abs(totalRemaining)}
+              valueColor={totalRemaining < 0 ? "text-red-600" : "text-green-600"}
+              subtext={totalRemaining < 0 ? "over total budget" : "left to spend"}
+            />
+          </div>
+
+          {annualBudgets.length > 0 && (
+            <BudgetGroup title="Annual Budgets" budgets={annualBudgets} showPeriod onEdit={onEdit} onDelete={onDelete} />
+          )}
+          {quarterlyBudgets.length > 0 && (
+            <BudgetGroup title="Quarterly Budgets" budgets={quarterlyBudgets} showPeriod onEdit={onEdit} onDelete={onDelete} />
+          )}
+          {customBudgets.length > 0 && (
+            <BudgetGroup title="Custom Budgets" budgets={customBudgets} showPeriod onEdit={onEdit} onDelete={onDelete} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function BudgetsPage() {
   const today = new Date();
+  const [activeTab, setActiveTab] = useState<ViewTab>("monthly");
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [year, setYear] = useState(today.getFullYear());
   const [budgets, setBudgets] = useState<BudgetWithActual[]>([]);
@@ -665,8 +1003,12 @@ export default function BudgetsPage() {
   const [showWizard, setShowWizard] = useState(false);
   const [wizard, setWizard] = useState<WizardState>({
     step: 1,
+    budgetType: "monthly",
     month: today.getMonth() + 1,
     year: today.getFullYear(),
+    quarter: 1,
+    startDate: "",
+    endDate: "",
     selectedCategoryIds: new Set(),
     amounts: [],
   });
@@ -691,6 +1033,13 @@ export default function BudgetsPage() {
       .finally(() => setLoading(false));
   }, [month, year]);
 
+  // Load categories independently for wizard when switching tabs
+  useEffect(() => {
+    const token = getToken();
+    if (!token || categories.length > 0) return;
+    listCustomCategories(token).then(setCategories).catch(() => {});
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const expenseBudgets = budgets.filter((b) => !b.category.is_income);
   const incomeBudgets = budgets.filter((b) => b.category.is_income);
   const existingCategoryIds = new Set(budgets.map((b) => b.category_id));
@@ -701,7 +1050,18 @@ export default function BudgetsPage() {
   const overBudgetCount = budgets.filter((b) => parseFloat(b.remaining) < 0).length;
 
   function openWizard() {
-    setWizard({ step: 1, month, year, selectedCategoryIds: new Set(), amounts: [] });
+    const defaultType: BudgetType = activeTab === "longterm" ? "annual" : "monthly";
+    setWizard({
+      step: 1,
+      budgetType: defaultType,
+      month,
+      year,
+      quarter: 1,
+      startDate: defaultType === "annual" ? `${year}-01-01` : "",
+      endDate: defaultType === "annual" ? `${year}-12-31` : "",
+      selectedCategoryIds: new Set(),
+      amounts: [],
+    });
     setShowWizard(true);
   }
 
@@ -734,15 +1094,19 @@ export default function BudgetsPage() {
           budgets: validEntries.map((e) => ({
             category_id: e.categoryId,
             amount: parseFloat(e.amount),
-            month: wizard.month,
+            budget_type: wizard.budgetType,
             year: wizard.year,
+            ...(wizard.budgetType === "monthly"
+              ? { month: wizard.month }
+              : { start_date: wizard.startDate, end_date: wizard.endDate }),
             rollover_enabled: e.rolloverEnabled,
             alert_threshold: e.alertThreshold,
           })),
         },
         token
       );
-      if (wizard.month === month && wizard.year === year) {
+      // Update monthly budgets list if we created monthly budgets for the current view
+      if (wizard.budgetType === "monthly" && wizard.month === month && wizard.year === year) {
         setBudgets((prev) => [...prev, ...newBudgets]);
       }
       setShowWizard(false);
@@ -824,37 +1188,24 @@ export default function BudgetsPage() {
   return (
     <div>
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <div className="flex items-center gap-4">
-          <h2 className="text-2xl font-bold text-gray-900">Budgets</h2>
-          <div className="flex items-center bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-            <button
-              onClick={() => { const n = navigateMonth(month, year, -1); setMonth(n.month); setYear(n.year); }}
-              className="px-3 py-2 hover:bg-gray-50 text-gray-500 hover:text-blue-600 transition text-lg leading-none"
-            >‹</button>
-            <span className="text-sm font-semibold px-3 min-w-[140px] text-center text-gray-700">
-              {MONTH_NAMES[month - 1]} {year}
-            </span>
-            <button
-              onClick={() => { const n = navigateMonth(month, year, 1); setMonth(n.month); setYear(n.year); }}
-              className="px-3 py-2 hover:bg-gray-50 text-gray-500 hover:text-blue-600 transition text-lg leading-none"
-            >›</button>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleCopyFromLastMonth}
-            className="text-sm text-gray-600 border border-gray-200 bg-white px-3 py-2 rounded-lg hover:bg-gray-50 shadow-sm transition"
-          >
-            Copy from Last Month
-          </button>
-          <button
-            onClick={openWizard}
-            className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg shadow-sm transition"
-          >
-            + Create Budget
-          </button>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h2 className="text-2xl font-bold text-gray-900">Budgets</h2>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-xl w-fit">
+        <button
+          onClick={() => setActiveTab("monthly")}
+          className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${activeTab === "monthly" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+        >
+          Monthly
+        </button>
+        <button
+          onClick={() => setActiveTab("longterm")}
+          className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${activeTab === "longterm" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+        >
+          Long-term
+        </button>
       </div>
 
       {/* Banners */}
@@ -870,41 +1221,86 @@ export default function BudgetsPage() {
         </div>
       )}
 
-      {/* Summary cards */}
-      {budgets.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <SummaryCard label="Total Budgeted" value={totalBudgeted} valueColor="text-gray-900" />
-          <SummaryCard
-            label="Total Spent"
-            value={totalSpent}
-            valueColor={overBudgetCount > 0 ? "text-red-600" : "text-gray-900"}
-            subtext={overBudgetCount > 0 ? `${overBudgetCount} category${overBudgetCount !== 1 ? "s" : ""} over budget` : undefined}
-          />
-          <SummaryCard
-            label="Remaining"
-            value={Math.abs(totalRemaining)}
-            valueColor={totalRemaining < 0 ? "text-red-600" : "text-green-600"}
-            subtext={totalRemaining < 0 ? "over total budget" : "left to spend"}
-          />
-        </div>
-      )}
-
-      {/* Budget list */}
-      {loading ? (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-12 text-center text-gray-400">
-          Loading budgets…
-        </div>
-      ) : budgets.length === 0 ? (
-        <EmptyState onCreateClick={openWizard} />
-      ) : (
+      {/* ── Monthly Tab ── */}
+      {activeTab === "monthly" && (
         <>
-          {expenseBudgets.length > 0 && (
-            <BudgetGroup title="Expense Budgets" budgets={expenseBudgets} onEdit={setEditingBudget} onDelete={handleDelete} />
+          {/* Month/year nav + actions */}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+            <div className="flex items-center bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+              <button
+                onClick={() => { const n = navigateMonth(month, year, -1); setMonth(n.month); setYear(n.year); }}
+                className="px-3 py-2 hover:bg-gray-50 text-gray-500 hover:text-blue-600 transition text-lg leading-none"
+              >‹</button>
+              <span className="text-sm font-semibold px-3 min-w-[140px] text-center text-gray-700">
+                {MONTH_NAMES[month - 1]} {year}
+              </span>
+              <button
+                onClick={() => { const n = navigateMonth(month, year, 1); setMonth(n.month); setYear(n.year); }}
+                className="px-3 py-2 hover:bg-gray-50 text-gray-500 hover:text-blue-600 transition text-lg leading-none"
+              >›</button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCopyFromLastMonth}
+                className="text-sm text-gray-600 border border-gray-200 bg-white px-3 py-2 rounded-lg hover:bg-gray-50 shadow-sm transition"
+              >
+                Copy from Last Month
+              </button>
+              <button
+                onClick={openWizard}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg shadow-sm transition"
+              >
+                + Create Budget
+              </button>
+            </div>
+          </div>
+
+          {/* Summary cards */}
+          {budgets.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <SummaryCard label="Total Budgeted" value={totalBudgeted} valueColor="text-gray-900" />
+              <SummaryCard
+                label="Total Spent"
+                value={totalSpent}
+                valueColor={overBudgetCount > 0 ? "text-red-600" : "text-gray-900"}
+                subtext={overBudgetCount > 0 ? `${overBudgetCount} category${overBudgetCount !== 1 ? "s" : ""} over budget` : undefined}
+              />
+              <SummaryCard
+                label="Remaining"
+                value={Math.abs(totalRemaining)}
+                valueColor={totalRemaining < 0 ? "text-red-600" : "text-green-600"}
+                subtext={totalRemaining < 0 ? "over total budget" : "left to spend"}
+              />
+            </div>
           )}
-          {incomeBudgets.length > 0 && (
-            <BudgetGroup title="Income Budgets" budgets={incomeBudgets} onEdit={setEditingBudget} onDelete={handleDelete} />
+
+          {/* Budget list */}
+          {loading ? (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-12 text-center text-gray-400">
+              Loading budgets…
+            </div>
+          ) : budgets.length === 0 ? (
+            <EmptyState onCreateClick={openWizard} />
+          ) : (
+            <>
+              {expenseBudgets.length > 0 && (
+                <BudgetGroup title="Expense Budgets" budgets={expenseBudgets} onEdit={setEditingBudget} onDelete={handleDelete} />
+              )}
+              {incomeBudgets.length > 0 && (
+                <BudgetGroup title="Income Budgets" budgets={incomeBudgets} onEdit={setEditingBudget} onDelete={handleDelete} />
+              )}
+            </>
           )}
         </>
+      )}
+
+      {/* ── Long-term Tab ── */}
+      {activeTab === "longterm" && (
+        <LongTermView
+          onEdit={setEditingBudget}
+          onDelete={handleDelete}
+          onCreateClick={openWizard}
+        />
       )}
 
       {/* Wizard */}
@@ -917,7 +1313,11 @@ export default function BudgetsPage() {
               wizard={wizard}
               setWizard={setWizard}
               categories={categories}
-              existingCategoryIds={wizard.month === month && wizard.year === year ? existingCategoryIds : new Set()}
+              existingCategoryIds={
+                wizard.budgetType === "monthly" && wizard.month === month && wizard.year === year
+                  ? existingCategoryIds
+                  : new Set()
+              }
               onBack={wizardBack}
               onNext={wizardNext}
               onSeedCategories={handleSeedCategories}

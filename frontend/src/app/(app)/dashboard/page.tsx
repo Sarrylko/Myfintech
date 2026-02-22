@@ -1,55 +1,474 @@
-export default function Dashboard() {
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import {
+  listAccounts,
+  listBudgets,
+  listLongTermBudgets,
+  listAllTransactions,
+  listProperties,
+  Account,
+  BudgetWithActual,
+  Transaction,
+  Property,
+} from "@/lib/api";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function getToken(): string {
+  return localStorage.getItem("access_token") ?? "";
+}
+
+function fmt(value: number, showSign = false): string {
+  const formatted = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(Math.abs(value));
+  if (showSign && value < 0) return `-${formatted}`;
+  return formatted;
+}
+
+function fmtDate(dateStr: string): string {
+  return new Date(dateStr + "T00:00:00").toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function formatBudgetPeriodShort(b: BudgetWithActual): string {
+  const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  if (b.budget_type === "annual") return `${b.year} (Full Year)`;
+  if (b.budget_type === "quarterly" && b.start_date) {
+    const q = Math.floor(new Date(b.start_date + "T00:00:00").getMonth() / 3) + 1;
+    return `Q${q} ${b.year}`;
+  }
+  if (b.budget_type === "custom" && b.start_date && b.end_date) {
+    return `${fmtDate(b.start_date)} – ${fmtDate(b.end_date)}`;
+  }
+  return `${MONTH_NAMES[(b.month ?? 1) - 1]} ${b.year}`;
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function NetWorthCard({
+  label,
+  value,
+  subtext,
+  color = "text-gray-900",
+  icon,
+}: {
+  label: string;
+  value: number;
+  subtext?: string;
+  color?: string;
+  icon: React.ReactNode;
+}) {
   return (
-    <div>
-      <h2 className="text-2xl font-bold mb-6">Dashboard</h2>
-
-      {/* Net Worth Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <SummaryCard title="Net Worth" value="—" />
-        <SummaryCard title="Cash" value="—" />
-        <SummaryCard title="Investments" value="—" />
-        <SummaryCard title="Real Estate" value="—" />
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-gray-400">{icon}</span>
+        <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{label}</p>
       </div>
+      <p className={`text-2xl font-bold ${color}`}>{fmt(value)}</p>
+      {subtext && <p className="text-xs text-gray-400 mt-1">{subtext}</p>}
+    </div>
+  );
+}
 
-      {/* Placeholder sections */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg shadow p-6 border border-gray-100">
-          <h3 className="font-semibold text-lg mb-4">Net Worth Over Time</h3>
-          <div className="h-64 flex items-center justify-center text-gray-400">
-            Chart will render here after account linking
-          </div>
-        </div>
+function MiniProgressBar({ pct, alertThreshold }: { pct: number; alertThreshold: number }) {
+  const clamped = Math.min(pct, 100);
+  let color = "bg-green-500";
+  if (pct >= 100) color = "bg-red-500";
+  else if (pct >= alertThreshold) color = "bg-yellow-400";
+  return (
+    <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+      <div className={`h-full rounded-full ${color}`} style={{ width: `${clamped}%` }} />
+    </div>
+  );
+}
 
-        <div className="bg-white rounded-lg shadow p-6 border border-gray-100">
-          <h3 className="font-semibold text-lg mb-4">Monthly Spending</h3>
-          <div className="h-64 flex items-center justify-center text-gray-400">
-            Connect accounts to see spending data
-          </div>
-        </div>
+// ─── Budget Status Card ───────────────────────────────────────────────────────
 
-        <div className="bg-white rounded-lg shadow p-6 border border-gray-100">
-          <h3 className="font-semibold text-lg mb-4">Recent Transactions</h3>
-          <div className="h-64 flex items-center justify-center text-gray-400">
-            No transactions yet
-          </div>
-        </div>
+function MonthlyBudgetSection({ budgets }: { budgets: BudgetWithActual[] }) {
+  if (budgets.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 text-center">
+        <p className="text-gray-400 text-sm mb-3">No budgets set up for this month</p>
+        <Link
+          href="/budgets"
+          className="text-sm text-blue-600 hover:text-blue-700 font-medium border border-blue-200 px-4 py-1.5 rounded-lg hover:bg-blue-50 transition"
+        >
+          Set up budgets →
+        </Link>
+      </div>
+    );
+  }
 
-        <div className="bg-white rounded-lg shadow p-6 border border-gray-100">
-          <h3 className="font-semibold text-lg mb-4">Budget Status</h3>
-          <div className="h-64 flex items-center justify-center text-gray-400">
-            Set up budgets to track progress
-          </div>
-        </div>
+  const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.amount), 0);
+  const totalSpent = budgets.reduce((s, b) => s + parseFloat(b.actual_spent), 0);
+  const overCount = budgets.filter((b) => parseFloat(b.remaining) < 0).length;
+  const overallPct = totalBudgeted > 0 ? (totalSpent / totalBudgeted) * 100 : 0;
+
+  // Top 5 by spending percentage
+  const top5 = [...budgets]
+    .filter((b) => !b.category.is_income)
+    .sort((a, b) => parseFloat(b.percent_used) - parseFloat(a.percent_used))
+    .slice(0, 5);
+
+  return (
+    <div className="space-y-4">
+      {/* Summary row */}
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-gray-500">
+          <span className="font-semibold text-gray-800">{fmt(totalSpent)}</span> of {fmt(totalBudgeted)} spent
+        </span>
+        <span className={`font-semibold text-xs px-2 py-0.5 rounded-full ${
+          overCount > 0 ? "bg-red-50 text-red-600" : overallPct >= 80 ? "bg-yellow-50 text-yellow-600" : "bg-green-50 text-green-600"
+        }`}>
+          {overCount > 0 ? `${overCount} over limit` : `${Math.round(overallPct)}% used`}
+        </span>
+      </div>
+      <MiniProgressBar pct={overallPct} alertThreshold={80} />
+
+      {/* Top categories */}
+      <div className="space-y-2.5 mt-1">
+        {top5.map((b) => {
+          const pct = parseFloat(b.percent_used);
+          const isOver = parseFloat(b.remaining) < 0;
+          return (
+            <div key={b.id} className="flex items-center gap-3">
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center text-xs text-white shrink-0"
+                style={{ backgroundColor: b.category.color ?? "#94a3b8" }}
+              >
+                {b.category.icon ?? b.category.name.charAt(0)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-gray-700 truncate">{b.category.name}</span>
+                  <span className={`ml-2 shrink-0 font-medium ${isOver ? "text-red-600" : "text-gray-500"}`}>
+                    {Math.round(pct)}%
+                  </span>
+                </div>
+                <MiniProgressBar pct={pct} alertThreshold={b.alert_threshold} />
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function SummaryCard({ title, value }: { title: string; value: string }) {
+// ─── Long-term Budgets Card ───────────────────────────────────────────────────
+
+function LongTermBudgetSection({ budgets }: { budgets: BudgetWithActual[] }) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Only show currently active or relevant budgets:
+  // - Annual: always show current year
+  // - Quarterly: show if today is within start_date..end_date
+  // - Custom: show if today is within or upcoming within 30 days
+  const visible = budgets.filter((b) => {
+    if (b.budget_type === "annual") return true;
+    if (!b.start_date || !b.end_date) return false;
+    const start = new Date(b.start_date + "T00:00:00");
+    const end = new Date(b.end_date + "T00:00:00");
+    const daysUntilStart = (start.getTime() - today.getTime()) / 86400000;
+    return today <= end && daysUntilStart <= 30; // active or starting within 30 days
+  });
+
+  if (visible.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 text-center">
+        <p className="text-gray-400 text-sm mb-3">No active long-term budgets</p>
+        <Link
+          href="/budgets"
+          className="text-sm text-blue-600 hover:text-blue-700 font-medium border border-blue-200 px-4 py-1.5 rounded-lg hover:bg-blue-50 transition"
+        >
+          Create long-term budget →
+        </Link>
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-white rounded-lg shadow p-5 border border-gray-100">
-      <p className="text-sm text-gray-500 mb-1">{title}</p>
-      <p className="text-2xl font-bold">{value}</p>
+    <div className="space-y-3">
+      {visible.map((b) => {
+        const pct = parseFloat(b.percent_used);
+        const isOver = parseFloat(b.remaining) < 0;
+        const isActive = b.start_date
+          ? new Date(b.start_date + "T00:00:00") <= today
+          : true;
+        return (
+          <div key={b.id} className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center text-xs text-white shrink-0"
+                style={{ backgroundColor: b.category.color ?? "#94a3b8" }}
+              >
+                {b.category.icon ?? b.category.name.charAt(0)}
+              </div>
+              <div className="flex-1 min-w-0 flex items-baseline gap-2">
+                <span className="text-sm font-medium text-gray-800 truncate">{b.category.name}</span>
+                <span className="text-xs text-gray-400 shrink-0">{formatBudgetPeriodShort(b)}</span>
+                {!isActive && (
+                  <span className="text-xs bg-blue-50 text-blue-500 px-1.5 py-0.5 rounded shrink-0">upcoming</span>
+                )}
+              </div>
+              <span className={`text-xs font-semibold shrink-0 ${isOver ? "text-red-600" : "text-gray-500"}`}>
+                {fmt(parseFloat(b.actual_spent))} / {fmt(parseFloat(b.amount))}
+              </span>
+            </div>
+            <MiniProgressBar pct={pct} alertThreshold={b.alert_threshold} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Recent Transactions ──────────────────────────────────────────────────────
+
+function RecentTransactionsSection({ transactions }: { transactions: Transaction[] }) {
+  if (transactions.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 text-center">
+        <p className="text-gray-400 text-sm">No transactions yet</p>
+        <Link href="/accounts" className="mt-2 text-sm text-blue-600 hover:underline">
+          Connect an account →
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-gray-50">
+      {transactions.slice(0, 8).map((t) => {
+        const amount = parseFloat(t.amount);
+        const isIncome = amount < 0;
+        return (
+          <div key={t.id} className="flex items-center justify-between py-2.5">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-gray-800 font-medium truncate">
+                {t.merchant_name ?? t.name}
+              </p>
+              <p className="text-xs text-gray-400">{fmtDate(t.date)}</p>
+            </div>
+            <span className={`text-sm font-semibold ml-3 shrink-0 ${isIncome ? "text-green-600" : "text-gray-800"}`}>
+              {isIncome ? "+" : ""}{fmt(Math.abs(amount))}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
+
+export default function Dashboard() {
+  const today = new Date();
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [monthlyBudgets, setMonthlyBudgets] = useState<BudgetWithActual[]>([]);
+  const [longTermBudgets, setLongTermBudgets] = useState<BudgetWithActual[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    const month = today.getMonth() + 1;
+    const year = today.getFullYear();
+
+    Promise.allSettled([
+      listAccounts(token),
+      listBudgets(month, year, token),
+      listLongTermBudgets(year, token),
+      listAllTransactions(token, 10),
+      listProperties(token),
+    ]).then(([accRes, budRes, ltRes, txRes, propRes]) => {
+      if (accRes.status === "fulfilled") setAccounts(accRes.value);
+      if (budRes.status === "fulfilled") setMonthlyBudgets(budRes.value);
+      if (ltRes.status === "fulfilled") setLongTermBudgets(ltRes.value);
+      if (txRes.status === "fulfilled") setTransactions(txRes.value);
+      if (propRes.status === "fulfilled") setProperties(propRes.value);
+      setLoading(false);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Net worth calculation ──────────────────────────────────────────────────
+  const visibleAccounts = accounts.filter((a) => !a.is_hidden);
+
+  const cash = visibleAccounts
+    .filter((a) => a.type === "depository")
+    .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
+
+  const investments = visibleAccounts
+    .filter((a) => ["investment", "brokerage"].includes(a.type))
+    .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
+
+  const liabilities = visibleAccounts
+    .filter((a) => ["credit", "loan"].includes(a.type))
+    .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
+
+  const realEstate = properties
+    .reduce((s, p) => s + parseFloat(p.current_value ?? "0"), 0);
+
+  const netWorth = cash + investments + realEstate - liabilities;
+
+  // ── Budget stats ───────────────────────────────────────────────────────────
+  const monthName = today.toLocaleString("en-US", { month: "long" });
+
+  const ICONS = {
+    cash: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+      </svg>
+    ),
+    invest: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+      </svg>
+    ),
+    realestate: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+      </svg>
+    ),
+    networth: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+      </svg>
+    ),
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64 text-gray-400 text-sm">
+        Loading dashboard…
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
+          <p className="text-sm text-gray-400 mt-0.5">
+            {today.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+          </p>
+        </div>
+      </div>
+
+      {/* Net Worth Summary */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <NetWorthCard
+          label="Net Worth"
+          value={netWorth}
+          color={netWorth >= 0 ? "text-gray-900" : "text-red-600"}
+          icon={ICONS.networth}
+          subtext={`${visibleAccounts.length} account${visibleAccounts.length !== 1 ? "s" : ""}`}
+        />
+        <NetWorthCard
+          label="Cash & Banking"
+          value={cash}
+          icon={ICONS.cash}
+          subtext={`${visibleAccounts.filter((a) => a.type === "depository").length} account${visibleAccounts.filter((a) => a.type === "depository").length !== 1 ? "s" : ""}`}
+        />
+        <NetWorthCard
+          label="Investments"
+          value={investments}
+          icon={ICONS.invest}
+          subtext={`${visibleAccounts.filter((a) => ["investment","brokerage"].includes(a.type)).length} account${visibleAccounts.filter((a) => ["investment","brokerage"].includes(a.type)).length !== 1 ? "s" : ""}`}
+        />
+        <NetWorthCard
+          label="Real Estate"
+          value={realEstate}
+          icon={ICONS.realestate}
+          subtext={`${properties.length} propert${properties.length !== 1 ? "ies" : "y"}`}
+        />
+      </div>
+
+      {/* Content grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        {/* Monthly Budget Status */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-semibold text-gray-900">{monthName} Budgets</h3>
+              <p className="text-xs text-gray-400">Monthly spending progress</p>
+            </div>
+            <Link href="/budgets" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+              View all →
+            </Link>
+          </div>
+          <MonthlyBudgetSection budgets={monthlyBudgets} />
+        </div>
+
+        {/* Long-term Budgets */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-semibold text-gray-900">Long-term Budgets</h3>
+              <p className="text-xs text-gray-400">Annual, quarterly & custom</p>
+            </div>
+            <Link href="/budgets" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+              View all →
+            </Link>
+          </div>
+          <LongTermBudgetSection budgets={longTermBudgets} />
+        </div>
+
+        {/* Recent Transactions */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-semibold text-gray-900">Recent Transactions</h3>
+              <p className="text-xs text-gray-400">Latest activity</p>
+            </div>
+            <Link href="/transactions" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+              View all →
+            </Link>
+          </div>
+          <RecentTransactionsSection transactions={transactions} />
+        </div>
+
+        {/* Quick Links */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+          <h3 className="font-semibold text-gray-900 mb-4">Quick Links</h3>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { href: "/accounts", label: "Accounts", desc: `${visibleAccounts.length} connected`, emoji: "🏦" },
+              { href: "/budgets", label: "Budgets", desc: `${monthlyBudgets.length} this month`, emoji: "📊" },
+              { href: "/transactions", label: "Transactions", desc: "View & categorize", emoji: "💳" },
+              { href: "/investments", label: "Investments", desc: "Portfolio tracker", emoji: "📈" },
+              { href: "/properties", label: "Real Estate", desc: `${properties.length} propert${properties.length !== 1 ? "ies" : "y"}`, emoji: "🏠" },
+              { href: "/settings", label: "Settings", desc: "Manage your account", emoji: "⚙️" },
+            ].map(({ href, label, desc, emoji }) => (
+              <Link
+                key={href}
+                href={href}
+                className="flex items-start gap-3 p-3 rounded-xl border border-gray-100 hover:border-blue-200 hover:bg-blue-50/40 transition group"
+              >
+                <span className="text-xl leading-none mt-0.5">{emoji}</span>
+                <div>
+                  <p className="text-sm font-medium text-gray-800 group-hover:text-blue-700">{label}</p>
+                  <p className="text-xs text-gray-400">{desc}</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+
+      </div>
     </div>
   );
 }

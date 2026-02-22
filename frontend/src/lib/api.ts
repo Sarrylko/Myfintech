@@ -1345,6 +1345,8 @@ export async function deleteSnapTradeConnection(
 
 // ─── Budgets ──────────────────────────────────────────────────────────────────
 
+export type BudgetType = 'monthly' | 'annual' | 'quarterly' | 'custom';
+
 export interface BudgetCategory {
   id: string;
   name: string;
@@ -1356,8 +1358,11 @@ export interface BudgetCategory {
 export interface BudgetCreate {
   category_id: string;
   amount: number;
-  month: number;
+  budget_type?: BudgetType;
   year: number;
+  month?: number;       // required only for monthly
+  start_date?: string;  // ISO date string, required for quarterly/custom
+  end_date?: string;    // ISO date string, required for quarterly/custom
   rollover_enabled?: boolean;
   alert_threshold?: number;
 }
@@ -1374,8 +1379,11 @@ export interface Budget {
   category_id: string;
   category: BudgetCategory;
   amount: string; // Decimal serialized as string
-  month: number;
+  budget_type: BudgetType;
+  month: number | null;
   year: number;
+  start_date: string | null;
+  end_date: string | null;
   rollover_enabled: boolean;
   alert_threshold: number;
   created_at: string;
@@ -1398,6 +1406,16 @@ export async function listBudgets(
 ): Promise<BudgetWithActual[]> {
   return apiFetch<BudgetWithActual[]>(
     `/api/v1/budgets/?month=${month}&year=${year}`,
+    { token }
+  );
+}
+
+export async function listLongTermBudgets(
+  year: number,
+  token: string
+): Promise<BudgetWithActual[]> {
+  return apiFetch<BudgetWithActual[]>(
+    `/api/v1/budgets/?year=${year}&budget_type=long_term`,
     { token }
   );
 }
