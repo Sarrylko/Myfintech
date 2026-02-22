@@ -1471,3 +1471,32 @@ export async function copyBudgetsFromLastMonth(
     { method: "POST", token }
   );
 }
+
+// ─── Net Worth Snapshots ──────────────────────────────────────────────────────
+
+export interface NetWorthSnapshot {
+  id: string;
+  snapshot_date: string;      // ISO datetime string
+  total_cash: string;         // Decimal as string
+  total_investments: string;
+  total_real_estate: string;
+  total_debts: string;
+  net_worth: string;
+}
+
+export async function listNetWorthSnapshots(
+  days: number,
+  token: string
+): Promise<NetWorthSnapshot[]> {
+  return apiFetch<NetWorthSnapshot[]>(
+    `/api/v1/networth/snapshots?days=${days}`,
+    { token }
+  );
+}
+
+export async function takeNetWorthSnapshot(token: string): Promise<NetWorthSnapshot> {
+  return apiFetch<NetWorthSnapshot>("/api/v1/networth/snapshots", {
+    method: "POST",
+    token,
+  });
+}

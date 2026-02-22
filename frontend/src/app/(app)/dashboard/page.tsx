@@ -3,17 +3,30 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  CartesianGrid,
+  ResponsiveContainer,
+} from "recharts";
+import {
   listAccounts,
   listBudgets,
   listLongTermBudgets,
   listAllTransactions,
   listProperties,
   listLoans,
+  listNetWorthSnapshots,
+  takeNetWorthSnapshot,
   Account,
   BudgetWithActual,
   Transaction,
   Property,
   Loan,
+  NetWorthSnapshot,
 } from "@/lib/api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -367,6 +380,190 @@ function LiabilitiesSection({
   );
 }
 
+// ─── Financial History Chart ──────────────────────────────────────────────────
+
+type TimeRange = "30D" | "90D" | "1Y" | "All";
+
+const METRICS = [
+  { key: "net_worth",        label: "Net Worth",    color: "#6366f1" },
+  { key: "total_cash",       label: "Cash",         color: "#22c55e" },
+  { key: "total_investments",label: "Investments",  color: "#3b82f6" },
+  { key: "total_real_estate",label: "Real Estate",  color: "#f59e0b" },
+  { key: "total_debts",      label: "Liabilities",  color: "#ef4444" },
+] as const;
+
+function fmtAxis(v: number): string {
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000)     return `$${(v / 1_000).toFixed(0)}K`;
+  return `$${v}`;
+}
+
+function fmtDate(isoStr: string): string {
+  return new Date(isoStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function HistoryTooltip({ active, payload, label }: { active?: boolean; payload?: {name: string; value: number; color: string}[]; label?: string }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-white border border-gray-100 rounded-lg shadow-lg p-3 text-xs min-w-[160px]">
+      <p className="text-gray-500 font-medium mb-2">{label}</p>
+      {payload.map((entry) => (
+        <div key={entry.name} className="flex justify-between gap-4 mb-0.5">
+          <span style={{ color: entry.color }}>{entry.name}</span>
+          <span className="font-semibold text-gray-800">{fmtAxis(entry.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FinancialHistorySection({
+  snapshots,
+  onTakeSnapshot,
+}: {
+  snapshots: NetWorthSnapshot[];
+  onTakeSnapshot: () => Promise<void>;
+}) {
+  const [timeRange, setTimeRange] = useState<TimeRange>("90D");
+  const [visible, setVisible] = useState<Set<string>>(new Set(["net_worth", "total_debts"]));
+  const [saving, setSaving] = useState(false);
+
+  const rangeDays: Record<TimeRange, number> = { "30D": 30, "90D": 90, "1Y": 365, "All": 99999 };
+
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - rangeDays[timeRange]);
+
+  const filtered = snapshots
+    .filter((s) => new Date(s.snapshot_date) >= cutoff)
+    .map((s) => ({
+      date: fmtDate(s.snapshot_date),
+      net_worth:         parseFloat(s.net_worth),
+      total_cash:        parseFloat(s.total_cash),
+      total_investments: parseFloat(s.total_investments),
+      total_real_estate: parseFloat(s.total_real_estate),
+      total_debts:       parseFloat(s.total_debts),
+    }));
+
+  function toggleMetric(key: string) {
+    setVisible((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) { if (next.size > 1) next.delete(key); }
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function handleSnapshot() {
+    setSaving(true);
+    try { await onTakeSnapshot(); } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <h3 className="font-semibold text-gray-900">Financial History</h3>
+          <p className="text-xs text-gray-400">Daily snapshots of your key metrics</p>
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Time range tabs */}
+          <div className="flex bg-gray-100 rounded-lg p-0.5 text-xs">
+            {(["30D", "90D", "1Y", "All"] as TimeRange[]).map((r) => (
+              <button
+                key={r}
+                onClick={() => setTimeRange(r)}
+                className={`px-3 py-1 rounded-md font-medium transition ${
+                  timeRange === r
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          {/* Take Snapshot button */}
+          <button
+            onClick={handleSnapshot}
+            disabled={saving}
+            className="text-xs font-medium text-blue-600 hover:text-blue-700 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Take Snapshot"}
+          </button>
+        </div>
+      </div>
+
+      {/* Metric toggles */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        {METRICS.map(({ key, label, color }) => (
+          <button
+            key={key}
+            onClick={() => toggleMetric(key)}
+            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition ${
+              visible.has(key)
+                ? "border-transparent text-white"
+                : "border-gray-200 text-gray-400 bg-white"
+            }`}
+            style={visible.has(key) ? { backgroundColor: color } : undefined}
+          >
+            <span
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ backgroundColor: visible.has(key) ? "white" : color }}
+            />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Chart */}
+      {filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-48 text-center">
+          <p className="text-gray-400 text-sm mb-3">No historical data yet</p>
+          <p className="text-gray-400 text-xs">
+            Click <span className="font-medium text-blue-600">Take Snapshot</span> to start tracking.
+            After that, the daily task captures data automatically at 7 AM UTC.
+          </p>
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={filtered} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tickLine={false}
+              axisLine={false}
+              interval="preserveStartEnd"
+            />
+            <YAxis
+              tickFormatter={fmtAxis}
+              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tickLine={false}
+              axisLine={false}
+              width={56}
+            />
+            <Tooltip content={<HistoryTooltip />} />
+            {METRICS.filter(({ key }) => visible.has(key)).map(({ key, label, color }) => (
+              <Line
+                key={key}
+                type="monotone"
+                dataKey={key}
+                name={label}
+                stroke={color}
+                strokeWidth={2}
+                dot={filtered.length <= 30}
+                activeDot={{ r: 4 }}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -377,7 +574,13 @@ export default function Dashboard() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
+  const [snapshots, setSnapshots] = useState<NetWorthSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const fetchSnapshots = async (token: string) => {
+    const res = await listNetWorthSnapshots(365 * 3, token).catch(() => []);
+    setSnapshots(res);
+  };
 
   useEffect(() => {
     const token = getToken();
@@ -403,16 +606,22 @@ export default function Dashboard() {
       if (propRes.status === "fulfilled") {
         const props = propRes.value;
         setProperties(props);
-        // Fetch loans for all properties in parallel
         const loanResults = await Promise.allSettled(props.map((p) => listLoans(p.id, token)));
         setLoans(loanResults.flatMap((r) => r.status === "fulfilled" ? r.value : []));
       }
 
+      await fetchSnapshots(token);
       setLoading(false);
     }
 
     fetchAll();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleTakeSnapshot = async () => {
+    const token = getToken();
+    await takeNetWorthSnapshot(token);
+    await fetchSnapshots(token);
+  };
 
   // ── Net worth calculation ──────────────────────────────────────────────────
   const visibleAccounts = accounts.filter((a) => !a.is_hidden);
@@ -526,6 +735,12 @@ export default function Dashboard() {
           subtext={`${creditAccounts.length} card${creditAccounts.length !== 1 ? "s" : ""} · ${loans.length} loan${loans.length !== 1 ? "s" : ""}`}
         />
       </div>
+
+      {/* Financial History */}
+      <FinancialHistorySection
+        snapshots={snapshots}
+        onTakeSnapshot={handleTakeSnapshot}
+      />
 
       {/* Content grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
