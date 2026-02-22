@@ -20,6 +20,8 @@ class PropertyCreate(BaseModel):
     is_property_managed: bool = False
     management_fee_pct: Decimal | None = None
     leasing_fee_amount: Decimal | None = None
+    zillow_url: str | None = None
+    redfin_url: str | None = None
 
 
 class PropertyUpdate(BaseModel):
@@ -37,6 +39,8 @@ class PropertyUpdate(BaseModel):
     is_property_managed: bool | None = None
     management_fee_pct: Decimal | None = None
     leasing_fee_amount: Decimal | None = None
+    zillow_url: str | None = None
+    redfin_url: str | None = None
 
 
 class PropertyResponse(BaseModel):
@@ -58,4 +62,6 @@ class PropertyResponse(BaseModel):
     is_property_managed: bool
     management_fee_pct: Decimal | None
     leasing_fee_amount: Decimal | None
+    zillow_url: str | None
+    redfin_url: str | None
     created_at: datetime

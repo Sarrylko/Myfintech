@@ -381,6 +381,8 @@ export interface Property {
   is_property_managed: boolean;
   management_fee_pct: string | null;
   leasing_fee_amount: string | null;
+  zillow_url: string | null;
+  redfin_url: string | null;
   created_at: string;
 }
 

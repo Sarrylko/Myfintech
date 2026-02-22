@@ -34,6 +34,8 @@ class Property(Base):
     is_property_managed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     management_fee_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))  # e.g., 8.00 for 8%
     leasing_fee_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))  # flat fee per lease
+    zillow_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    redfin_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

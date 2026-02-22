@@ -224,6 +224,8 @@ interface DetailForm {
   is_property_managed: boolean;
   management_fee_pct: string;
   leasing_fee_amount: string;
+  zillow_url: string;
+  redfin_url: string;
 }
 
 function toDetailForm(p: Property): DetailForm {
@@ -237,6 +239,8 @@ function toDetailForm(p: Property): DetailForm {
     is_property_managed: p.is_property_managed || false,
     management_fee_pct: p.management_fee_pct ? String(Number(p.management_fee_pct)) : "",
     leasing_fee_amount: p.leasing_fee_amount ? String(Number(p.leasing_fee_amount)) : "",
+    zillow_url: p.zillow_url ?? "",
+    redfin_url: p.redfin_url ?? "",
   };
 }
 
