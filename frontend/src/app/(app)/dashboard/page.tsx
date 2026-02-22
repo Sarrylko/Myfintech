@@ -399,10 +399,6 @@ function fmtAxis(v: number): string {
   return `$${v}`;
 }
 
-function fmtDate(isoStr: string): string {
-  return new Date(isoStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
 function HistoryTooltip({ active, payload, label }: { active?: boolean; payload?: {name: string; value: number; color: string}[]; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
@@ -437,7 +433,7 @@ function FinancialHistorySection({
   const filtered = snapshots
     .filter((s) => new Date(s.snapshot_date) >= cutoff)
     .map((s) => ({
-      date: fmtDate(s.snapshot_date),
+      date: fmtDate(s.snapshot_date.substring(0, 10)),
       net_worth:         parseFloat(s.net_worth),
       total_cash:        parseFloat(s.total_cash),
       total_investments: parseFloat(s.total_investments),
