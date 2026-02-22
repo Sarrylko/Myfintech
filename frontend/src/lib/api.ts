@@ -180,6 +180,7 @@ export interface PlaidItem {
 export interface Account {
   id: string;
   plaid_item_id: string | null;
+  snaptrade_connection_id: string | null;
   owner_user_id: string | null;
   name: string;
   official_name: string | null;
@@ -1029,6 +1030,13 @@ export async function deleteCustomCategory(id: string, token: string): Promise<v
   });
 }
 
+export async function seedDefaultCategories(token: string): Promise<CustomCategory[]> {
+  return apiFetch<CustomCategory[]>("/api/v1/categories/seed-defaults", {
+    method: "POST",
+    token,
+  });
+}
+
 // ─── Capital Events ──────────────────────────────────────────────────────────
 
 export interface CapitalEvent {
@@ -1258,4 +1266,190 @@ export async function refreshInvestmentPrices(token: string): Promise<RefreshRes
     token,
     method: "POST",
   });
+}
+
+// ─── SnapTrade ──────────────────────────────────────────────────────────────
+
+export interface SnapTradeConnection {
+  id: string;
+  brokerage_name: string | null;
+  brokerage_slug: string | null;
+  snaptrade_authorization_id: string;
+  is_active: boolean;
+  last_synced_at: string | null;
+  account_count: number;
+}
+
+export interface SnapTradeRegisterResponse {
+  registered: boolean;
+  snaptrade_user_id: string;
+}
+
+export interface SnapTradeSyncResponse {
+  accounts_synced: number;
+  holdings_synced: number;
+}
+
+export async function registerSnapTradeUser(
+  token: string
+): Promise<SnapTradeRegisterResponse> {
+  return apiFetch<SnapTradeRegisterResponse>("/api/v1/snaptrade/register-user", {
+    token,
+    method: "POST",
+  });
+}
+
+export async function getSnapTradeConnectUrl(
+  token: string
+): Promise<{ redirect_url: string }> {
+  return apiFetch<{ redirect_url: string }>("/api/v1/snaptrade/connect-url", {
+    token,
+    method: "POST",
+  });
+}
+
+export async function listSnapTradeConnections(
+  token: string
+): Promise<SnapTradeConnection[]> {
+  return apiFetch<SnapTradeConnection[]>("/api/v1/snaptrade/connections", { token });
+}
+
+export async function syncSnapTradeAuthorizations(
+  token: string
+): Promise<SnapTradeConnection[]> {
+  return apiFetch<SnapTradeConnection[]>("/api/v1/snaptrade/sync-authorizations", {
+    token,
+    method: "POST",
+  });
+}
+
+export async function syncSnapTradeConnection(
+  connectionId: string,
+  token: string
+): Promise<SnapTradeSyncResponse> {
+  return apiFetch<SnapTradeSyncResponse>(
+    `/api/v1/snaptrade/connections/${connectionId}/sync`,
+    { token, method: "POST" }
+  );
+}
+
+export async function deleteSnapTradeConnection(
+  connectionId: string,
+  token: string
+): Promise<void> {
+  await apiFetch<void>(`/api/v1/snaptrade/connections/${connectionId}`, {
+    token,
+    method: "DELETE",
+  });
+}
+
+// ─── Budgets ──────────────────────────────────────────────────────────────────
+
+export interface BudgetCategory {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  is_income: boolean;
+}
+
+export interface BudgetCreate {
+  category_id: string;
+  amount: number;
+  month: number;
+  year: number;
+  rollover_enabled?: boolean;
+  alert_threshold?: number;
+}
+
+export interface BudgetUpdate {
+  amount?: number;
+  rollover_enabled?: boolean;
+  alert_threshold?: number;
+}
+
+export interface Budget {
+  id: string;
+  household_id: string;
+  category_id: string;
+  category: BudgetCategory;
+  amount: string; // Decimal serialized as string
+  month: number;
+  year: number;
+  rollover_enabled: boolean;
+  alert_threshold: number;
+  created_at: string;
+}
+
+export interface BudgetWithActual extends Budget {
+  actual_spent: string; // Decimal as string
+  remaining: string; // Decimal as string — negative if over budget
+  percent_used: string; // Decimal as string
+}
+
+export interface BudgetBulkCreate {
+  budgets: BudgetCreate[];
+}
+
+export async function listBudgets(
+  month: number,
+  year: number,
+  token: string
+): Promise<BudgetWithActual[]> {
+  return apiFetch<BudgetWithActual[]>(
+    `/api/v1/budgets/?month=${month}&year=${year}`,
+    { token }
+  );
+}
+
+export async function createBudget(
+  data: BudgetCreate,
+  token: string
+): Promise<BudgetWithActual> {
+  return apiFetch<BudgetWithActual>("/api/v1/budgets/", {
+    method: "POST",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function createBudgetsBulk(
+  data: BudgetBulkCreate,
+  token: string
+): Promise<BudgetWithActual[]> {
+  return apiFetch<BudgetWithActual[]>("/api/v1/budgets/bulk", {
+    method: "POST",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function updateBudget(
+  id: string,
+  data: BudgetUpdate,
+  token: string
+): Promise<BudgetWithActual> {
+  return apiFetch<BudgetWithActual>(`/api/v1/budgets/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+export async function deleteBudget(id: string, token: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/budgets/${id}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export async function copyBudgetsFromLastMonth(
+  month: number,
+  year: number,
+  token: string
+): Promise<BudgetWithActual[]> {
+  return apiFetch<BudgetWithActual[]>(
+    `/api/v1/budgets/copy-from-last-month?month=${month}&year=${year}`,
+    { method: "POST", token }
+  );
 }

@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     plaid_secret: str = ""
     plaid_env: str = "sandbox"
 
+    # ─── SnapTrade ────────────────────────────────
+    snaptrade_client_id: str = ""
+    snaptrade_consumer_key: str = ""
+
     # ─── Encryption ───────────────────────────────
     encryption_key: str = "CHANGE_ME"
 

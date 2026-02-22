@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class AccountResponse(BaseModel):
     id: uuid.UUID
     plaid_item_id: uuid.UUID | None
+    snaptrade_connection_id: uuid.UUID | None = None
     owner_user_id: uuid.UUID | None
     name: str
     official_name: str | None

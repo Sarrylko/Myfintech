@@ -20,7 +20,8 @@
       "Bash(bash /c/Github/MyFinTech/Myfintech/scripts/backup.sh)",
       "Bash(ls:*)",
       "Bash(git checkout:*)",
-      "Bash(git merge:*)"
+      "Bash(git merge:*)",
+      "Bash(find:*)"
     ]
   }
 }

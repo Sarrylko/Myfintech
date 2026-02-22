@@ -13,7 +13,7 @@ from app.models.account import Account, Transaction
 from app.models.property_details import Loan
 from app.models.rule import CategorizationRule
 from app.models.user import User
-from app.models.investment import Holding
+from app.models.investment import Holding, InvestmentTransaction
 from app.schemas.account import (
     AccountResponse,
     AccountUpdate,
@@ -138,6 +138,19 @@ async def delete_account(
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
+
+    # Always delete holdings and investment transactions (no orphan option for these)
+    holdings_result = await db.execute(
+        select(Holding).where(Holding.account_id == account_id)
+    )
+    for holding in holdings_result.scalars().all():
+        await db.delete(holding)
+
+    inv_txns_result = await db.execute(
+        select(InvestmentTransaction).where(InvestmentTransaction.account_id == account_id)
+    )
+    for inv_txn in inv_txns_result.scalars().all():
+        await db.delete(inv_txn)
 
     if delete_transactions:
         # Delete all transactions for this account
