@@ -8,10 +8,12 @@ import {
   listLongTermBudgets,
   listAllTransactions,
   listProperties,
+  listLoans,
   Account,
   BudgetWithActual,
   Transaction,
   Property,
+  Loan,
 } from "@/lib/api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -268,6 +270,103 @@ function RecentTransactionsSection({ transactions }: { transactions: Transaction
   );
 }
 
+// ─── Liabilities Section ──────────────────────────────────────────────────────
+
+function LiabilitiesSection({
+  creditAccounts,
+  loans,
+  properties,
+}: {
+  creditAccounts: Account[];
+  loans: Loan[];
+  properties: Property[];
+}) {
+  if (creditAccounts.length === 0 && loans.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 text-center">
+        <p className="text-gray-400 text-sm mb-3">No liabilities tracked</p>
+        <Link href="/accounts" className="text-sm text-blue-600 hover:text-blue-700 font-medium border border-blue-200 px-4 py-1.5 rounded-lg hover:bg-blue-50 transition">
+          Add an account →
+        </Link>
+      </div>
+    );
+  }
+
+  const propMap = new Map(properties.map((p) => [p.id, p]));
+
+  return (
+    <div className="space-y-4">
+      {/* Credit Cards */}
+      {creditAccounts.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Credit Cards</p>
+          <div className="space-y-2.5">
+            {creditAccounts.map((a) => (
+              <div key={a.id} className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-7 h-7 rounded-lg bg-orange-50 flex items-center justify-center shrink-0">
+                    <svg className="w-3.5 h-3.5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                    </svg>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm text-gray-800 font-medium truncate">{a.name}</p>
+                    {a.institution_name && (
+                      <p className="text-xs text-gray-400 truncate">{a.institution_name}</p>
+                    )}
+                  </div>
+                </div>
+                <span className="text-sm font-semibold text-red-600 ml-3 shrink-0">
+                  {fmt(parseFloat(a.current_balance ?? "0"))}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Mortgages & Property Loans */}
+      {loans.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Mortgages & Loans</p>
+          <div className="space-y-2.5">
+            {loans.map((loan) => {
+              const prop = propMap.get(loan.property_id);
+              const label = loan.lender_name ?? loan.loan_type ?? "Mortgage";
+              const sublabel = prop
+                ? `${prop.address}${prop.city ? `, ${prop.city}` : ""}`
+                : loan.loan_type;
+              return (
+                <div key={loan.id} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                      <svg className="w-3.5 h-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm text-gray-800 font-medium truncate">{label}</p>
+                      {sublabel && <p className="text-xs text-gray-400 truncate">{sublabel}</p>}
+                    </div>
+                  </div>
+                  <div className="text-right ml-3 shrink-0">
+                    <p className="text-sm font-semibold text-red-600">
+                      {fmt(parseFloat(loan.current_balance ?? "0"))}
+                    </p>
+                    {loan.monthly_payment && (
+                      <p className="text-xs text-gray-400">{fmt(parseFloat(loan.monthly_payment))}/mo</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -277,28 +376,42 @@ export default function Dashboard() {
   const [longTermBudgets, setLongTermBudgets] = useState<BudgetWithActual[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
+  const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const token = getToken();
     if (!token) return;
-    const month = today.getMonth() + 1;
-    const year = today.getFullYear();
 
-    Promise.allSettled([
-      listAccounts(token),
-      listBudgets(month, year, token),
-      listLongTermBudgets(year, token),
-      listAllTransactions(token, 10),
-      listProperties(token),
-    ]).then(([accRes, budRes, ltRes, txRes, propRes]) => {
+    async function fetchAll() {
+      const month = today.getMonth() + 1;
+      const year = today.getFullYear();
+
+      const [accRes, budRes, ltRes, txRes, propRes] = await Promise.allSettled([
+        listAccounts(token),
+        listBudgets(month, year, token),
+        listLongTermBudgets(year, token),
+        listAllTransactions(token, 10),
+        listProperties(token),
+      ]);
+
       if (accRes.status === "fulfilled") setAccounts(accRes.value);
       if (budRes.status === "fulfilled") setMonthlyBudgets(budRes.value);
       if (ltRes.status === "fulfilled") setLongTermBudgets(ltRes.value);
       if (txRes.status === "fulfilled") setTransactions(txRes.value);
-      if (propRes.status === "fulfilled") setProperties(propRes.value);
+
+      if (propRes.status === "fulfilled") {
+        const props = propRes.value;
+        setProperties(props);
+        // Fetch loans for all properties in parallel
+        const loanResults = await Promise.allSettled(props.map((p) => listLoans(p.id, token)));
+        setLoans(loanResults.flatMap((r) => r.status === "fulfilled" ? r.value : []));
+      }
+
       setLoading(false);
-    });
+    }
+
+    fetchAll();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Net worth calculation ──────────────────────────────────────────────────
@@ -312,14 +425,20 @@ export default function Dashboard() {
     .filter((a) => ["investment", "brokerage"].includes(a.type))
     .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
 
-  const liabilities = visibleAccounts
+  const creditAccounts = visibleAccounts.filter((a) => a.type === "credit");
+  const creditCardDebt = creditAccounts.reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
+  const mortgageDebt = loans.reduce((s, l) => s + parseFloat(l.current_balance ?? "0"), 0);
+  const totalLiabilities = creditCardDebt + mortgageDebt;
+
+  // Keep existing liabilities var for net worth (account-based, avoids double-counting linked loans)
+  const accountLiabilities = visibleAccounts
     .filter((a) => ["credit", "loan"].includes(a.type))
     .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
 
   const realEstate = properties
     .reduce((s, p) => s + parseFloat(p.current_value ?? "0"), 0);
 
-  const netWorth = cash + investments + realEstate - liabilities;
+  const netWorth = cash + investments + realEstate - accountLiabilities;
 
   // ── Budget stats ───────────────────────────────────────────────────────────
   const monthName = today.toLocaleString("en-US", { month: "long" });
@@ -345,6 +464,11 @@ export default function Dashboard() {
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
       </svg>
     ),
+    liabilities: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
+      </svg>
+    ),
   };
 
   if (loading) {
@@ -368,7 +492,7 @@ export default function Dashboard() {
       </div>
 
       {/* Net Worth Summary */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <NetWorthCard
           label="Net Worth"
           value={netWorth}
@@ -393,6 +517,13 @@ export default function Dashboard() {
           value={realEstate}
           icon={ICONS.realestate}
           subtext={`${properties.length} propert${properties.length !== 1 ? "ies" : "y"}`}
+        />
+        <NetWorthCard
+          label="Liabilities"
+          value={totalLiabilities}
+          color="text-red-600"
+          icon={ICONS.liabilities}
+          subtext={`${creditAccounts.length} card${creditAccounts.length !== 1 ? "s" : ""} · ${loans.length} loan${loans.length !== 1 ? "s" : ""}`}
         />
       </div>
 
@@ -441,10 +572,31 @@ export default function Dashboard() {
           <RecentTransactionsSection transactions={transactions} />
         </div>
 
-        {/* Quick Links */}
+        {/* Liabilities */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-semibold text-gray-900">Liabilities</h3>
+              <p className="text-xs text-gray-400">Credit cards & mortgages</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-bold text-red-600">{fmt(totalLiabilities)}</p>
+              <Link href="/accounts" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+                Manage →
+              </Link>
+            </div>
+          </div>
+          <LiabilitiesSection
+            creditAccounts={creditAccounts}
+            loans={loans}
+            properties={properties}
+          />
+        </div>
+
+        {/* Quick Links — full width */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 lg:col-span-2">
           <h3 className="font-semibold text-gray-900 mb-4">Quick Links</h3>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
             {[
               { href: "/accounts", label: "Accounts", desc: `${visibleAccounts.length} connected`, emoji: "🏦" },
               { href: "/budgets", label: "Budgets", desc: `${monthlyBudgets.length} this month`, emoji: "📊" },
