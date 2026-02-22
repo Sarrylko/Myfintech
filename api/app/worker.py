@@ -40,5 +40,11 @@ celery_app.conf.beat_schedule = {
     },
 }
 
-# Auto-discover tasks in services/
-celery_app.autodiscover_tasks(["app.services"])
+# Explicitly include task modules so the worker registers them on startup.
+# autodiscover_tasks() only looks for a "tasks.py" file, which we don't use.
+celery_app.conf.include = [
+    "app.services.price_refresh",
+    "app.services.sync",
+    "app.services.networth",
+    "app.services.property",
+]
