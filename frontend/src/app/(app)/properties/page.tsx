@@ -381,6 +381,8 @@ export default function PropertiesPage() {
       else payload.management_fee_pct = null;
       if (detailForm.leasing_fee_amount !== "") payload.leasing_fee_amount = Number(detailForm.leasing_fee_amount);
       else payload.leasing_fee_amount = null;
+      payload.zillow_url = detailForm.zillow_url.trim() || null;
+      payload.redfin_url = detailForm.redfin_url.trim() || null;
 
       const updated = await updateProperty(id, payload, token);
       setProperties((prev) => prev.map((p) => (p.id === id ? updated : p)));
@@ -494,7 +496,19 @@ export default function PropertiesPage() {
                     )}
                     {p.notes && <p className="text-xs text-gray-400 ml-7 mt-1">{p.notes}</p>}
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
+                    {p.zillow_url && (
+                      <a href={p.zillow_url} target="_blank" rel="noopener noreferrer"
+                        className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-medium transition">
+                        Zillow ↗
+                      </a>
+                    )}
+                    {p.redfin_url && (
+                      <a href={p.redfin_url} target="_blank" rel="noopener noreferrer"
+                        className="text-xs px-2 py-1 rounded bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 font-medium transition">
+                        Redfin ↗
+                      </a>
+                    )}
                     <a href="/rentals" className="text-xs text-primary-600 hover:text-primary-700 font-medium">
                       Manage Rentals →
                     </a>
@@ -739,6 +753,38 @@ export default function PropertiesPage() {
                           />
                         </div>
                       )}
+                    </div>
+
+                    {/* Listing URLs */}
+                    <div className="border-t border-gray-100 pt-4 mt-4">
+                      <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
+                        Listing URLs
+                      </p>
+                      <p className="text-xs text-gray-400 mb-3">
+                        Paste your property&apos;s Zillow or Redfin page URL to get one-click access to the latest estimate.
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Zillow URL</label>
+                          <input
+                            type="url"
+                            value={detailForm.zillow_url}
+                            onChange={(e) => setDetailForm((f) => ({ ...f, zillow_url: e.target.value }))}
+                            placeholder="https://www.zillow.com/homedetails/..."
+                            className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Redfin URL</label>
+                          <input
+                            type="url"
+                            value={detailForm.redfin_url}
+                            onChange={(e) => setDetailForm((f) => ({ ...f, redfin_url: e.target.value }))}
+                            placeholder="https://www.redfin.com/..."
+                            className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     <div className="flex gap-3 mt-4">
