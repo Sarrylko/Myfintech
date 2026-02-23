@@ -25,7 +25,11 @@
       "Bash(python -c:*)",
       "Bash(docker cp:*)",
       "Bash(MSYS_NO_PATHCONV=1 docker cp:*)",
-      "Bash(MSYS_NO_PATHCONV=1 docker exec:*)"
+      "Bash(MSYS_NO_PATHCONV=1 docker exec:*)",
+      "Bash(git push:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git stash:*)"
     ]
   }
 }
