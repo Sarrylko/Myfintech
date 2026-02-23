@@ -370,6 +370,8 @@ export interface Property {
   city: string | null;
   state: string | null;
   zip_code: string | null;
+  county: string | null;
+  pin: string | null;
   property_type: string | null;
   purchase_price: string | null;
   purchase_date: string | null;
@@ -391,6 +393,8 @@ export interface PropertyCreate {
   city?: string;
   state?: string;
   zip_code?: string;
+  county?: string;
+  pin?: string;
   property_type?: string;
   purchase_price?: number;
   purchase_date?: string;

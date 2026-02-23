@@ -36,6 +36,8 @@ class Property(Base):
     leasing_fee_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))  # flat fee per lease
     zillow_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     redfin_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pin: Mapped[str | None] = mapped_column(Text, nullable=True)
+    county: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

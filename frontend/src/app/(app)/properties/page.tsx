@@ -226,6 +226,8 @@ interface DetailForm {
   leasing_fee_amount: string;
   zillow_url: string;
   redfin_url: string;
+  county: string;
+  pin: string;
 }
 
 function toDetailForm(p: Property): DetailForm {
@@ -241,6 +243,8 @@ function toDetailForm(p: Property): DetailForm {
     leasing_fee_amount: p.leasing_fee_amount ? String(Number(p.leasing_fee_amount)) : "",
     zillow_url: p.zillow_url ?? "",
     redfin_url: p.redfin_url ?? "",
+    county: p.county ?? "",
+    pin: p.pin ?? "",
   };
 }
 
@@ -383,6 +387,8 @@ export default function PropertiesPage() {
       else payload.leasing_fee_amount = null;
       payload.zillow_url = detailForm.zillow_url.trim() || null;
       payload.redfin_url = detailForm.redfin_url.trim() || null;
+      payload.county = detailForm.county.trim() || null;
+      payload.pin = detailForm.pin.trim() || null;
 
       const updated = await updateProperty(id, payload, token);
       setProperties((prev) => prev.map((p) => (p.id === id ? updated : p)));
@@ -489,9 +495,14 @@ export default function PropertiesPage() {
                         </span>
                       )}
                     </div>
-                    {(p.city || p.state || p.zip_code) && (
+                    {(p.city || p.county || p.state || p.zip_code) && (
                       <p className="text-sm text-gray-500 ml-7">
-                        {[p.city, p.state, p.zip_code].filter(Boolean).join(", ")}
+                        {[p.city, p.county, p.state, p.zip_code].filter(Boolean).join(", ")}
+                      </p>
+                    )}
+                    {p.pin && (
+                      <p className="text-xs text-gray-400 ml-7 mt-0.5">
+                        PIN: <span className="font-mono">{p.pin}</span>
                       </p>
                     )}
                     {p.notes && <p className="text-xs text-gray-400 ml-7 mt-1">{p.notes}</p>}
@@ -660,6 +671,39 @@ export default function PropertiesPage() {
                 {/* ── Edit Details panel ── */}
                 {isEditingDetails && (
                   <div className="mt-5 pt-4 border-t border-gray-100">
+
+                    {/* Property Identification */}
+                    <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
+                      Property Identification
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">County</label>
+                        <input
+                          type="text"
+                          value={detailForm.county}
+                          onChange={(e) => setDetailForm((f) => ({ ...f, county: e.target.value }))}
+                          placeholder="Cook County"
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Property Index Number (PIN)
+                        </label>
+                        <input
+                          type="text"
+                          value={detailForm.pin}
+                          onChange={(e) => setDetailForm((f) => ({ ...f, pin: e.target.value }))}
+                          placeholder="08-12-345-678-0000"
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                        <p className="text-xs text-gray-400 mt-1">
+                          The parcel number assigned by your county assessor
+                        </p>
+                      </div>
+                    </div>
+
                     <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
                       Edit Purchase Details
                     </p>
