@@ -777,6 +777,8 @@ export interface PropertyCost {
   amount: string;
   frequency: string;
   is_active: boolean;
+  is_escrowed: boolean;
+  effective_date: string | null;
   notes: string | null;
   created_at: string;
 }
@@ -787,6 +789,8 @@ export interface PropertyCostCreate {
   amount: number;
   frequency?: string;
   is_active?: boolean;
+  is_escrowed?: boolean;
+  effective_date?: string;
   notes?: string;
 }
 

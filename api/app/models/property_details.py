@@ -70,6 +70,10 @@ class PropertyCost(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=sa.text("true")
     )
+    is_escrowed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false")
+    )  # True = paid via escrow (excluded from monthly cost total, kept for tax records)
+    effective_date: Mapped[date | None] = mapped_column(Date)  # date this rate/amount took effect
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")

@@ -101,7 +101,7 @@ function totalMonthlyLoanPayment(loans: Loan[]): number {
 
 function totalMonthlyRecurringCosts(costs: PropertyCost[]): number {
   return costs
-    .filter((c) => c.is_active)
+    .filter((c) => c.is_active && !c.is_escrowed)
     .reduce((s, c) => s + toMonthly(Number(c.amount), c.frequency), 0);
 }
 
@@ -1233,7 +1233,7 @@ function LoansTab({
 // ─── Costs Tab ────────────────────────────────────────────────────────────────
 
 const BLANK_COST: PropertyCostCreate = {
-  category: "other", label: "", amount: 0, frequency: "monthly", is_active: true, notes: "",
+  category: "other", label: "", amount: 0, frequency: "monthly", is_active: true, is_escrowed: false, effective_date: "", notes: "",
 };
 
 function CostsTab({
@@ -1257,7 +1257,8 @@ function CostsTab({
     return {
       category: c.category, label: c.label ?? "",
       amount: Number(c.amount) as unknown as number,
-      frequency: c.frequency, is_active: c.is_active, notes: c.notes ?? "",
+      frequency: c.frequency, is_active: c.is_active, is_escrowed: c.is_escrowed,
+      effective_date: c.effective_date ?? "", notes: c.notes ?? "",
     };
   }
 
@@ -1268,6 +1269,7 @@ function CostsTab({
       const created = await createPropertyCost(propertyId, {
         ...addForm, amount: Number(addForm.amount),
         label: addForm.label || undefined, notes: addForm.notes || undefined,
+        effective_date: addForm.effective_date || undefined,
       } as PropertyCostCreate, token);
       onUpdate([...costs, created]);
       setShowAdd(false);
@@ -1286,6 +1288,7 @@ function CostsTab({
       const updated = await updatePropertyCost(id, {
         ...editForm, amount: Number(editForm.amount),
         label: editForm.label || undefined, notes: editForm.notes || undefined,
+        effective_date: editForm.effective_date || undefined,
       } as PropertyCostCreate, token);
       onUpdate(costs.map((c) => (c.id === id ? updated : c)));
       setEditId(null);
@@ -1321,9 +1324,9 @@ function CostsTab({
   }
 
   const activeCosts = costs.filter((c) => c.is_active);
-  const monthlyTotal = activeCosts.reduce(
-    (sum, c) => sum + toMonthly(Number(c.amount), c.frequency), 0
-  );
+  const monthlyTotal = activeCosts
+    .filter((c) => !c.is_escrowed)
+    .reduce((sum, c) => sum + toMonthly(Number(c.amount), c.frequency), 0);
 
   function CostFormFields({
     form, setForm,
@@ -1338,8 +1341,19 @@ function CostsTab({
           onChange={(v) => setForm((f) => ({ ...f, amount: v as unknown as number }))} />
         <SelectField label="Frequency" value={form.frequency}
           onChange={(v) => setForm((f) => ({ ...f, frequency: v }))} options={COST_FREQUENCIES} />
+        <Field label="Effective From (optional)" value={form.effective_date ?? ""}
+          onChange={(v) => setForm((f) => ({ ...f, effective_date: v }))}
+          type="date" placeholder="" />
         <Field label="Notes (optional)" value={form.notes ?? ""}
           onChange={(v) => setForm((f) => ({ ...f, notes: v }))} />
+        <div className="md:col-span-3 flex items-center gap-2 mt-1">
+          <input type="checkbox" id="cost-escrowed" checked={Boolean(form.is_escrowed)}
+            onChange={(e) => setForm((f) => ({ ...f, is_escrowed: e.target.checked }))}
+            className="rounded" />
+          <label htmlFor="cost-escrowed" className="text-sm text-gray-700 cursor-pointer">
+            Paid via escrow (included in mortgage payment — tracked for tax records only)
+          </label>
+        </div>
       </div>
     );
   }
@@ -1374,12 +1388,24 @@ function CostsTab({
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${COST_COLORS[c.category] ?? COST_COLORS.other}`}>
                     {c.category.replace(/_/g, " ")}
                   </span>
-                  <span className="text-sm text-gray-700">{c.label || "—"}</span>
+                  {c.is_escrowed && (
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200">
+                      escrowed
+                    </span>
+                  )}
+                  <div>
+                    <span className="text-sm text-gray-700">{c.label || "—"}</span>
+                    {c.effective_date && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        effective {new Date(c.effective_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-4 shrink-0">
                   <div className="text-right">
-                    <p className="text-sm font-semibold text-gray-900">{fmtDec(c.amount)}</p>
-                    <p className="text-xs text-gray-400">{c.frequency}</p>
+                    <p className={`text-sm font-semibold ${c.is_escrowed ? "text-gray-400" : "text-gray-900"}`}>{fmtDec(c.amount)}</p>
+                    <p className="text-xs text-gray-400">{c.frequency}{c.is_escrowed ? " · tax record" : ""}</p>
                   </div>
                   <button onClick={() => toggleActive(c)} title={c.is_active ? "Deactivate" : "Activate"}
                     className="text-xs text-gray-300 hover:text-amber-500 transition">
@@ -1416,7 +1442,14 @@ function CostsTab({
 
       {activeCosts.length > 0 && (
         <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between text-sm">
-          <span className="text-gray-500">Monthly equivalent (active costs)</span>
+          <span className="text-gray-500">
+            Monthly equivalent (active, non-escrowed)
+            {activeCosts.some((c) => c.is_escrowed) && (
+              <span className="ml-1 text-xs text-blue-500" title="Escrowed costs (insurance, property tax) are excluded — already in your mortgage payment">
+                · escrowed costs excluded
+              </span>
+            )}
+          </span>
           <span className="font-semibold text-gray-900">{fmtDec(monthlyTotal)}/mo</span>
         </div>
       )}

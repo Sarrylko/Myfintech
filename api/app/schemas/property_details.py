@@ -71,6 +71,8 @@ class PropertyCostCreate(BaseModel):
     amount: Decimal
     frequency: str = "monthly"  # monthly | quarterly | annual | one_time
     is_active: bool = True
+    is_escrowed: bool = False  # paid via escrow — tracked for tax purposes, excluded from monthly cost total
+    effective_date: date | None = None  # date this rate/amount took effect (e.g. tax year start)
     notes: str | None = None
 
 
@@ -80,6 +82,8 @@ class PropertyCostUpdate(BaseModel):
     amount: Decimal | None = None
     frequency: str | None = None
     is_active: bool | None = None
+    is_escrowed: bool | None = None
+    effective_date: date | None = None
     notes: str | None = None
 
 
@@ -93,6 +97,8 @@ class PropertyCostResponse(BaseModel):
     amount: Decimal
     frequency: str
     is_active: bool
+    is_escrowed: bool
+    effective_date: date | None
     notes: str | None
     created_at: datetime
 
