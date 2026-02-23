@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     property_api_key: str = ""
     property_api_provider: str = ""
 
+    # ─── File Storage ─────────────────────────────
+    upload_dir: str = "/app/uploads"
+
     # Look for .env in current dir (Docker) or parent dir (local dev from api/)
     model_config = {"env_file": [".env", "../.env"], "extra": "ignore"}
 

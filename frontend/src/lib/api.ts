@@ -370,6 +370,8 @@ export interface Property {
   city: string | null;
   state: string | null;
   zip_code: string | null;
+  county: string | null;
+  pin: string | null;
   property_type: string | null;
   purchase_price: string | null;
   purchase_date: string | null;
@@ -381,6 +383,8 @@ export interface Property {
   is_property_managed: boolean;
   management_fee_pct: string | null;
   leasing_fee_amount: string | null;
+  zillow_url: string | null;
+  redfin_url: string | null;
   created_at: string;
 }
 
@@ -389,6 +393,8 @@ export interface PropertyCreate {
   city?: string;
   state?: string;
   zip_code?: string;
+  county?: string;
+  pin?: string;
   property_type?: string;
   purchase_price?: number;
   purchase_date?: string;
@@ -430,6 +436,72 @@ export async function updateProperty(
 
 export async function deleteProperty(id: string, token: string): Promise<void> {
   return apiFetch<void>(`/api/v1/properties/${id}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+// ─── Property Documents ───────────────────────────────────────────────────────
+
+export interface PropertyDocument {
+  id: string;
+  property_id: string;
+  filename: string;
+  file_size: number;
+  content_type: string;
+  category: string | null;
+  description: string | null;
+  uploaded_at: string;
+}
+
+export async function listPropertyDocuments(propertyId: string, token: string): Promise<PropertyDocument[]> {
+  return apiFetch<PropertyDocument[]>(`/api/v1/properties/${propertyId}/documents`, { token });
+}
+
+export async function uploadPropertyDocument(
+  propertyId: string,
+  file: File,
+  category: string | null,
+  description: string | null,
+  token: string
+): Promise<PropertyDocument> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (category) formData.append("category", category);
+  if (description) formData.append("description", description);
+  const res = await fetch(`/api/v1/properties/${propertyId}/documents`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function downloadPropertyDocument(
+  propertyId: string,
+  docId: string,
+  filename: string,
+  token: string
+): Promise<void> {
+  const res = await fetch(`/api/v1/properties/${propertyId}/documents/${docId}/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function deletePropertyDocument(propertyId: string, docId: string, token: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/properties/${propertyId}/documents/${docId}`, {
     method: "DELETE",
     token,
   });

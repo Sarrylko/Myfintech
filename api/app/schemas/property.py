@@ -10,6 +10,8 @@ class PropertyCreate(BaseModel):
     city: str | None = None
     state: str | None = None
     zip_code: str | None = None
+    county: str | None = None
+    pin: str | None = None
     property_type: str | None = None  # single_family, condo, townhouse, multi_family, land, other
     purchase_price: Decimal | None = None
     purchase_date: datetime | None = None
@@ -20,6 +22,8 @@ class PropertyCreate(BaseModel):
     is_property_managed: bool = False
     management_fee_pct: Decimal | None = None
     leasing_fee_amount: Decimal | None = None
+    zillow_url: str | None = None
+    redfin_url: str | None = None
 
 
 class PropertyUpdate(BaseModel):
@@ -27,6 +31,8 @@ class PropertyUpdate(BaseModel):
     city: str | None = None
     state: str | None = None
     zip_code: str | None = None
+    county: str | None = None
+    pin: str | None = None
     property_type: str | None = None
     purchase_price: Decimal | None = None
     purchase_date: datetime | None = None
@@ -37,6 +43,8 @@ class PropertyUpdate(BaseModel):
     is_property_managed: bool | None = None
     management_fee_pct: Decimal | None = None
     leasing_fee_amount: Decimal | None = None
+    zillow_url: str | None = None
+    redfin_url: str | None = None
 
 
 class PropertyResponse(BaseModel):
@@ -47,6 +55,8 @@ class PropertyResponse(BaseModel):
     city: str | None
     state: str | None
     zip_code: str | None
+    county: str | None
+    pin: str | None
     property_type: str | None
     purchase_price: Decimal | None
     purchase_date: datetime | None
@@ -58,4 +68,6 @@ class PropertyResponse(BaseModel):
     is_property_managed: bool
     management_fee_pct: Decimal | None
     leasing_fee_amount: Decimal | None
+    zillow_url: str | None
+    redfin_url: str | None
     created_at: datetime

@@ -38,6 +38,8 @@ const DEFAULT_FORM: PropertyCreate = {
   city: "",
   state: "",
   zip_code: "",
+  county: "",
+  pin: "",
   property_type: "single_family",
   purchase_price: undefined,
   purchase_date: undefined,
@@ -547,6 +549,32 @@ export default function SettingsPage() {
                   onChange={(e) => update("zip_code", e.target.value)}
                   className="border border-gray-300 rounded-lg px-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                   placeholder="78701"
+                />
+              </div>
+            </div>
+
+            {/* County / PIN */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">County</label>
+                <input
+                  type="text"
+                  value={form.county ?? ""}
+                  onChange={(e) => update("county", e.target.value)}
+                  className="border border-gray-300 rounded-lg px-4 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder="Cook County"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Property Index Number (PIN)
+                </label>
+                <input
+                  type="text"
+                  value={form.pin ?? ""}
+                  onChange={(e) => update("pin", e.target.value)}
+                  className="border border-gray-300 rounded-lg px-4 py-2 w-full text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder="08-12-345-678-0000"
                 />
               </div>
             </div>

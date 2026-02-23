@@ -24,6 +24,10 @@ import {
   listPropertyValuations,
   createPropertyValuation,
   deletePropertyValuation,
+  listPropertyDocuments,
+  uploadPropertyDocument,
+  downloadPropertyDocument,
+  deletePropertyDocument,
   Account,
   Property,
   Loan,
@@ -33,6 +37,7 @@ import {
   MaintenanceExpense,
   MaintenanceExpenseCreate,
   PropertyValuation,
+  PropertyDocument,
 } from "@/lib/api";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -224,6 +229,10 @@ interface DetailForm {
   is_property_managed: boolean;
   management_fee_pct: string;
   leasing_fee_amount: string;
+  zillow_url: string;
+  redfin_url: string;
+  county: string;
+  pin: string;
 }
 
 function toDetailForm(p: Property): DetailForm {
@@ -237,6 +246,10 @@ function toDetailForm(p: Property): DetailForm {
     is_property_managed: p.is_property_managed || false,
     management_fee_pct: p.management_fee_pct ? String(Number(p.management_fee_pct)) : "",
     leasing_fee_amount: p.leasing_fee_amount ? String(Number(p.leasing_fee_amount)) : "",
+    zillow_url: p.zillow_url ?? "",
+    redfin_url: p.redfin_url ?? "",
+    county: p.county ?? "",
+    pin: p.pin ?? "",
   };
 }
 
@@ -268,6 +281,7 @@ export default function PropertiesPage() {
   const [costs, setCosts] = useState<Record<string, PropertyCost[]>>({});
   const [expenses, setExpenses] = useState<Record<string, MaintenanceExpense[]>>({});
   const [valuations, setValuations] = useState<Record<string, PropertyValuation[]>>({});
+  const [documents, setDocuments] = useState<Record<string, PropertyDocument[]>>({});
 
   const token = getToken();
 
@@ -333,6 +347,14 @@ export default function PropertiesPage() {
         setError(err instanceof Error ? err.message : "Failed to load value history");
       }
     }
+    if (tab === "documents" && documents[propertyId] === undefined) {
+      try {
+        const data = await listPropertyDocuments(propertyId, token);
+        setDocuments((prev) => ({ ...prev, [propertyId]: data }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load documents");
+      }
+    }
   }
 
   // ── Current value quick-edit ──────────────────────────────────────────────
@@ -377,6 +399,10 @@ export default function PropertiesPage() {
       else payload.management_fee_pct = null;
       if (detailForm.leasing_fee_amount !== "") payload.leasing_fee_amount = Number(detailForm.leasing_fee_amount);
       else payload.leasing_fee_amount = null;
+      payload.zillow_url = detailForm.zillow_url.trim() || null;
+      payload.redfin_url = detailForm.redfin_url.trim() || null;
+      payload.county = detailForm.county.trim() || null;
+      payload.pin = detailForm.pin.trim() || null;
 
       const updated = await updateProperty(id, payload, token);
       setProperties((prev) => prev.map((p) => (p.id === id ? updated : p)));
@@ -483,14 +509,31 @@ export default function PropertiesPage() {
                         </span>
                       )}
                     </div>
-                    {(p.city || p.state || p.zip_code) && (
+                    {(p.city || p.county || p.state || p.zip_code) && (
                       <p className="text-sm text-gray-500 ml-7">
-                        {[p.city, p.state, p.zip_code].filter(Boolean).join(", ")}
+                        {[p.city, p.county, p.state, p.zip_code].filter(Boolean).join(", ")}
+                      </p>
+                    )}
+                    {p.pin && (
+                      <p className="text-xs text-gray-400 ml-7 mt-0.5">
+                        PIN: <span className="font-mono">{p.pin}</span>
                       </p>
                     )}
                     {p.notes && <p className="text-xs text-gray-400 ml-7 mt-1">{p.notes}</p>}
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
+                    {p.zillow_url && (
+                      <a href={p.zillow_url} target="_blank" rel="noopener noreferrer"
+                        className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 font-medium transition">
+                        Zillow ↗
+                      </a>
+                    )}
+                    {p.redfin_url && (
+                      <a href={p.redfin_url} target="_blank" rel="noopener noreferrer"
+                        className="text-xs px-2 py-1 rounded bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 font-medium transition">
+                        Redfin ↗
+                      </a>
+                    )}
                     <a href="/rentals" className="text-xs text-primary-600 hover:text-primary-700 font-medium">
                       Manage Rentals →
                     </a>
@@ -642,6 +685,39 @@ export default function PropertiesPage() {
                 {/* ── Edit Details panel ── */}
                 {isEditingDetails && (
                   <div className="mt-5 pt-4 border-t border-gray-100">
+
+                    {/* Property Identification */}
+                    <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
+                      Property Identification
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">County</label>
+                        <input
+                          type="text"
+                          value={detailForm.county}
+                          onChange={(e) => setDetailForm((f) => ({ ...f, county: e.target.value }))}
+                          placeholder="Cook County"
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Property Index Number (PIN)
+                        </label>
+                        <input
+                          type="text"
+                          value={detailForm.pin}
+                          onChange={(e) => setDetailForm((f) => ({ ...f, pin: e.target.value }))}
+                          placeholder="08-12-345-678-0000"
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                        <p className="text-xs text-gray-400 mt-1">
+                          The parcel number assigned by your county assessor
+                        </p>
+                      </div>
+                    </div>
+
                     <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
                       Edit Purchase Details
                     </p>
@@ -737,6 +813,38 @@ export default function PropertiesPage() {
                       )}
                     </div>
 
+                    {/* Listing URLs */}
+                    <div className="border-t border-gray-100 pt-4 mt-4">
+                      <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
+                        Listing URLs
+                      </p>
+                      <p className="text-xs text-gray-400 mb-3">
+                        Paste your property&apos;s Zillow or Redfin page URL to get one-click access to the latest estimate.
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Zillow URL</label>
+                          <input
+                            type="url"
+                            value={detailForm.zillow_url}
+                            onChange={(e) => setDetailForm((f) => ({ ...f, zillow_url: e.target.value }))}
+                            placeholder="https://www.zillow.com/homedetails/..."
+                            className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Redfin URL</label>
+                          <input
+                            type="url"
+                            value={detailForm.redfin_url}
+                            onChange={(e) => setDetailForm((f) => ({ ...f, redfin_url: e.target.value }))}
+                            placeholder="https://www.redfin.com/..."
+                            className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="flex gap-3 mt-4">
                       <button onClick={() => saveDetails(p.id)} disabled={savingDetails}
                         className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
@@ -762,6 +870,9 @@ export default function PropertiesPage() {
                   </TabBtn>
                   <TabBtn active={curTab === "valuations"} onClick={() => toggleTab(p.id, "valuations")}>
                     Value History {valuations[p.id] && valuations[p.id].length > 0 && `(${valuations[p.id].length})`}
+                  </TabBtn>
+                  <TabBtn active={curTab === "documents"} onClick={() => toggleTab(p.id, "documents")}>
+                    Documents {documents[p.id] && documents[p.id].length > 0 && `(${documents[p.id].length})`}
                   </TabBtn>
                 </div>
 
@@ -803,6 +914,16 @@ export default function PropertiesPage() {
                     valuations={valuations[p.id] ?? []}
                     token={token!}
                     onUpdate={(updated) => setValuations((prev) => ({ ...prev, [p.id]: updated }))}
+                  />
+                )}
+
+                {/* ── Documents tab ── */}
+                {curTab === "documents" && (
+                  <DocumentsTab
+                    propertyId={p.id}
+                    docs={documents[p.id] ?? []}
+                    token={token!}
+                    onUpdate={(updated) => setDocuments((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
               </div>
@@ -1812,6 +1933,202 @@ function ValuationsTab({
         >
           + Add Snapshot
         </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Documents Tab ────────────────────────────────────────────────────────────
+
+const DOCUMENT_CATEGORIES = [
+  { value: "property_tax", label: "Property Tax" },
+  { value: "hoa", label: "HOA" },
+  { value: "insurance", label: "Insurance" },
+  { value: "deed", label: "Deed" },
+  { value: "inspection", label: "Inspection" },
+  { value: "appraisal", label: "Appraisal" },
+  { value: "other", label: "Other" },
+];
+
+const CATEGORY_COLORS: Record<string, string> = {
+  property_tax: "bg-yellow-100 text-yellow-700",
+  hoa: "bg-purple-100 text-purple-700",
+  insurance: "bg-green-100 text-green-700",
+  deed: "bg-blue-100 text-blue-700",
+  inspection: "bg-orange-100 text-orange-700",
+  appraisal: "bg-indigo-100 text-indigo-700",
+  other: "bg-gray-100 text-gray-600",
+};
+
+function categoryLabel(cat: string | null): string {
+  if (!cat) return "";
+  return DOCUMENT_CATEGORIES.find((c) => c.value === cat)?.label ?? cat;
+}
+
+function fmtFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function DocumentsTab({
+  propertyId,
+  docs,
+  token,
+  onUpdate,
+}: {
+  propertyId: string;
+  docs: PropertyDocument[];
+  token: string;
+  onUpdate: (updated: PropertyDocument[]) => void;
+}) {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [category, setCategory] = useState("");
+  const [description, setDescription] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [deletingDoc, setDeletingDoc] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+
+  async function handleUpload() {
+    if (!selectedFile) return;
+    setUploading(true);
+    setErr("");
+    try {
+      const doc = await uploadPropertyDocument(
+        propertyId,
+        selectedFile,
+        category || null,
+        description.trim() || null,
+        token
+      );
+      onUpdate([doc, ...docs]);
+      setSelectedFile(null);
+      setCategory("");
+      setDescription("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleDownload(doc: PropertyDocument) {
+    setDownloading(doc.id);
+    try {
+      await downloadPropertyDocument(propertyId, doc.id, doc.filename, token);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Download failed");
+    } finally {
+      setDownloading(null);
+    }
+  }
+
+  async function handleDelete(docId: string) {
+    if (!confirm("Delete this document? This cannot be undone.")) return;
+    setDeletingDoc(docId);
+    try {
+      await deletePropertyDocument(propertyId, docId, token);
+      onUpdate(docs.filter((d) => d.id !== docId));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeletingDoc(null);
+    }
+  }
+
+  return (
+    <div className="mt-4 space-y-4">
+      {/* Upload section */}
+      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 space-y-3">
+        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Upload Document</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="md:col-span-1">
+            <label className="block text-xs text-gray-500 mb-1">Category</label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">— Select category —</option>
+              {DOCUMENT_CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-xs text-gray-500 mb-1">Description (optional)</label>
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="e.g. 2025 Cook County tax bill"
+              className="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <input
+            type="file"
+            onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+            className="text-xs text-gray-600 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-white file:text-primary-600 file:hover:bg-gray-50 file:cursor-pointer"
+          />
+          <button
+            onClick={handleUpload}
+            disabled={!selectedFile || uploading}
+            className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50 shrink-0"
+          >
+            {uploading ? "Uploading..." : "Upload"}
+          </button>
+        </div>
+        {err && <p className="text-xs text-red-600">{err}</p>}
+      </div>
+
+      {/* Document list */}
+      {docs.length === 0 ? (
+        <p className="text-sm text-gray-400 italic py-2">
+          No documents yet. Upload property tax bills, HOA agreements, insurance policies, and more.
+        </p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {docs.map((doc) => (
+            <div key={doc.id} className="flex items-center gap-3 py-2.5">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800 truncate">{doc.filename}</p>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  {doc.category && (
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${CATEGORY_COLORS[doc.category] ?? "bg-gray-100 text-gray-600"}`}>
+                      {categoryLabel(doc.category)}
+                    </span>
+                  )}
+                  <span className="text-xs text-gray-400">{fmtFileSize(doc.file_size)}</span>
+                  <span className="text-xs text-gray-400">
+                    {new Date(doc.uploaded_at).toLocaleDateString()}
+                  </span>
+                  {doc.description && (
+                    <span className="text-xs text-gray-500 italic truncate">{doc.description}</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleDownload(doc)}
+                  disabled={downloading === doc.id}
+                  className="text-xs text-primary-600 hover:text-primary-800 font-medium px-2 py-1 rounded hover:bg-primary-50 transition disabled:opacity-50"
+                >
+                  {downloading === doc.id ? "..." : "Download"}
+                </button>
+                <button
+                  onClick={() => handleDelete(doc.id)}
+                  disabled={deletingDoc === doc.id}
+                  className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50 transition disabled:opacity-50"
+                >
+                  {deletingDoc === doc.id ? "..." : "Delete"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

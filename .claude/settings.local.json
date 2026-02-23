@@ -21,7 +21,11 @@
       "Bash(ls:*)",
       "Bash(git checkout:*)",
       "Bash(git merge:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(python -c:*)",
+      "Bash(docker cp:*)",
+      "Bash(MSYS_NO_PATHCONV=1 docker cp:*)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec:*)"
     ]
   }
 }
