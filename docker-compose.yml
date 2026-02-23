@@ -68,6 +68,7 @@ services:
     volumes:
       - ./api/app:/app/app:delegated
       - ./api/alembic:/app/alembic:delegated
+      - uploads_data:/app/uploads
     networks:
       - public
       - private
@@ -179,6 +180,8 @@ volumes:
   caddy_data:
     driver: local
   caddy_config:
+    driver: local
+  uploads_data:
     driver: local
 
 networks:
