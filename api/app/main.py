@@ -2,6 +2,10 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from app.core.config import settings
 from app.routers import auth, accounts, budget, capital_events, categories, financial_documents, health, investments, networth, plaid, properties, property_details, property_documents, recurring, rentals, reports, rules, snaptrade, users
@@ -11,12 +15,18 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
 
+# Rate limiter — backed by Redis so limits survive across worker restarts
+limiter = Limiter(key_func=get_remote_address, storage_uri=settings.redis_url)
+
 app = FastAPI(
     title="MyFintech API",
     version="0.2.0",
     docs_url="/docs" if settings.environment == "development" else None,
     redoc_url=None,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # ─── CORS ──────────────────────────────────────
 app.add_middleware(

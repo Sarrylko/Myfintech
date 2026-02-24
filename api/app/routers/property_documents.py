@@ -16,6 +16,35 @@ from app.schemas.property_document import PropertyDocumentResponse
 router = APIRouter(tags=["property-documents"])
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+CHUNK_SIZE = 1024 * 1024  # 1 MB streaming chunks
+
+_ALLOWED: dict[str, str] = {
+    "pdf":  "application/pdf",
+    "doc":  "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls":  "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "csv":  "text/csv",
+    "txt":  "text/plain",
+    "png":  "image/png",
+    "jpg":  "image/jpeg",
+    "jpeg": "image/jpeg",
+    "heic": "image/heic",
+    "webp": "image/webp",
+}
+
+
+def _validate_upload(filename: str) -> str:
+    """Return the safe MIME type for the file, or raise 400."""
+    ext = Path(filename).suffix.lstrip(".").lower()
+    mime = _ALLOWED.get(ext)
+    if mime is None:
+        allowed = ", ".join(sorted(_ALLOWED))
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '.{ext}' is not allowed. Allowed: {allowed}",
+        )
+    return mime
 
 
 # ─── Helper: verify property ownership ───────────────────────────────────────
@@ -67,13 +96,23 @@ async def upload_document(
 ):
     await _get_property(property_id, user, db)
 
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="File too large (max 50 MB)")
-
     original_name = file.filename or "upload"
-    stored_name = f"{uuid.uuid4()}_{original_name}"
+    mime = _validate_upload(original_name)
 
+    # Stream the upload in chunks to avoid loading the entire file into RAM
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail="File too large (max 50 MB)")
+        chunks.append(chunk)
+    content = b"".join(chunks)
+
+    stored_name = f"{uuid.uuid4()}_{original_name}"
     dir_path = Path(settings.upload_dir) / "properties" / str(property_id)
     dir_path.mkdir(parents=True, exist_ok=True)
     (dir_path / stored_name).write_bytes(content)
@@ -83,8 +122,8 @@ async def upload_document(
         household_id=user.household_id,
         filename=original_name,
         stored_filename=stored_name,
-        file_size=len(content),
-        content_type=file.content_type or "application/octet-stream",
+        file_size=total,
+        content_type=mime,
         category=category or None,
         description=description or None,
     )

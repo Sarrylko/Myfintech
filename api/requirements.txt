@@ -26,6 +26,9 @@ plaid-python==27.0.0
 # ─── Encryption ───────────────────────────────
 cryptography==43.0.3
 
+# ─── Rate limiting ────────────────────────────
+slowapi==0.1.9
+
 # ─── Utilities ────────────────────────────────
 httpx==0.28.1
 python-dateutil==2.9.0

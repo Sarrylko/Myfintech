@@ -1,14 +1,36 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+def _validate_password(v: str) -> str:
+    errors = []
+    if len(v) < 12:
+        errors.append("at least 12 characters")
+    if not any(c.isupper() for c in v):
+        errors.append("one uppercase letter")
+    if not any(c.islower() for c in v):
+        errors.append("one lowercase letter")
+    if not any(c.isdigit() for c in v):
+        errors.append("one digit")
+    if not any(c in "!@#$%^&*()_+-=[]{}|;':\",./<>?" for c in v):
+        errors.append("one special character")
+    if errors:
+        raise ValueError("Password must contain: " + ", ".join(errors))
+    return v
 
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=12)
     full_name: str
     household_name: str | None = None  # if creating new household
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return _validate_password(v)
 
 
 class UserLogin(BaseModel):
@@ -62,8 +84,13 @@ class HouseholdResponse(BaseModel):
 class HouseholdMemberCreate(BaseModel):
     full_name: str
     email: EmailStr
-    password: str
+    password: str = Field(min_length=12)
     role: str = "member"  # owner | member
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return _validate_password(v)
 
 
 class HouseholdMemberUpdate(BaseModel):
