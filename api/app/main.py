@@ -6,6 +6,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from app.core.config import settings
 from app.routers import auth, accounts, budget, capital_events, categories, financial_documents, health, investments, networth, plaid, properties, property_details, property_documents, recurring, rentals, reports, rules, snaptrade, users
@@ -14,6 +17,20 @@ logging.basicConfig(
     level=getattr(logging, settings.api_log_level.upper()),
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
+
+# ─── Security headers middleware ───────────────────────────────────────────────
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        if settings.environment != "development":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
 
 # Rate limiter — backed by Redis so limits survive across worker restarts
 limiter = Limiter(key_func=get_remote_address, storage_uri=settings.redis_url)
@@ -27,6 +44,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ─── CORS ──────────────────────────────────────
 app.add_middleware(

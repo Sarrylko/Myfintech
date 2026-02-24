@@ -15,6 +15,7 @@ from app.schemas.user import (
     UserPasswordChange,
     UserProfileUpdate,
     UserResponse,
+    _validate_password,
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -65,11 +66,10 @@ async def change_password(
             detail="Current password is incorrect",
         )
 
-    if len(payload.new_password) < 8:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="New password must be at least 8 characters",
-        )
+    try:
+        _validate_password(payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
     user.hashed_password = hash_password(payload.new_password)
     user.updated_at = datetime.now(timezone.utc)
@@ -106,9 +106,6 @@ async def add_household_member(
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already in use")
-
-    if len(payload.password) < 8:
-        raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
 
     member = User(
         household_id=user.household_id,
