@@ -25,7 +25,11 @@
       "Bash(python -c:*)",
       "Bash(docker cp:*)",
       "Bash(MSYS_NO_PATHCONV=1 docker cp:*)",
-      "Bash(MSYS_NO_PATHCONV=1 docker exec:*)"
+      "Bash(MSYS_NO_PATHCONV=1 docker exec:*)",
+      "Bash(python3:*)",
+      "Bash(powershell.exe -NoProfile -NonInteractive -Command \"$script = @'':*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(__NEW_LINE_3a19c61df98f8927__ echo \"\")"
     ]
   }
 }

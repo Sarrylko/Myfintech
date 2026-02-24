@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.redis import blacklist_token, is_blacklisted
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -114,6 +117,13 @@ async def refresh_token(
             detail="Invalid refresh token",
         )
 
+    jti = token_data.get("jti")
+    if jti and await is_blacklisted(jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+        )
+
     user_id = token_data.get("sub")
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -124,12 +134,28 @@ async def refresh_token(
             detail="User not found or inactive",
         )
 
+    # Blacklist the old refresh token before issuing new cookies (token rotation)
+    if jti:
+        exp = token_data.get("exp", 0)
+        ttl = max(0, int(exp - datetime.now(timezone.utc).timestamp()))
+        await blacklist_token(jti, ttl)
+
     _set_auth_cookies(response, str(user.id))
     return {"ok": True}
 
 
 @router.post("/logout", status_code=204)
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
+    refresh = request.cookies.get("refresh_token")
+    if refresh:
+        token_data = decode_token(refresh)
+        if token_data:
+            jti = token_data.get("jti")
+            exp = token_data.get("exp", 0)
+            if jti:
+                ttl = max(0, int(exp - datetime.now(timezone.utc).timestamp()))
+                await blacklist_token(jti, ttl)
+
     response.delete_cookie(key="access_token", path="/")
     response.delete_cookie(key="refresh_token", path="/")
 

@@ -607,13 +607,11 @@ export default function InvestmentsPage() {
       // Fetch holdings on first expand
       setHoldingsMap((m) => {
         if (m[accountId] !== undefined) return m; // already loaded
-        if () {
-          setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: true }));
-          listHoldings(accountId)
-            .then((h) => setHoldingsMap((cur) => ({ ...cur, [accountId]: h })))
-            .catch(() => setHoldingsMap((cur) => ({ ...cur, [accountId]: [] })))
-            .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: false })));
-        }
+        setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: true }));
+        listHoldings(accountId)
+          .then((h) => setHoldingsMap((cur) => ({ ...cur, [accountId]: h })))
+          .catch(() => setHoldingsMap((cur) => ({ ...cur, [accountId]: [] })))
+          .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: false })));
         return m;
       });
 
@@ -645,6 +643,7 @@ export default function InvestmentsPage() {
             <select
               value={ownerFilter}
               onChange={(e) => setOwnerFilter(e.target.value)}
+              aria-label="Filter by owner"
               className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
             >
               <option value="all">All Members</option>

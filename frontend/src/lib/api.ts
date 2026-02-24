@@ -27,7 +27,9 @@ export async function apiFetch<T>(
         return retryRes.json();
       }
     }
-    if (typeof window !== "undefined") window.location.replace("/login");
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      window.location.replace("/login");
+    }
     throw new Error("Session expired. Please log in again.");
   }
 

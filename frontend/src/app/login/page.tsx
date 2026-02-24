@@ -17,7 +17,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     getProfile().then(() => router.replace("/dashboard")).catch(() => {});
-  }, [router]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
