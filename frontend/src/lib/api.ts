@@ -1,29 +1,35 @@
-// Empty string = relative URLs, routed through Caddy proxy (/api/* → FastAPI)
+// Empty string = relative URLs, routed through Caddy proxy (/api/* -> FastAPI)
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
-
-interface FetchOptions extends RequestInit {
-  token?: string;
-}
 
 export async function apiFetch<T>(
   path: string,
-  options: FetchOptions = {}
+  options: RequestInit = {}
 ): Promise<T> {
-  const { token, headers: customHeaders, ...rest } = options;
+  const { headers: customHeaders, ...rest } = options;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...((customHeaders as Record<string, string>) || {}),
   };
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
+  const fetchInit: RequestInit = { headers, credentials: "include", ...rest };
+  const res = await fetch(`${API_BASE}${path}`, fetchInit);
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers,
-    ...rest,
-  });
+  if (res.status === 401) {
+    const refreshRes = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (refreshRes.ok) {
+      const retryRes = await fetch(`${API_BASE}${path}`, fetchInit);
+      if (retryRes.ok) {
+        if (retryRes.status === 204) return undefined as T;
+        return retryRes.json();
+      }
+    }
+    if (typeof window !== "undefined") window.location.replace("/login");
+    throw new Error("Session expired. Please log in again.");
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -39,12 +45,6 @@ export async function apiFetch<T>(
 }
 
 // ─── Auth ──────────────────────────────────────────────────────────────────
-
-export interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-}
 
 export interface UserResponse {
   id: string;
@@ -73,26 +73,15 @@ export interface UserProfileUpdate {
   zip_code?: string;
 }
 
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("access_token");
-}
-
-export function setTokens(tokens: TokenResponse) {
-  localStorage.setItem("access_token", tokens.access_token);
-  localStorage.setItem("refresh_token", tokens.refresh_token);
-}
-
-export function clearTokens() {
-  localStorage.removeItem("access_token");
-  localStorage.removeItem("refresh_token");
-}
-
-export async function login(email: string, password: string): Promise<TokenResponse> {
-  return apiFetch<TokenResponse>("/api/v1/auth/login", {
+export async function login(email: string, password: string): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
+}
+
+export async function logout(): Promise<void> {
+  return apiFetch<void>("/api/v1/auth/logout", { method: "POST" });
 }
 
 export async function register(
@@ -109,30 +98,26 @@ export async function register(
 
 // ─── User Profile ───────────────────────────────────────────────────────────
 
-export async function getProfile(token: string): Promise<UserResponse> {
-  return apiFetch<UserResponse>("/api/v1/users/me", { token });
+export async function getProfile(): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/users/me", {});
 }
 
 export async function updateProfile(
-  data: UserProfileUpdate,
-  token: string
+  data: UserProfileUpdate
 ): Promise<UserResponse> {
   return apiFetch<UserResponse>("/api/v1/users/me", {
     method: "PATCH",
     body: JSON.stringify(data),
-    token,
   });
 }
 
 export async function changePassword(
   current_password: string,
-  new_password: string,
-  token: string
+  new_password: string
 ): Promise<void> {
   return apiFetch<void>("/api/v1/users/me/change-password", {
     method: "POST",
     body: JSON.stringify({ current_password, new_password }),
-    token,
   });
 }
 
@@ -145,25 +130,22 @@ export interface HouseholdMemberCreate {
   role?: string;
 }
 
-export async function listHouseholdMembers(token: string): Promise<UserResponse[]> {
-  return apiFetch<UserResponse[]>("/api/v1/users/household/members", { token });
+export async function listHouseholdMembers(): Promise<UserResponse[]> {
+  return apiFetch<UserResponse[]>("/api/v1/users/household/members", {});
 }
 
 export async function addHouseholdMember(
-  data: HouseholdMemberCreate,
-  token: string
+  data: HouseholdMemberCreate
 ): Promise<UserResponse> {
   return apiFetch<UserResponse>("/api/v1/users/household/members", {
     method: "POST",
     body: JSON.stringify(data),
-    token,
   });
 }
 
-export async function removeHouseholdMember(memberId: string, token: string): Promise<void> {
+export async function removeHouseholdMember(memberId: string): Promise<void> {
   return apiFetch<void>(`/api/v1/users/household/members/${memberId}`, {
     method: "DELETE",
-    token,
   });
 }
 
@@ -232,90 +214,79 @@ export interface Transaction {
   created_at: string;
 }
 
-export async function getLinkToken(token: string): Promise<{ link_token: string }> {
-  return apiFetch("/api/v1/plaid/link-token", { method: "POST", token });
+export async function getLinkToken(): Promise<{ link_token: string }> {
+  return apiFetch("/api/v1/plaid/link-token", { method: "POST" });
 }
 
 export async function exchangePublicToken(
   public_token: string,
   institution_id: string | null,
-  institution_name: string | null,
-  token: string
+  institution_name: string | null
 ): Promise<PlaidItem> {
   return apiFetch("/api/v1/plaid/exchange-token", {
     method: "POST",
     body: JSON.stringify({ public_token, institution_id, institution_name }),
-    token,
   });
 }
 
-export async function listPlaidItems(token: string): Promise<PlaidItem[]> {
-  return apiFetch("/api/v1/plaid/items", { token });
+export async function listPlaidItems(): Promise<PlaidItem[]> {
+  return apiFetch("/api/v1/plaid/items", {});
 }
 
-export async function syncPlaidItem(itemId: string, token: string): Promise<void> {
-  return apiFetch(`/api/v1/plaid/items/${itemId}/sync`, { method: "POST", token });
+export async function syncPlaidItem(itemId: string): Promise<void> {
+  return apiFetch(`/api/v1/plaid/items/${itemId}/sync`, { method: "POST" });
 }
 
 export async function deletePlaidItem(
   itemId: string,
-  deleteTransactions: boolean,
-  token: string
+  deleteTransactions: boolean
 ): Promise<void> {
   return apiFetch<void>(`/api/v1/plaid/items/${itemId}?delete_transactions=${deleteTransactions}`, {
     method: "DELETE",
-    token,
   });
 }
 
-export async function listAccounts(token: string): Promise<Account[]> {
-  return apiFetch("/api/v1/accounts/", { token });
+export async function listAccounts(): Promise<Account[]> {
+  return apiFetch("/api/v1/accounts/", {});
 }
 
 export async function createManualAccount(
-  data: ManualAccountCreate,
-  token: string
+  data: ManualAccountCreate
 ): Promise<Account> {
   return apiFetch("/api/v1/accounts/", {
     method: "POST",
     body: JSON.stringify(data),
-    token,
   });
 }
 
 export async function deleteAccount(
   id: string,
-  deleteTransactions: boolean,
-  token: string
+  deleteTransactions: boolean
 ): Promise<void> {
   return apiFetch<void>(`/api/v1/accounts/${id}?delete_transactions=${deleteTransactions}`, {
     method: "DELETE",
-    token,
   });
 }
 
 export async function updateAccount(
   id: string,
-  data: AccountUpdate,
-  token: string
+  data: AccountUpdate
 ): Promise<Account> {
   return apiFetch<Account>(`/api/v1/accounts/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
-    token,
   });
 }
 
 export async function importCsv(
   accountId: string,
-  file: File,
-  token: string
+  file: File
 ): Promise<{ imported: number; duplicates: number; errors: { row: number; error: string }[]; total_rows: number }> {
   const formData = new FormData();
   formData.append("file", file);
   const res = await fetch(`/api/v1/accounts/${accountId}/import-csv`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    credentials: "include",
     body: formData,
   });
   if (!res.ok) {
@@ -336,30 +307,26 @@ export async function updateTransaction(
     notes: string;
     pending: boolean;
     is_ignored: boolean;
-  }>,
-  token: string
+  }>
 ): Promise<Transaction> {
   return apiFetch(`/api/v1/accounts/transactions/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
-    token,
   });
 }
 
 export async function listAllTransactions(
-  token: string,
   limit = 100,
   offset = 0
 ): Promise<Transaction[]> {
-  return apiFetch(`/api/v1/accounts/transactions?limit=${limit}&offset=${offset}`, { token });
+  return apiFetch(`/api/v1/accounts/transactions?limit=${limit}&offset=${offset}`, {});
 }
 
 export async function listAccountTransactions(
   accountId: string,
-  token: string,
   limit = 50
 ): Promise<Transaction[]> {
-  return apiFetch(`/api/v1/accounts/${accountId}/transactions?limit=${limit}`, { token });
+  return apiFetch(`/api/v1/accounts/${accountId}/transactions?limit=${limit}`, {});
 }
 
 // ─── Properties ────────────────────────────────────────────────────────────
@@ -407,37 +374,32 @@ export interface PropertyCreate {
   leasing_fee_amount?: number;
 }
 
-export async function listProperties(token: string): Promise<Property[]> {
-  return apiFetch<Property[]>("/api/v1/properties/", { token });
+export async function listProperties(): Promise<Property[]> {
+  return apiFetch<Property[]>("/api/v1/properties/", {});
 }
 
 export async function createProperty(
-  data: PropertyCreate,
-  token: string
+  data: PropertyCreate
 ): Promise<Property> {
   return apiFetch<Property>("/api/v1/properties/", {
     method: "POST",
     body: JSON.stringify(data),
-    token,
   });
 }
 
 export async function updateProperty(
   id: string,
-  data: Partial<PropertyCreate>,
-  token: string
+  data: Partial<PropertyCreate>
 ): Promise<Property> {
   return apiFetch<Property>(`/api/v1/properties/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
-    token,
   });
 }
 
-export async function deleteProperty(id: string, token: string): Promise<void> {
+export async function deleteProperty(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/properties/${id}`, {
     method: "DELETE",
-    token,
   });
 }
 
@@ -454,16 +416,15 @@ export interface PropertyDocument {
   uploaded_at: string;
 }
 
-export async function listPropertyDocuments(propertyId: string, token: string): Promise<PropertyDocument[]> {
-  return apiFetch<PropertyDocument[]>(`/api/v1/properties/${propertyId}/documents`, { token });
+export async function listPropertyDocuments(propertyId: string): Promise<PropertyDocument[]> {
+  return apiFetch<PropertyDocument[]>(`/api/v1/properties/${propertyId}/documents`, {});
 }
 
 export async function uploadPropertyDocument(
   propertyId: string,
   file: File,
   category: string | null,
-  description: string | null,
-  token: string
+  description: string | null
 ): Promise<PropertyDocument> {
   const formData = new FormData();
   formData.append("file", file);
@@ -471,7 +432,7 @@ export async function uploadPropertyDocument(
   if (description) formData.append("description", description);
   const res = await fetch(`/api/v1/properties/${propertyId}/documents`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    credentials: "include",
     body: formData,
   });
   if (!res.ok) {
@@ -484,11 +445,10 @@ export async function uploadPropertyDocument(
 export async function downloadPropertyDocument(
   propertyId: string,
   docId: string,
-  filename: string,
-  token: string
+  filename: string
 ): Promise<void> {
   const res = await fetch(`/api/v1/properties/${propertyId}/documents/${docId}/download`, {
-    headers: { Authorization: `Bearer ${token}` },
+    credentials: "include",
   });
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const blob = await res.blob();
@@ -500,10 +460,9 @@ export async function downloadPropertyDocument(
   URL.revokeObjectURL(url);
 }
 
-export async function deletePropertyDocument(propertyId: string, docId: string, token: string): Promise<void> {
+export async function deletePropertyDocument(propertyId: string, docId: string): Promise<void> {
   return apiFetch<void>(`/api/v1/properties/${propertyId}/documents/${docId}`, {
     method: "DELETE",
-    token,
   });
 }
 
@@ -623,71 +582,71 @@ export interface PaymentCreate {
 }
 
 // Units
-export async function listUnits(propertyId: string, token: string): Promise<Unit[]> {
-  return apiFetch<Unit[]>(`/api/v1/properties/${propertyId}/units`, { token });
+export async function listUnits(propertyId: string): Promise<Unit[]> {
+  return apiFetch<Unit[]>(`/api/v1/properties/${propertyId}/units`, {});
 }
-export async function createUnit(propertyId: string, data: UnitCreate, token: string): Promise<Unit> {
-  return apiFetch<Unit>(`/api/v1/properties/${propertyId}/units`, { method: "POST", body: JSON.stringify(data), token });
+export async function createUnit(propertyId: string, data: UnitCreate): Promise<Unit> {
+  return apiFetch<Unit>(`/api/v1/properties/${propertyId}/units`, { method: "POST", body: JSON.stringify(data) });
 }
-export async function updateUnit(id: string, data: Partial<UnitCreate>, token: string): Promise<Unit> {
-  return apiFetch<Unit>(`/api/v1/units/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
+export async function updateUnit(id: string, data: Partial<UnitCreate>): Promise<Unit> {
+  return apiFetch<Unit>(`/api/v1/units/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 }
-export async function deleteUnit(id: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/units/${id}`, { method: "DELETE", token });
+export async function deleteUnit(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/units/${id}`, { method: "DELETE" });
 }
 
 // Tenants
-export async function listTenants(token: string): Promise<Tenant[]> {
-  return apiFetch<Tenant[]>("/api/v1/tenants/", { token });
+export async function listTenants(): Promise<Tenant[]> {
+  return apiFetch<Tenant[]>("/api/v1/tenants/", {});
 }
-export async function createTenant(data: TenantCreate, token: string): Promise<Tenant> {
-  return apiFetch<Tenant>("/api/v1/tenants/", { method: "POST", body: JSON.stringify(data), token });
+export async function createTenant(data: TenantCreate): Promise<Tenant> {
+  return apiFetch<Tenant>("/api/v1/tenants/", { method: "POST", body: JSON.stringify(data) });
 }
-export async function updateTenant(id: string, data: Partial<TenantCreate>, token: string): Promise<Tenant> {
-  return apiFetch<Tenant>(`/api/v1/tenants/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
+export async function updateTenant(id: string, data: Partial<TenantCreate>): Promise<Tenant> {
+  return apiFetch<Tenant>(`/api/v1/tenants/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 }
-export async function deleteTenant(id: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/tenants/${id}`, { method: "DELETE", token });
+export async function deleteTenant(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/tenants/${id}`, { method: "DELETE" });
 }
 
 // Leases
-export async function listLeases(token: string, status?: string): Promise<Lease[]> {
+export async function listLeases(status?: string): Promise<Lease[]> {
   const qs = status ? `?status=${status}` : "";
-  return apiFetch<Lease[]>(`/api/v1/leases/${qs}`, { token });
+  return apiFetch<Lease[]>(`/api/v1/leases/${qs}`, {});
 }
-export async function listUnitLeases(unitId: string, token: string): Promise<Lease[]> {
-  return apiFetch<Lease[]>(`/api/v1/units/${unitId}/leases`, { token });
+export async function listUnitLeases(unitId: string): Promise<Lease[]> {
+  return apiFetch<Lease[]>(`/api/v1/units/${unitId}/leases`, {});
 }
-export async function createLease(data: LeaseCreate, token: string): Promise<Lease> {
-  return apiFetch<Lease>("/api/v1/leases/", { method: "POST", body: JSON.stringify(data), token });
+export async function createLease(data: LeaseCreate): Promise<Lease> {
+  return apiFetch<Lease>("/api/v1/leases/", { method: "POST", body: JSON.stringify(data) });
 }
-export async function updateLease(id: string, data: LeaseUpdate, token: string): Promise<Lease> {
-  return apiFetch<Lease>(`/api/v1/leases/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
+export async function updateLease(id: string, data: LeaseUpdate): Promise<Lease> {
+  return apiFetch<Lease>(`/api/v1/leases/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 }
-export async function deleteLease(id: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/leases/${id}`, { method: "DELETE", token });
+export async function deleteLease(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/leases/${id}`, { method: "DELETE" });
 }
 
 // Charges
-export async function listCharges(leaseId: string, token: string): Promise<RentCharge[]> {
-  return apiFetch<RentCharge[]>(`/api/v1/leases/${leaseId}/charges`, { token });
+export async function listCharges(leaseId: string): Promise<RentCharge[]> {
+  return apiFetch<RentCharge[]>(`/api/v1/leases/${leaseId}/charges`, {});
 }
-export async function createCharge(leaseId: string, data: RentChargeCreate, token: string): Promise<RentCharge> {
-  return apiFetch<RentCharge>(`/api/v1/leases/${leaseId}/charges`, { method: "POST", body: JSON.stringify(data), token });
+export async function createCharge(leaseId: string, data: RentChargeCreate): Promise<RentCharge> {
+  return apiFetch<RentCharge>(`/api/v1/leases/${leaseId}/charges`, { method: "POST", body: JSON.stringify(data) });
 }
 
 // Payments
-export async function listPayments(leaseId: string, token: string): Promise<Payment[]> {
-  return apiFetch<Payment[]>(`/api/v1/leases/${leaseId}/payments`, { token });
+export async function listPayments(leaseId: string): Promise<Payment[]> {
+  return apiFetch<Payment[]>(`/api/v1/leases/${leaseId}/payments`, {});
 }
-export async function createPayment(leaseId: string, data: PaymentCreate, token: string): Promise<Payment> {
-  return apiFetch<Payment>(`/api/v1/leases/${leaseId}/payments`, { method: "POST", body: JSON.stringify(data), token });
+export async function createPayment(leaseId: string, data: PaymentCreate): Promise<Payment> {
+  return apiFetch<Payment>(`/api/v1/leases/${leaseId}/payments`, { method: "POST", body: JSON.stringify(data) });
 }
-export async function updatePayment(id: string, data: Partial<PaymentCreate>, token: string): Promise<Payment> {
-  return apiFetch<Payment>(`/api/v1/payments/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
+export async function updatePayment(id: string, data: Partial<PaymentCreate>): Promise<Payment> {
+  return apiFetch<Payment>(`/api/v1/payments/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 }
-export async function deletePayment(id: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/payments/${id}`, { method: "DELETE", token });
+export async function deletePayment(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/payments/${id}`, { method: "DELETE" });
 }
 
 export interface PaymentImportResult {
@@ -699,13 +658,12 @@ export interface PaymentImportResult {
 export async function importPayments(
   leaseId: string,
   file: File,
-  token: string,
 ): Promise<PaymentImportResult> {
   const formData = new FormData();
   formData.append("file", file);
   const res = await fetch(`/api/v1/leases/${leaseId}/payments/import-csv`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    credentials: "include",
     body: formData,
   });
   if (!res.ok) {
@@ -754,17 +712,17 @@ export interface LoanCreate {
   notes?: string;
 }
 
-export async function listLoans(propertyId: string, token: string): Promise<Loan[]> {
-  return apiFetch<Loan[]>(`/api/v1/properties/${propertyId}/loans`, { token });
+export async function listLoans(propertyId: string): Promise<Loan[]> {
+  return apiFetch<Loan[]>(`/api/v1/properties/${propertyId}/loans`, {});
 }
-export async function createLoan(propertyId: string, data: LoanCreate, token: string): Promise<Loan> {
-  return apiFetch<Loan>(`/api/v1/properties/${propertyId}/loans`, { method: "POST", body: JSON.stringify(data), token });
+export async function createLoan(propertyId: string, data: LoanCreate): Promise<Loan> {
+  return apiFetch<Loan>(`/api/v1/properties/${propertyId}/loans`, { method: "POST", body: JSON.stringify(data) });
 }
-export async function updateLoan(id: string, data: Partial<LoanCreate>, token: string): Promise<Loan> {
-  return apiFetch<Loan>(`/api/v1/loans/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
+export async function updateLoan(id: string, data: Partial<LoanCreate>): Promise<Loan> {
+  return apiFetch<Loan>(`/api/v1/loans/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 }
-export async function deleteLoan(id: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/loans/${id}`, { method: "DELETE", token });
+export async function deleteLoan(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/loans/${id}`, { method: "DELETE" });
 }
 
 // ─── Property Details: Recurring Costs ───────────────────────────────────────
@@ -794,17 +752,17 @@ export interface PropertyCostCreate {
   notes?: string;
 }
 
-export async function listPropertyCosts(propertyId: string, token: string): Promise<PropertyCost[]> {
-  return apiFetch<PropertyCost[]>(`/api/v1/properties/${propertyId}/costs`, { token });
+export async function listPropertyCosts(propertyId: string): Promise<PropertyCost[]> {
+  return apiFetch<PropertyCost[]>(`/api/v1/properties/${propertyId}/costs`, {});
 }
-export async function createPropertyCost(propertyId: string, data: PropertyCostCreate, token: string): Promise<PropertyCost> {
-  return apiFetch<PropertyCost>(`/api/v1/properties/${propertyId}/costs`, { method: "POST", body: JSON.stringify(data), token });
+export async function createPropertyCost(propertyId: string, data: PropertyCostCreate): Promise<PropertyCost> {
+  return apiFetch<PropertyCost>(`/api/v1/properties/${propertyId}/costs`, { method: "POST", body: JSON.stringify(data) });
 }
-export async function updatePropertyCost(id: string, data: Partial<PropertyCostCreate>, token: string): Promise<PropertyCost> {
-  return apiFetch<PropertyCost>(`/api/v1/property-costs/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
+export async function updatePropertyCost(id: string, data: Partial<PropertyCostCreate>): Promise<PropertyCost> {
+  return apiFetch<PropertyCost>(`/api/v1/property-costs/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 }
-export async function deletePropertyCost(id: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/property-costs/${id}`, { method: "DELETE", token });
+export async function deletePropertyCost(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/property-costs/${id}`, { method: "DELETE" });
 }
 
 // ─── Property Details: Maintenance Expenses ───────────────────────────────────
@@ -832,29 +790,28 @@ export interface MaintenanceExpenseCreate {
   notes?: string;
 }
 
-export async function listMaintenanceExpenses(propertyId: string, token: string): Promise<MaintenanceExpense[]> {
-  return apiFetch<MaintenanceExpense[]>(`/api/v1/properties/${propertyId}/expenses`, { token });
+export async function listMaintenanceExpenses(propertyId: string): Promise<MaintenanceExpense[]> {
+  return apiFetch<MaintenanceExpense[]>(`/api/v1/properties/${propertyId}/expenses`, {});
 }
-export async function createMaintenanceExpense(propertyId: string, data: MaintenanceExpenseCreate, token: string): Promise<MaintenanceExpense> {
-  return apiFetch<MaintenanceExpense>(`/api/v1/properties/${propertyId}/expenses`, { method: "POST", body: JSON.stringify(data), token });
+export async function createMaintenanceExpense(propertyId: string, data: MaintenanceExpenseCreate): Promise<MaintenanceExpense> {
+  return apiFetch<MaintenanceExpense>(`/api/v1/properties/${propertyId}/expenses`, { method: "POST", body: JSON.stringify(data) });
 }
-export async function updateMaintenanceExpense(id: string, data: Partial<MaintenanceExpenseCreate>, token: string): Promise<MaintenanceExpense> {
-  return apiFetch<MaintenanceExpense>(`/api/v1/expenses/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
+export async function updateMaintenanceExpense(id: string, data: Partial<MaintenanceExpenseCreate>): Promise<MaintenanceExpense> {
+  return apiFetch<MaintenanceExpense>(`/api/v1/expenses/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 }
-export async function deleteMaintenanceExpense(id: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/expenses/${id}`, { method: "DELETE", token });
+export async function deleteMaintenanceExpense(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/expenses/${id}`, { method: "DELETE" });
 }
 
 export async function importMaintenanceExpenses(
   propertyId: string,
-  file: File,
-  token: string
+  file: File
 ): Promise<{ imported: number; errors: { row: number; error: string }[]; total_rows: number }> {
   const formData = new FormData();
   formData.append("file", file);
   const res = await fetch(`/api/v1/properties/${propertyId}/expenses/import-csv`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    credentials: "include",
     body: formData,
   });
   if (!res.ok) {
@@ -883,14 +840,14 @@ export interface PropertyValuationCreate {
   notes?: string;
 }
 
-export async function listPropertyValuations(propertyId: string, token: string): Promise<PropertyValuation[]> {
-  return apiFetch<PropertyValuation[]>(`/api/v1/properties/${propertyId}/valuations`, { token });
+export async function listPropertyValuations(propertyId: string): Promise<PropertyValuation[]> {
+  return apiFetch<PropertyValuation[]>(`/api/v1/properties/${propertyId}/valuations`, {});
 }
-export async function createPropertyValuation(propertyId: string, data: PropertyValuationCreate, token: string): Promise<PropertyValuation> {
-  return apiFetch<PropertyValuation>(`/api/v1/properties/${propertyId}/valuations`, { method: "POST", body: JSON.stringify(data), token });
+export async function createPropertyValuation(propertyId: string, data: PropertyValuationCreate): Promise<PropertyValuation> {
+  return apiFetch<PropertyValuation>(`/api/v1/properties/${propertyId}/valuations`, { method: "POST", body: JSON.stringify(data) });
 }
-export async function deletePropertyValuation(id: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/valuations/${id}`, { method: "DELETE", token });
+export async function deletePropertyValuation(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/valuations/${id}`, { method: "DELETE" });
 }
 
 // ─── Recurring Transactions ──────────────────────────────────────────────────
@@ -920,39 +877,35 @@ export interface RecurringTransaction {
   created_at: string;
 }
 
-export async function detectRecurring(token: string): Promise<RecurringCandidate[]> {
-  return apiFetch<RecurringCandidate[]>("/api/v1/recurring/detect", { method: "POST", token });
+export async function detectRecurring(): Promise<RecurringCandidate[]> {
+  return apiFetch<RecurringCandidate[]>("/api/v1/recurring/detect", { method: "POST" });
 }
 
 export async function confirmRecurring(
-  candidates: RecurringCandidate[],
-  token: string
+  candidates: RecurringCandidate[]
 ): Promise<RecurringTransaction[]> {
   return apiFetch<RecurringTransaction[]>("/api/v1/recurring/confirm", {
     method: "POST",
     body: JSON.stringify({ candidates }),
-    token,
   });
 }
 
-export async function listRecurring(token: string): Promise<RecurringTransaction[]> {
-  return apiFetch<RecurringTransaction[]>("/api/v1/recurring/", { token });
+export async function listRecurring(): Promise<RecurringTransaction[]> {
+  return apiFetch<RecurringTransaction[]>("/api/v1/recurring/", {});
 }
 
 export async function updateRecurring(
   id: string,
-  data: { name?: string; is_active?: boolean; notes?: string; frequency?: string },
-  token: string
+  data: { name?: string; is_active?: boolean; notes?: string; frequency?: string }
 ): Promise<RecurringTransaction> {
   return apiFetch<RecurringTransaction>(`/api/v1/recurring/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
-    token,
   });
 }
 
-export async function deleteRecurring(id: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/recurring/${id}`, { method: "DELETE", token });
+export async function deleteRecurring(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/recurring/${id}`, { method: "DELETE" });
 }
 
 // ─── Investment Holdings ─────────────────────────────────────────────────────
@@ -971,8 +924,8 @@ export interface Holding {
   created_at: string;
 }
 
-export async function listHoldings(accountId: string, token: string): Promise<Holding[]> {
-  return apiFetch<Holding[]>(`/api/v1/accounts/${accountId}/holdings`, { token });
+export async function listHoldings(accountId: string): Promise<Holding[]> {
+  return apiFetch<Holding[]>(`/api/v1/accounts/${accountId}/holdings`, {});
 }
 
 export interface HoldingCreate {
@@ -993,20 +946,20 @@ export interface TickerInfo {
   found: boolean;
 }
 
-export async function getTickerInfo(symbol: string, token: string): Promise<TickerInfo> {
-  return apiFetch<TickerInfo>(`/api/v1/investments/ticker-info?symbol=${encodeURIComponent(symbol)}`, { token });
+export async function getTickerInfo(symbol: string): Promise<TickerInfo> {
+  return apiFetch<TickerInfo>(`/api/v1/investments/ticker-info?symbol=${encodeURIComponent(symbol)}`, {});
 }
 
-export async function createHolding(accountId: string, data: HoldingCreate, token: string): Promise<Holding> {
-  return apiFetch<Holding>(`/api/v1/accounts/${accountId}/holdings`, { token, method: "POST", body: JSON.stringify(data) });
+export async function createHolding(accountId: string, data: HoldingCreate): Promise<Holding> {
+  return apiFetch<Holding>(`/api/v1/accounts/${accountId}/holdings`, { method: "POST", body: JSON.stringify(data) });
 }
 
-export async function updateHolding(holdingId: string, data: HoldingUpdate, token: string): Promise<Holding> {
-  return apiFetch<Holding>(`/api/v1/accounts/holdings/${holdingId}`, { token, method: "PATCH", body: JSON.stringify(data) });
+export async function updateHolding(holdingId: string, data: HoldingUpdate): Promise<Holding> {
+  return apiFetch<Holding>(`/api/v1/accounts/holdings/${holdingId}`, { method: "PATCH", body: JSON.stringify(data) });
 }
 
-export async function deleteHolding(holdingId: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/accounts/holdings/${holdingId}`, { token, method: "DELETE" });
+export async function deleteHolding(holdingId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/accounts/holdings/${holdingId}`, { method: "DELETE" });
 }
 
 // ─── Categorization Rules ───────────────────────────────────────────────────
@@ -1036,41 +989,36 @@ export interface RuleCreate {
   priority?: number;
 }
 
-export async function listRules(token: string): Promise<Rule[]> {
-  return apiFetch<Rule[]>("/api/v1/rules/", { token });
+export async function listRules(): Promise<Rule[]> {
+  return apiFetch<Rule[]>("/api/v1/rules/", {});
 }
 
-export async function createRule(data: RuleCreate, token: string): Promise<Rule> {
+export async function createRule(data: RuleCreate): Promise<Rule> {
   return apiFetch<Rule>("/api/v1/rules/", {
     method: "POST",
     body: JSON.stringify(data),
-    token,
   });
 }
 
 export async function updateRule(
   id: string,
-  data: Partial<RuleCreate & { is_active: boolean }>,
-  token: string
+  data: Partial<RuleCreate & { is_active: boolean }>
 ): Promise<Rule> {
   return apiFetch<Rule>(`/api/v1/rules/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
-    token,
   });
 }
 
-export async function deleteRule(id: string, token: string): Promise<void> {
+export async function deleteRule(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/rules/${id}`, {
     method: "DELETE",
-    token,
   });
 }
 
-export async function applyRules(token: string): Promise<{ applied: number }> {
+export async function applyRules(): Promise<{ applied: number }> {
   return apiFetch<{ applied: number }>("/api/v1/rules/apply", {
     method: "POST",
-    token,
   });
 }
 
@@ -1084,32 +1032,28 @@ export interface CustomCategory {
   created_at: string;
 }
 
-export async function listCustomCategories(token: string): Promise<CustomCategory[]> {
-  return apiFetch<CustomCategory[]>("/api/v1/categories/", { token });
+export async function listCustomCategories(): Promise<CustomCategory[]> {
+  return apiFetch<CustomCategory[]>("/api/v1/categories/", {});
 }
 
 export async function createCustomCategory(
-  data: { name: string; parent_id?: string; is_income?: boolean },
-  token: string
+  data: { name: string; parent_id?: string; is_income?: boolean }
 ): Promise<CustomCategory> {
   return apiFetch<CustomCategory>("/api/v1/categories/", {
     method: "POST",
     body: JSON.stringify(data),
-    token,
   });
 }
 
-export async function deleteCustomCategory(id: string, token: string): Promise<void> {
+export async function deleteCustomCategory(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/categories/${id}`, {
     method: "DELETE",
-    token,
   });
 }
 
-export async function seedDefaultCategories(token: string): Promise<CustomCategory[]> {
+export async function seedDefaultCategories(): Promise<CustomCategory[]> {
   return apiFetch<CustomCategory[]>("/api/v1/categories/seed-defaults", {
     method: "POST",
-    token,
   });
 }
 
@@ -1134,17 +1078,17 @@ export interface CapitalEventCreate {
   notes?: string;
 }
 
-export async function listCapitalEvents(propertyId: string, token: string): Promise<CapitalEvent[]> {
-  return apiFetch<CapitalEvent[]>(`/api/v1/properties/${propertyId}/capital-events`, { token });
+export async function listCapitalEvents(propertyId: string): Promise<CapitalEvent[]> {
+  return apiFetch<CapitalEvent[]>(`/api/v1/properties/${propertyId}/capital-events`, {});
 }
-export async function createCapitalEvent(propertyId: string, data: CapitalEventCreate, token: string): Promise<CapitalEvent> {
-  return apiFetch<CapitalEvent>(`/api/v1/properties/${propertyId}/capital-events`, { method: "POST", body: JSON.stringify(data), token });
+export async function createCapitalEvent(propertyId: string, data: CapitalEventCreate): Promise<CapitalEvent> {
+  return apiFetch<CapitalEvent>(`/api/v1/properties/${propertyId}/capital-events`, { method: "POST", body: JSON.stringify(data) });
 }
-export async function updateCapitalEvent(id: string, data: Partial<CapitalEventCreate>, token: string): Promise<CapitalEvent> {
-  return apiFetch<CapitalEvent>(`/api/v1/capital-events/${id}`, { method: "PATCH", body: JSON.stringify(data), token });
+export async function updateCapitalEvent(id: string, data: Partial<CapitalEventCreate>): Promise<CapitalEvent> {
+  return apiFetch<CapitalEvent>(`/api/v1/capital-events/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 }
-export async function deleteCapitalEvent(id: string, token: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/capital-events/${id}`, { method: "DELETE", token });
+export async function deleteCapitalEvent(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/capital-events/${id}`, { method: "DELETE" });
 }
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
@@ -1269,25 +1213,23 @@ export async function getPropertyReport(
   propertyId: string,
   year: number,
   month: string, // YYYY-MM
-  token: string,
   period?: string, // "default" | "ltd"
 ): Promise<PropertyReport> {
   const params = new URLSearchParams({ year: String(year), month });
   if (period) params.set("period", period);
   return apiFetch<PropertyReport>(
     `/api/v1/reports/property/${propertyId}?${params}`,
-    { token }
+    {}
   );
 }
 
 export async function getPortfolioReport(
   year: number,
   month: string, // YYYY-MM
-  token: string
 ): Promise<PortfolioReport> {
   return apiFetch<PortfolioReport>(
     `/api/v1/reports/portfolio?year=${year}&month=${month}`,
-    { token }
+    {}
   );
 }
 
@@ -1314,33 +1256,28 @@ export interface RefreshResult {
   refreshed: number;
 }
 
-export async function getInvestmentSettings(token: string): Promise<InvestmentRefreshSettings> {
-  return apiFetch<InvestmentRefreshSettings>("/api/v1/investments/settings", { token });
+export async function getInvestmentSettings(): Promise<InvestmentRefreshSettings> {
+  return apiFetch<InvestmentRefreshSettings>("/api/v1/investments/settings", {});
 }
 
 export async function updateInvestmentSettings(
-  data: InvestmentRefreshSettings,
-  token: string
+  data: InvestmentRefreshSettings
 ): Promise<InvestmentRefreshSettings> {
-  return apiFetch<InvestmentRefreshSettings>("/api/v1/investments/settings", {
-    token,
-    method: "PATCH",
+  return apiFetch<InvestmentRefreshSettings>("/api/v1/investments/settings", { method: "PATCH",
     body: JSON.stringify(data),
   });
 }
 
-export async function getRefreshStatus(token: string): Promise<RefreshStatus> {
-  return apiFetch<RefreshStatus>("/api/v1/investments/refresh-status", { token });
+export async function getRefreshStatus(): Promise<RefreshStatus> {
+  return apiFetch<RefreshStatus>("/api/v1/investments/refresh-status", {});
 }
 
-export async function getMarketStatus(token: string): Promise<MarketStatus> {
-  return apiFetch<MarketStatus>("/api/v1/investments/market-status", { token });
+export async function getMarketStatus(): Promise<MarketStatus> {
+  return apiFetch<MarketStatus>("/api/v1/investments/market-status", {});
 }
 
-export async function refreshInvestmentPrices(token: string): Promise<RefreshResult> {
-  return apiFetch<RefreshResult>("/api/v1/investments/refresh-prices", {
-    token,
-    method: "POST",
+export async function refreshInvestmentPrices(): Promise<RefreshResult> {
+  return apiFetch<RefreshResult>("/api/v1/investments/refresh-prices", { method: "POST",
   });
 }
 
@@ -1366,56 +1303,38 @@ export interface SnapTradeSyncResponse {
   holdings_synced: number;
 }
 
-export async function registerSnapTradeUser(
-  token: string
-): Promise<SnapTradeRegisterResponse> {
-  return apiFetch<SnapTradeRegisterResponse>("/api/v1/snaptrade/register-user", {
-    token,
-    method: "POST",
+export async function registerSnapTradeUser(): Promise<SnapTradeRegisterResponse> {
+  return apiFetch<SnapTradeRegisterResponse>("/api/v1/snaptrade/register-user", { method: "POST",
   });
 }
 
-export async function getSnapTradeConnectUrl(
-  token: string
-): Promise<{ redirect_url: string }> {
-  return apiFetch<{ redirect_url: string }>("/api/v1/snaptrade/connect-url", {
-    token,
-    method: "POST",
+export async function getSnapTradeConnectUrl(): Promise<{ redirect_url: string }> {
+  return apiFetch<{ redirect_url: string }>("/api/v1/snaptrade/connect-url", { method: "POST",
   });
 }
 
-export async function listSnapTradeConnections(
-  token: string
-): Promise<SnapTradeConnection[]> {
-  return apiFetch<SnapTradeConnection[]>("/api/v1/snaptrade/connections", { token });
+export async function listSnapTradeConnections(): Promise<SnapTradeConnection[]> {
+  return apiFetch<SnapTradeConnection[]>("/api/v1/snaptrade/connections", {});
 }
 
-export async function syncSnapTradeAuthorizations(
-  token: string
-): Promise<SnapTradeConnection[]> {
-  return apiFetch<SnapTradeConnection[]>("/api/v1/snaptrade/sync-authorizations", {
-    token,
-    method: "POST",
+export async function syncSnapTradeAuthorizations(): Promise<SnapTradeConnection[]> {
+  return apiFetch<SnapTradeConnection[]>("/api/v1/snaptrade/sync-authorizations", { method: "POST",
   });
 }
 
 export async function syncSnapTradeConnection(
-  connectionId: string,
-  token: string
+  connectionId: string
 ): Promise<SnapTradeSyncResponse> {
   return apiFetch<SnapTradeSyncResponse>(
     `/api/v1/snaptrade/connections/${connectionId}/sync`,
-    { token, method: "POST" }
+    { method: "POST" }
   );
 }
 
 export async function deleteSnapTradeConnection(
-  connectionId: string,
-  token: string
+  connectionId: string
 ): Promise<void> {
-  await apiFetch<void>(`/api/v1/snaptrade/connections/${connectionId}`, {
-    token,
-    method: "DELETE",
+  await apiFetch<void>(`/api/v1/snaptrade/connections/${connectionId}`, { method: "DELETE",
   });
 }
 
@@ -1477,74 +1396,64 @@ export interface BudgetBulkCreate {
 
 export async function listBudgets(
   month: number,
-  year: number,
-  token: string
+  year: number
 ): Promise<BudgetWithActual[]> {
   return apiFetch<BudgetWithActual[]>(
     `/api/v1/budgets/?month=${month}&year=${year}`,
-    { token }
+    {}
   );
 }
 
 export async function listLongTermBudgets(
-  year: number,
-  token: string
+  year: number
 ): Promise<BudgetWithActual[]> {
   return apiFetch<BudgetWithActual[]>(
     `/api/v1/budgets/?year=${year}&budget_type=long_term`,
-    { token }
+    {}
   );
 }
 
 export async function createBudget(
-  data: BudgetCreate,
-  token: string
+  data: BudgetCreate
 ): Promise<BudgetWithActual> {
   return apiFetch<BudgetWithActual>("/api/v1/budgets/", {
     method: "POST",
     body: JSON.stringify(data),
-    token,
   });
 }
 
 export async function createBudgetsBulk(
-  data: BudgetBulkCreate,
-  token: string
+  data: BudgetBulkCreate
 ): Promise<BudgetWithActual[]> {
   return apiFetch<BudgetWithActual[]>("/api/v1/budgets/bulk", {
     method: "POST",
     body: JSON.stringify(data),
-    token,
   });
 }
 
 export async function updateBudget(
   id: string,
-  data: BudgetUpdate,
-  token: string
+  data: BudgetUpdate
 ): Promise<BudgetWithActual> {
   return apiFetch<BudgetWithActual>(`/api/v1/budgets/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
-    token,
   });
 }
 
-export async function deleteBudget(id: string, token: string): Promise<void> {
+export async function deleteBudget(id: string): Promise<void> {
   await apiFetch<void>(`/api/v1/budgets/${id}`, {
     method: "DELETE",
-    token,
   });
 }
 
 export async function copyBudgetsFromLastMonth(
   month: number,
-  year: number,
-  token: string
+  year: number
 ): Promise<BudgetWithActual[]> {
   return apiFetch<BudgetWithActual[]>(
     `/api/v1/budgets/copy-from-last-month?month=${month}&year=${year}`,
-    { method: "POST", token }
+    { method: "POST" }
   );
 }
 
@@ -1561,18 +1470,95 @@ export interface NetWorthSnapshot {
 }
 
 export async function listNetWorthSnapshots(
-  days: number,
-  token: string
+  days: number
 ): Promise<NetWorthSnapshot[]> {
   return apiFetch<NetWorthSnapshot[]>(
     `/api/v1/networth/snapshots?days=${days}`,
-    { token }
+    {}
   );
 }
 
-export async function takeNetWorthSnapshot(token: string): Promise<NetWorthSnapshot> {
+export async function takeNetWorthSnapshot(): Promise<NetWorthSnapshot> {
   return apiFetch<NetWorthSnapshot>("/api/v1/networth/snapshots", {
     method: "POST",
-    token,
   });
+}
+
+
+// ─── Financial Documents ────────────────────────────────────────────────────
+
+export interface FinancialDocument {
+  id: string;
+  household_id: string;
+  owner_user_id: string | null;
+  document_type: string;
+  category: string;
+  reference_year: number | null;
+  filename: string;
+  stored_filename: string;
+  file_size: number;
+  content_type: string;
+  description: string | null;
+  uploaded_at: string;
+}
+
+export async function listFinancialDocuments(
+  year?: number | null,
+  document_type?: string | null
+): Promise<FinancialDocument[]> {
+  const params = new URLSearchParams();
+  if (year) params.append("year", String(year));
+  if (document_type) params.append("document_type", document_type);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return apiFetch<FinancialDocument[]>(`/api/v1/financial-documents${qs}`, {});
+}
+
+export async function uploadFinancialDocument(
+  file: File,
+  meta: {
+    document_type: string;
+    category: string;
+    reference_year?: number | null;
+    owner_user_id?: string | null;
+    description?: string | null;
+  }
+): Promise<FinancialDocument> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("document_type", meta.document_type);
+  formData.append("category", meta.category);
+  if (meta.reference_year != null) formData.append("reference_year", String(meta.reference_year));
+  if (meta.owner_user_id) formData.append("owner_user_id", meta.owner_user_id);
+  if (meta.description) formData.append("description", meta.description);
+  const res = await fetch("/api/v1/financial-documents", {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function downloadFinancialDocument(
+  docId: string,
+  filename: string
+): Promise<void> {
+  const res = await fetch(`/api/v1/financial-documents/${docId}/download`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function deleteFinancialDocument(docId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/financial-documents/${docId}`, { method: "DELETE" });
 }

@@ -3,7 +3,6 @@
 import { useEffect, useState, memo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  getToken,
   listProperties,
   listUnits,
   createUnit,
@@ -134,29 +133,25 @@ export default function RentalsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const token = getToken();
-
   useEffect(() => {
-    if (!token) { router.replace("/login"); return; }
     loadAll();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadAll() {
-    if (!token) return;
     setLoading(true);
     try {
       const [props, tnts, lses] = await Promise.all([
-        listProperties(token),
-        listTenants(token),
-        listLeases(token),
+        listProperties(),
+        listTenants(),
+        listLeases(),
       ]);
       setProperties(props.filter((p) => !p.is_primary_residence));
       setTenants(tnts);
       setAllLeases(lses);
       // Load all units for all properties to enable property-name lookup in PaymentsTab
       const rentalProps = props.filter((p) => !p.is_primary_residence);
-      const unitLists = await Promise.all(rentalProps.map((p) => listUnits(p.id, token).catch(() => [])));
+      const unitLists = await Promise.all(rentalProps.map((p) => listUnits(p.id).catch(() => [])));
       setAllUnits(unitLists.flat());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
@@ -205,7 +200,6 @@ export default function RentalsPage() {
           properties={properties}
           allLeases={allLeases}
           tenants={tenants}
-          token={token!}
         />
       )}
       {tab === "Units & Leases" && (
@@ -214,7 +208,6 @@ export default function RentalsPage() {
           tenants={tenants}
           allLeases={allLeases}
           setAllLeases={setAllLeases}
-          token={token!}
         />
       )}
       {tab === "Tenants" && (
@@ -222,7 +215,6 @@ export default function RentalsPage() {
           tenants={tenants}
           setTenants={setTenants}
           allLeases={allLeases}
-          token={token!}
         />
       )}
       {tab === "Payments" && (
@@ -231,13 +223,11 @@ export default function RentalsPage() {
           tenants={tenants}
           properties={properties}
           allUnits={allUnits}
-          token={token!}
         />
       )}
       {tab === "Reports" && (
         <ReportsTab
           properties={properties}
-          token={token!}
         />
       )}
     </div>
@@ -247,12 +237,11 @@ export default function RentalsPage() {
 // ─── Overview Tab ──────────────────────────────────────────────────────────
 
 function OverviewTab({
-  properties, allLeases, tenants, token,
+  properties, allLeases, tenants,
 }: {
   properties: Property[];
   allLeases: Lease[];
   tenants: Tenant[];
-  token: string;
 }) {
   const [recentPayments, setRecentPayments] = useState<(Payment & { leaseLabel: string })[]>([]);
 
@@ -262,7 +251,7 @@ function OverviewTab({
       const paymentsByLease = await Promise.all(
         activeLeases.slice(0, 5).map(async (l) => {
           try {
-            const pays = await listPayments(l.id, token);
+            const pays = await listPayments(l.id);
             return pays.slice(0, 3).map((p) => ({ ...p, leaseLabel: l.id }));
           } catch { return []; }
         })
@@ -323,13 +312,12 @@ function OverviewTab({
 // ─── Units & Leases Tab ────────────────────────────────────────────────────
 
 function UnitsLeasesTab({
-  properties, tenants, allLeases, setAllLeases, token,
+  properties, tenants, allLeases, setAllLeases,
 }: {
   properties: Property[];
   tenants: Tenant[];
   allLeases: Lease[];
   setAllLeases: React.Dispatch<React.SetStateAction<Lease[]>>;
-  token: string;
 }) {
   const [selectedPropId, setSelectedPropId] = useState<string>(properties[0]?.id ?? "");
   const [units, setUnits] = useState<Unit[]>([]);
@@ -361,7 +349,7 @@ function UnitsLeasesTab({
   async function loadUnits(propId: string) {
     setLoadingUnits(true);
     try {
-      setUnits(await listUnits(propId, token));
+      setUnits(await listUnits(propId));
     } catch { /* ignore */ }
     finally { setLoadingUnits(false); }
   }
@@ -371,7 +359,7 @@ function UnitsLeasesTab({
     if (!unitForm.unit_label.trim()) return;
     setSavingUnit(true);
     try {
-      const u = await createUnit(selectedPropId, unitForm, token);
+      const u = await createUnit(selectedPropId, unitForm);
       setUnits((prev) => [...prev, u]);
       setUnitForm({ unit_label: "" });
       setShowAddUnit(false);
@@ -382,7 +370,7 @@ function UnitsLeasesTab({
   async function handleDeleteUnit(id: string) {
     if (!confirm("Delete this unit? All associated leases will also be removed.")) return;
     try {
-      await deleteUnit(id, token);
+      await deleteUnit(id);
       setUnits((prev) => prev.filter((u) => u.id !== id));
     } catch { /* ignore */ }
   }
@@ -392,7 +380,7 @@ function UnitsLeasesTab({
     setExpandedUnit(unitId);
     if (!unitLeases[unitId]) {
       try {
-        const lses = await listUnitLeases(unitId, token);
+        const lses = await listUnitLeases(unitId);
         setUnitLeases((prev) => ({ ...prev, [unitId]: lses }));
       } catch { /* ignore */ }
     }
@@ -402,7 +390,7 @@ function UnitsLeasesTab({
     if (!leaseForm.tenant_id || !leaseForm.lease_start || !leaseForm.monthly_rent) return;
     setSavingLease(true);
     try {
-      const lease = await createLease({ ...leaseForm, unit_id: unitId } as LeaseCreate, token);
+      const lease = await createLease({ ...leaseForm, unit_id: unitId } as LeaseCreate);
       setUnitLeases((prev) => ({ ...prev, [unitId]: [lease, ...(prev[unitId] ?? [])] }));
       setAllLeases((prev) => [lease, ...prev]);
       setShowAddLease(null);
@@ -413,7 +401,7 @@ function UnitsLeasesTab({
 
   async function handleEndLease(lease: Lease) {
     const today = new Date().toISOString().split("T")[0];
-    const updated = await updateLease(lease.id, { status: "ended", move_out_date: today } as LeaseUpdate, token);
+    const updated = await updateLease(lease.id, { status: "ended", move_out_date: today } as LeaseUpdate);
     setUnitLeases((prev) => ({
       ...prev,
       [lease.unit_id]: (prev[lease.unit_id] ?? []).map((l) => l.id === updated.id ? updated : l),
@@ -452,7 +440,7 @@ function UnitsLeasesTab({
         notes:         f.notes || null,
       };
 
-      const updated = await updateLease(leaseId, payload, token);
+      const updated = await updateLease(leaseId, payload);
       setUnitLeases((prev) => ({
         ...prev,
         [unitId]: (prev[unitId] ?? []).map((l) => l.id === updated.id ? updated : l),
@@ -782,12 +770,11 @@ function UnitsLeasesTab({
 // ─── Tenants Tab ───────────────────────────────────────────────────────────
 
 function TenantsTab({
-  tenants, setTenants, allLeases, token,
+  tenants, setTenants, allLeases,
 }: {
   tenants: Tenant[];
   setTenants: React.Dispatch<React.SetStateAction<Tenant[]>>;
   allLeases: Lease[];
-  token: string;
 }) {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState<TenantCreate>({ name: "" });
@@ -800,7 +787,7 @@ function TenantsTab({
     if (!form.name.trim()) return;
     setSaving(true);
     try {
-      const t = await createTenant(form, token);
+      const t = await createTenant(form);
       setTenants((prev) => [...prev, t]);
       setForm({ name: "" });
       setShowAdd(false);
@@ -811,7 +798,7 @@ function TenantsTab({
   async function handleEdit(id: string) {
     setSaving(true);
     try {
-      const updated = await updateTenant(id, editForm, token);
+      const updated = await updateTenant(id, editForm);
       setTenants((prev) => prev.map((t) => t.id === id ? updated : t));
       setEditId(null);
     } catch { /* ignore */ }
@@ -821,7 +808,7 @@ function TenantsTab({
   async function handleDelete(id: string) {
     if (!confirm("Delete this tenant?")) return;
     try {
-      await deleteTenant(id, token);
+      await deleteTenant(id);
       setTenants((prev) => prev.filter((t) => t.id !== id));
     } catch { /* ignore */ }
   }
@@ -1088,8 +1075,8 @@ const TT = {
 };
 
 function ReportsTab({
-  properties, token,
-}: { properties: Property[]; token: string }) {
+  properties,
+}: { properties: Property[] }) {
   const today = new Date();
   const [selectedPropId, setSelectedPropId] = useState<string>("all");
   const [year, setYear] = useState(today.getFullYear());
@@ -1129,13 +1116,13 @@ function ReportsTab({
     setPortfolio(null);
     try {
       if (selectedPropId === "all") {
-        const data = await getPortfolioReport(year, monthStr, token);
+        const data = await getPortfolioReport(year, monthStr);
         setPortfolio(data);
       } else if (selectedPreset === "LTD") {
         // Lifetime: pass period=ltd, no prev-month comparison
         const [data, events] = await Promise.all([
-          getPropertyReport(selectedPropId, year, monthStr, token, "ltd"),
-          listCapitalEvents(selectedPropId, token),
+          getPropertyReport(selectedPropId, year, monthStr, "ltd"),
+          listCapitalEvents(selectedPropId),
         ]);
         setReport(data);
         setCapitalEvents(events);
@@ -1147,9 +1134,9 @@ function ReportsTab({
         const prevMonthStr = `${prevY.toString().padStart(4, "0")}-${prevM.toString().padStart(2, "0")}`;
 
         const [data, prev, events] = await Promise.all([
-          getPropertyReport(selectedPropId, year, monthStr, token),
-          getPropertyReport(selectedPropId, prevY, prevMonthStr, token).catch(() => null),
-          listCapitalEvents(selectedPropId, token),
+          getPropertyReport(selectedPropId, year, monthStr),
+          getPropertyReport(selectedPropId, prevY, prevMonthStr).catch(() => null),
+          listCapitalEvents(selectedPropId),
         ]);
         setReport(data);
         setPrevReport(prev);
@@ -1187,9 +1174,9 @@ function ReportsTab({
             const mStr = `${year}-${m.toString().padStart(2, "0")}`;
             labels.push(MONTHS[m - 1]);
             if (selectedPropId === "all") {
-              promises.push(getPortfolioReport(year, mStr, token));
+              promises.push(getPortfolioReport(year, mStr));
             } else {
-              promises.push(getPropertyReport(selectedPropId, year, mStr, token));
+              promises.push(getPropertyReport(selectedPropId, year, mStr));
             }
           }
         } else if (selectedPreset === "LastYear") {
@@ -1198,9 +1185,9 @@ function ReportsTab({
             const mStr = `${year}-${m.toString().padStart(2, "0")}`;
             labels.push(MONTHS[m - 1]);
             if (selectedPropId === "all") {
-              promises.push(getPortfolioReport(year, mStr, token));
+              promises.push(getPortfolioReport(year, mStr));
             } else {
-              promises.push(getPropertyReport(selectedPropId, year, mStr, token));
+              promises.push(getPropertyReport(selectedPropId, year, mStr));
             }
           }
         }
@@ -1227,7 +1214,7 @@ function ReportsTab({
       const created = await createCapitalEvent(selectedPropId, {
         ...eventForm,
         amount: Number(eventForm.amount),
-      }, token);
+      });
       setCapitalEvents((prev) => [...prev, created]);
       setShowAddEvent(false);
       setEventForm({ event_date: today.toISOString().split("T")[0], event_type: "acquisition", amount: 0 });
@@ -1244,7 +1231,7 @@ function ReportsTab({
     if (!confirm("Remove this capital event?")) return;
     setDeletingEventId(id);
     try {
-      await deleteCapitalEvent(id, token);
+      await deleteCapitalEvent(id);
       setCapitalEvents((prev) => prev.filter((e) => e.id !== id));
       loadReport();
     } catch { /* ignore */ }
@@ -1971,13 +1958,12 @@ const PaymentEditForm = memo(function PaymentEditForm({
 });
 
 function PaymentsTab({
-  allLeases, tenants, properties, allUnits, token,
+  allLeases, tenants, properties, allUnits,
 }: {
   allLeases: Lease[];
   tenants: Tenant[];
   properties: Property[];
   allUnits: Unit[];
-  token: string;
 }) {
   const [selectedLeaseId, setSelectedLeaseId] = useState<string>(
     allLeases.find((l) => l.status === "active")?.id ?? allLeases[0]?.id ?? ""
@@ -2013,7 +1999,7 @@ function PaymentsTab({
   async function loadPayments(leaseId: string) {
     setLoadingPayments(true);
     try {
-      setPayments(await listPayments(leaseId, token));
+      setPayments(await listPayments(leaseId));
     } catch { /* ignore */ }
     finally { setLoadingPayments(false); }
   }
@@ -2023,7 +2009,7 @@ function PaymentsTab({
     if (!form.amount || !selectedLeaseId) return;
     setSaving(true);
     try {
-      const p = await createPayment(selectedLeaseId, form, token);
+      const p = await createPayment(selectedLeaseId, form);
       setPayments((prev) => [p, ...prev]);
       setShowAdd(false);
       setForm({ payment_date: new Date().toISOString().split("T")[0], amount: 0 });
@@ -2045,7 +2031,7 @@ function PaymentsTab({
   async function handleSaveEdit(id: string) {
     setEditSaving(true);
     try {
-      const updated = await updatePayment(id, editForm, token);
+      const updated = await updatePayment(id, editForm);
       setPayments((prev) => prev.map((p) => p.id === id ? updated : p));
       setEditId(null);
     } catch { /* ignore */ }
@@ -2056,7 +2042,7 @@ function PaymentsTab({
     if (!confirm("Delete this payment? This cannot be undone.")) return;
     setDeletingId(id);
     try {
-      await deletePayment(id, token);
+      await deletePayment(id);
       setPayments((prev) => prev.filter((p) => p.id !== id));
     } catch { /* ignore */ }
     finally { setDeletingId(null); }
@@ -2095,10 +2081,10 @@ function PaymentsTab({
     setImporting(true);
     setImportResult(null);
     try {
-      const result = await importPayments(selectedLeaseId, importFile, token);
+      const result = await importPayments(selectedLeaseId, importFile);
       setImportResult(result);
       if (result.imported > 0) {
-        const refreshed = await listPayments(selectedLeaseId, token);
+        const refreshed = await listPayments(selectedLeaseId);
         setPayments(refreshed);
       }
     } catch (err) {

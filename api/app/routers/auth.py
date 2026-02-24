@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.security import (
@@ -12,20 +13,38 @@ from app.core.security import (
     verify_password,
 )
 from app.models.user import Household, User
-from app.schemas.user import (
-    TokenRefresh,
-    TokenResponse,
-    UserCreate,
-    UserLogin,
-    UserResponse,
-)
+from app.schemas.user import UserCreate, UserLogin, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# httpOnly cookie settings — strict+secure in production, lax in dev for cross-port localhost
+_SECURE = settings.environment != "development"
+_SAMESITE = "strict" if settings.environment != "development" else "lax"
+
+
+def _set_auth_cookies(response: Response, user_id: str) -> None:
+    response.set_cookie(
+        key="access_token",
+        value=create_access_token({"sub": user_id}),
+        httponly=True,
+        secure=_SECURE,
+        samesite=_SAMESITE,
+        max_age=settings.access_token_expire_minutes * 60,
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=create_refresh_token({"sub": user_id}),
+        httponly=True,
+        secure=_SECURE,
+        samesite=_SAMESITE,
+        max_age=settings.refresh_token_expire_days * 86400,
+        path="/",
+    )
 
 
 @router.post("/register", response_model=UserResponse, status_code=201)
 async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
-    # Check if email already exists
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none():
         raise HTTPException(
@@ -33,12 +52,10 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
             detail="Email already registered",
         )
 
-    # Create household
     household = Household(name=payload.household_name or f"{payload.full_name}'s Household")
     db.add(household)
     await db.flush()
 
-    # Create user as owner
     user = User(
         email=payload.email,
         hashed_password=hash_password(payload.password),
@@ -52,8 +69,12 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     return user
 
 
-@router.post("/login", response_model=TokenResponse)
-async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)):
+@router.post("/login", response_model=UserResponse)
+async def login(
+    payload: UserLogin,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
@@ -69,15 +90,24 @@ async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)):
             detail="Account is deactivated",
         )
 
-    return TokenResponse(
-        access_token=create_access_token({"sub": str(user.id)}),
-        refresh_token=create_refresh_token({"sub": str(user.id)}),
-    )
+    _set_auth_cookies(response, str(user.id))
+    return user
 
 
-@router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(payload: TokenRefresh, db: AsyncSession = Depends(get_db)):
-    token_data = decode_token(payload.refresh_token)
+@router.post("/refresh")
+async def refresh_token(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    refresh = request.cookies.get("refresh_token")
+    if not refresh:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No refresh token",
+        )
+
+    token_data = decode_token(refresh)
     if token_data is None or token_data.get("type") != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -94,10 +124,14 @@ async def refresh_token(payload: TokenRefresh, db: AsyncSession = Depends(get_db
             detail="User not found or inactive",
         )
 
-    return TokenResponse(
-        access_token=create_access_token({"sub": str(user.id)}),
-        refresh_token=create_refresh_token({"sub": str(user.id)}),
-    )
+    _set_auth_cookies(response, str(user.id))
+    return {"ok": True}
+
+
+@router.post("/logout", status_code=204)
+async def logout(response: Response):
+    response.delete_cookie(key="access_token", path="/")
+    response.delete_cookie(key="refresh_token", path="/")
 
 
 @router.get("/me", response_model=UserResponse)

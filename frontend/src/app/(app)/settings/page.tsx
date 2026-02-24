@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
-  getToken,
   createProperty,
   PropertyCreate,
   getProfile,
@@ -101,8 +100,6 @@ export default function SettingsPage() {
 
   async function handleAddProperty(e: React.FormEvent) {
     e.preventDefault();
-    const token = getToken();
-    if (!token) { router.replace("/login"); return; }
     if (!form.address.trim()) { setError("Address is required."); return; }
 
     setSaving(true);
@@ -115,9 +112,7 @@ export default function SettingsPage() {
           purchase_date: form.purchase_date || undefined,
           closing_costs: form.closing_costs || undefined,
           current_value: form.current_value || undefined,
-        },
-        token
-      );
+        });
       setSuccess(true);
       setForm(DEFAULT_FORM);
       setTimeout(() => setSuccess(false), 4000);
@@ -151,12 +146,10 @@ export default function SettingsPage() {
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) { router.replace("/login"); return; }
-    listCustomCategories(token).then(setCustomCats).catch(() => {});
-    listHouseholdMembers(token).then(setMembers).catch(() => {});
-    getInvestmentSettings(token).then(setRefreshSettings).catch(() => {});
-    getProfile(token).then((u) => {
+    listCustomCategories().then(setCustomCats).catch(() => {});
+    listHouseholdMembers().then(setMembers).catch(() => {});
+    getInvestmentSettings().then(setRefreshSettings).catch(() => {});
+    getProfile().then((u) => {
       setProfile(u);
       setProfileForm({
         full_name: u.full_name ?? "",
@@ -179,8 +172,6 @@ export default function SettingsPage() {
 
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
-    const token = getToken();
-    if (!token) { router.replace("/login"); return; }
 
     // Only send changed fields (non-empty or explicitly changed)
     const payload: UserProfileUpdate = {};
@@ -195,7 +186,7 @@ export default function SettingsPage() {
     setProfileSaving(true);
     setProfileError("");
     try {
-      const updated = await updateProfile(payload, token);
+      const updated = await updateProfile(payload);
       setProfile(updated);
       setProfileSuccess(true);
       setTimeout(() => setProfileSuccess(false), 4000);
@@ -223,8 +214,6 @@ export default function SettingsPage() {
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
-    const token = getToken();
-    if (!token) { router.replace("/login"); return; }
 
     if (pwForm.next !== pwForm.confirm) {
       setPwError("New passwords do not match.");
@@ -238,7 +227,7 @@ export default function SettingsPage() {
     setPwSaving(true);
     setPwError("");
     try {
-      await changePassword(pwForm.current, pwForm.next, token);
+      await changePassword(pwForm.current, pwForm.next);
       setPwSuccess(true);
       setPwForm({ current: "", next: "", confirm: "" });
       setTimeout(() => setPwSuccess(false), 4000);
@@ -252,11 +241,9 @@ export default function SettingsPage() {
   // ── Household member handlers ───────────────────────────────────────
   async function handleAddMember(e: React.FormEvent) {
     e.preventDefault();
-    const token = getToken();
-    if (!token) return;
     setMemberSaving(true); setMemberError("");
     try {
-      const m = await addHouseholdMember(memberForm, token);
+      const m = await addHouseholdMember(memberForm);
       setMembers((prev) => [...prev, m]);
       setMemberForm({ full_name: "", email: "", password: "", role: "member" });
       setShowAddMember(false);
@@ -271,11 +258,9 @@ export default function SettingsPage() {
 
   async function handleRemoveMember(memberId: string) {
     if (!confirm("Remove this member from the household?")) return;
-    const token = getToken();
-    if (!token) return;
     setRemovingMemberId(memberId);
     try {
-      await removeHouseholdMember(memberId, token);
+      await removeHouseholdMember(memberId);
       setMembers((prev) => prev.filter((m) => m.id !== memberId));
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to remove member");
@@ -287,12 +272,10 @@ export default function SettingsPage() {
   // ── Investment refresh settings handler ────────────────────────────
   async function handleSaveRefreshSettings(e: React.FormEvent) {
     e.preventDefault();
-    const token = getToken();
-    if (!token) { router.replace("/login"); return; }
     setRefreshSaving(true);
     setRefreshError("");
     try {
-      const updated = await updateInvestmentSettings(refreshSettings, token);
+      const updated = await updateInvestmentSettings(refreshSettings);
       setRefreshSettings(updated);
       setRefreshSuccess(true);
       setTimeout(() => setRefreshSuccess(false), 3000);
@@ -306,11 +289,10 @@ export default function SettingsPage() {
   // ── Custom Category handlers ────────────────────────────────────────
   async function handleAddCategory(e: React.FormEvent) {
     e.preventDefault();
-    const token = getToken();
-    if (!token || !catForm.name.trim()) return;
+    if (!catForm.name.trim()) return;
     setCatSaving(true);
     try {
-      const c = await createCustomCategory({ name: catForm.name, is_income: catForm.is_income }, token);
+      const c = await createCustomCategory({ name: catForm.name, is_income: catForm.is_income });
       setCustomCats((prev) => [...prev, c]);
       setCatForm({ name: "", is_income: false });
     } catch {} finally {
@@ -319,21 +301,18 @@ export default function SettingsPage() {
   }
 
   async function handleAddSubcategory(parentId: string) {
-    const token = getToken();
     const name = subForms[parentId]?.trim();
-    if (!token || !name) return;
+    if (!name) return;
     try {
-      const c = await createCustomCategory({ name, parent_id: parentId }, token);
+      const c = await createCustomCategory({ name, parent_id: parentId });
       setCustomCats((prev) => [...prev, c]);
       setSubForms((p) => ({ ...p, [parentId]: "" }));
     } catch {}
   }
 
   async function handleDeleteCategory(id: string) {
-    const token = getToken();
-    if (!token) return;
     try {
-      await deleteCustomCategory(id, token);
+      await deleteCustomCategory(id);
       setCustomCats((prev) => prev.filter((c) => c.id !== id));
     } catch {}
   }

@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  getToken,
   getLinkToken,
   exchangePublicToken,
   listPlaidItems,
@@ -71,8 +70,6 @@ const SUBTYPES: Record<string, { value: string; label: string }[]> = {
     { value: "personal", label: "Personal Loan" },
   ],
 };
-
-
 
 function capitalize(s: string | null | undefined): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
@@ -145,14 +142,12 @@ export default function AccountsPage() {
   }, []);
 
   const loadData = useCallback(async () => {
-    const token = getToken();
-    if (!token) { router.replace("/login"); return; }
     try {
       const [fetchedItems, fetchedAccounts, fetchedMembers, fetchedSnapConns] = await Promise.all([
-        listPlaidItems(token),
-        listAccounts(token),
-        listHouseholdMembers(token),
-        listSnapTradeConnections(token).catch(() => [] as SnapTradeConnection[]),
+        listPlaidItems(),
+        listAccounts(),
+        listHouseholdMembers(),
+        listSnapTradeConnections().catch(() => [] as SnapTradeConnection[]),
       ]);
       setItems(fetchedItems);
       setAccounts(fetchedAccounts);
@@ -168,20 +163,18 @@ export default function AccountsPage() {
   useEffect(() => { loadData(); }, [loadData]);
 
   async function handleLinkAccount() {
-    const token = getToken();
-    if (!token) { router.replace("/login"); return; }
     if (!plaidReady || !window.Plaid) {
       setError("Plaid is still loading, please try again.");
       return;
     }
     setLinking(true); setError("");
     try {
-      const { link_token } = await getLinkToken(token);
+      const { link_token } = await getLinkToken();
       const handler = window.Plaid.create({
         token: link_token,
         onSuccess: async (public_token, metadata) => {
           try {
-            await exchangePublicToken(public_token, metadata.institution?.institution_id ?? null, metadata.institution?.name ?? null, token);
+            await exchangePublicToken(public_token, metadata.institution?.institution_id ?? null, metadata.institution?.name ?? null);
             await loadData();
           } catch (e) { setError(e instanceof Error ? e.message : "Failed to link account"); }
           finally { setLinking(false); }
@@ -200,18 +193,14 @@ export default function AccountsPage() {
   }
 
   async function handleSync(itemId: string) {
-    const token = getToken();
-    if (!token) return;
     setSyncingId(itemId); setError("");
-    try { await syncPlaidItem(itemId, token); await loadData(); }
+    try { await syncPlaidItem(itemId); await loadData(); }
     catch (e) { setError(e instanceof Error ? e.message : "Sync failed"); }
     finally { setSyncingId(null); }
   }
 
   async function handleCreateManual(e: React.FormEvent) {
     e.preventDefault();
-    const token = getToken();
-    if (!token) return;
     if (!manualForm.name.trim()) { setManualError("Account name is required."); return; }
 
     setManualSaving(true); setManualError("");
@@ -222,7 +211,7 @@ export default function AccountsPage() {
         institution_name: manualForm.institution_name?.trim() || undefined,
         subtype: manualForm.subtype || undefined,
         current_balance: manualForm.current_balance || undefined,
-      }, token);
+      });
       setShowManual(false);
       setManualForm(DEFAULT_MANUAL);
       await loadData();
@@ -251,11 +240,9 @@ export default function AccountsPage() {
   async function handleEditAccount(e: React.FormEvent) {
     e.preventDefault();
     if (!editTarget) return;
-    const token = getToken();
-    if (!token) return;
     setEditSaving(true); setEditError("");
     try {
-      const updated = await updateAccount(editTarget.id, editForm, token);
+      const updated = await updateAccount(editTarget.id, editForm);
       setAccounts((prev) => prev.map((a) => a.id === updated.id ? updated : a));
       setEditTarget(null);
     } catch (err) {
@@ -267,11 +254,9 @@ export default function AccountsPage() {
 
   async function handleDeleteItem(withTransactions: boolean) {
     if (!deleteItemTarget) return;
-    const token = getToken();
-    if (!token) return;
     setDeleteItemSaving(true); setDeleteItemError("");
     try {
-      await deletePlaidItem(deleteItemTarget.id, withTransactions, token);
+      await deletePlaidItem(deleteItemTarget.id, withTransactions);
       setDeleteItemTarget(null);
       await loadData();
     } catch (e) {
@@ -283,11 +268,9 @@ export default function AccountsPage() {
 
   async function handleDeleteAccount(withTransactions: boolean) {
     if (!deleteTarget) return;
-    const token = getToken();
-    if (!token) return;
     setDeleteSaving(true); setDeleteError("");
     try {
-      await deleteAccount(deleteTarget.id, withTransactions, token);
+      await deleteAccount(deleteTarget.id, withTransactions);
       setDeleteTarget(null);
       await loadData();
     } catch (e) {
@@ -299,11 +282,9 @@ export default function AccountsPage() {
 
   // SnapTrade handlers
   async function handleConnectSnapTrade() {
-    const token = getToken();
-    if (!token) return;
     setSnapConnecting(true); setSnapError("");
     try {
-      const { redirect_url } = await getSnapTradeConnectUrl(token);
+      const { redirect_url } = await getSnapTradeConnectUrl();
       window.open(redirect_url, "_blank");
     } catch (e) {
       setSnapError(e instanceof Error ? e.message : "Failed to open SnapTrade portal");
@@ -313,11 +294,9 @@ export default function AccountsPage() {
   }
 
   async function handleSyncSnapAuth() {
-    const token = getToken();
-    if (!token) return;
     setSnapError("");
     try {
-      const conns = await syncSnapTradeAuthorizations(token);
+      const conns = await syncSnapTradeAuthorizations();
       setSnapConnections(conns);
       await loadData();
     } catch (e) {
@@ -326,11 +305,9 @@ export default function AccountsPage() {
   }
 
   async function handleSyncSnapConnection(connId: string) {
-    const token = getToken();
-    if (!token) return;
     setSyncingSnapId(connId); setSnapError("");
     try {
-      await syncSnapTradeConnection(connId, token);
+      await syncSnapTradeConnection(connId);
       await loadData();
     } catch (e) {
       setSnapError(e instanceof Error ? e.message : "Sync failed");
@@ -341,11 +318,9 @@ export default function AccountsPage() {
 
   async function handleDisconnectSnap(connId: string) {
     if (!window.confirm("Disconnect this brokerage? Accounts will remain but will no longer sync.")) return;
-    const token = getToken();
-    if (!token) return;
     setSnapError("");
     try {
-      await deleteSnapTradeConnection(connId, token);
+      await deleteSnapTradeConnection(connId);
       await loadData();
     } catch (e) {
       setSnapError(e instanceof Error ? e.message : "Disconnect failed");

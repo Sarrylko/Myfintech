@@ -45,10 +45,6 @@ function fmt(value: string | number): string {
   );
 }
 
-function getToken(): string {
-  return localStorage.getItem("access_token") ?? "";
-}
-
 function formatBudgetPeriod(b: BudgetWithActual): string {
   if (b.budget_type === "monthly") {
     return `${MONTH_NAMES[(b.month ?? 1) - 1]} ${b.year}`;
@@ -899,11 +895,9 @@ function LongTermView({
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) return;
     setLoading(true);
     setError("");
-    listLongTermBudgets(ltYear, token)
+    listLongTermBudgets(ltYear)
       .then(setLtBudgets)
       .catch((e) => setError(e.message ?? "Failed to load budgets"))
       .finally(() => setLoading(false));
@@ -1023,11 +1017,9 @@ export default function BudgetsPage() {
   }
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) return;
     setLoading(true);
     setError("");
-    Promise.all([listBudgets(month, year, token), listCustomCategories(token)])
+    Promise.all([listBudgets(month, year), listCustomCategories()])
       .then(([b, c]) => { setBudgets(b); setCategories(c); })
       .catch((e) => setError(e.message ?? "Failed to load budgets"))
       .finally(() => setLoading(false));
@@ -1035,9 +1027,8 @@ export default function BudgetsPage() {
 
   // Load categories independently for wizard when switching tabs
   useEffect(() => {
-    const token = getToken();
-    if (!token || categories.length > 0) return;
-    listCustomCategories(token).then(setCategories).catch(() => {});
+    if (categories.length > 0) return;
+    listCustomCategories().then(setCategories).catch(() => {});
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const expenseBudgets = budgets.filter((b) => !b.category.is_income);
@@ -1083,8 +1074,6 @@ export default function BudgetsPage() {
   }
 
   async function handleWizardSave() {
-    const token = getToken();
-    if (!token) return;
     setSaving(true);
     setError("");
     const validEntries = wizard.amounts.filter((a) => parseFloat(a.amount) > 0);
@@ -1102,9 +1091,7 @@ export default function BudgetsPage() {
             rollover_enabled: e.rolloverEnabled,
             alert_threshold: e.alertThreshold,
           })),
-        },
-        token
-      );
+        });
       // Update monthly budgets list if we created monthly budgets for the current view
       if (wizard.budgetType === "monthly" && wizard.month === month && wizard.year === year) {
         setBudgets((prev) => [...prev, ...newBudgets]);
@@ -1120,11 +1107,9 @@ export default function BudgetsPage() {
 
   async function handleEditSave(data: BudgetUpdate) {
     if (!editingBudget) return;
-    const token = getToken();
-    if (!token) return;
     setSaving(true);
     try {
-      const updated = await updateBudget(editingBudget.id, data, token);
+      const updated = await updateBudget(editingBudget.id, data);
       setBudgets((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
       setEditingBudget(null);
       showSuccess("Budget updated.");
@@ -1137,10 +1122,8 @@ export default function BudgetsPage() {
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this budget?")) return;
-    const token = getToken();
-    if (!token) return;
     try {
-      await deleteBudget(id, token);
+      await deleteBudget(id);
       setBudgets((prev) => prev.filter((b) => b.id !== id));
       showSuccess("Budget deleted.");
     } catch (e) {
@@ -1149,11 +1132,9 @@ export default function BudgetsPage() {
   }
 
   async function handleCopyFromLastMonth() {
-    const token = getToken();
-    if (!token) return;
     setError("");
     try {
-      const copied = await copyBudgetsFromLastMonth(month, year, token);
+      const copied = await copyBudgetsFromLastMonth(month, year);
       if (copied.length === 0) {
         setError("All previous month budgets already exist for this month.");
         return;
@@ -1167,11 +1148,9 @@ export default function BudgetsPage() {
   }
 
   async function handleSeedCategories() {
-    const token = getToken();
-    if (!token) return;
     setSeeding(true);
     try {
-      const created = await seedDefaultCategories(token);
+      const created = await seedDefaultCategories();
       if (created.length === 0) {
         showSuccess("All common categories already exist.");
       } else {
