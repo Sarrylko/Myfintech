@@ -6,7 +6,6 @@ import {
 } from "recharts";
 import { useRouter } from "next/navigation";
 import {
-  getToken,
   listAllTransactions,
   listAccounts,
   listCustomCategories,
@@ -172,8 +171,6 @@ function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    const token = getToken();
-    if (!token) return;
 
     const amtNum = parseFloat(form.amount);
     if (isNaN(amtNum)) { setError("Amount must be a number"); return; }
@@ -192,7 +189,7 @@ function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
         plaid_category,
         notes: form.notes || undefined,
         pending: form.pending,
-      }, token);
+      });
       onSave(updated, plaid_category, txn.plaid_category);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
@@ -344,12 +341,10 @@ function ImportModal({ accounts, onImported, onClose }: {
     e.preventDefault();
     if (!file) { setError("Please select a CSV file."); return; }
     if (!selectedAccount) { setError("Please select an account."); return; }
-    const token = getToken();
-    if (!token) return;
 
     setImporting(true); setError(""); setResult(null);
     try {
-      const res = await importCsv(selectedAccount, file, token);
+      const res = await importCsv(selectedAccount, file);
       setResult(res);
       if (res.imported > 0) onImported();
     } catch (e) {
@@ -476,13 +471,11 @@ export default function TransactionsPage() {
   const [ruleSaving, setRuleSaving] = useState(false);
 
   const loadData = useCallback(async () => {
-    const token = getToken();
-    if (!token) { router.replace("/login"); return; }
     try {
       const [txns, accts, customCats] = await Promise.all([
-        listAllTransactions(token, 300),
-        listAccounts(token),
-        listCustomCategories(token),
+        listAllTransactions(300),
+        listAccounts(),
+        listCustomCategories(),
       ]);
       setTransactions(txns);
       setAccounts(accts);
@@ -578,10 +571,8 @@ export default function TransactionsPage() {
   useEffect(() => { setPage(1); }, [search, selectedAccount, selectedCategory, datePreset, dateFrom, dateTo, showIgnored]);
 
   async function handleIgnoreTxn(txn: Transaction) {
-    const token = getToken();
-    if (!token) return;
     try {
-      const updated = await updateTransaction(txn.id, { is_ignored: !txn.is_ignored }, token);
+      const updated = await updateTransaction(txn.id, { is_ignored: !txn.is_ignored });
       setTransactions((prev) => prev.map((t) => t.id === updated.id ? updated : t));
     } catch {}
   }
@@ -601,8 +592,7 @@ export default function TransactionsPage() {
   }
 
   async function handleCreateRule(matchField: string, matchValue: string) {
-    const token = getToken();
-    if (!token || !rulePrompt) return;
+    if (!rulePrompt) return;
     setRuleSaving(true);
     try {
       await createRule({
@@ -611,7 +601,7 @@ export default function TransactionsPage() {
         match_type: "contains",
         match_value: matchValue,
         category_string: rulePrompt.category,
-      }, token);
+      });
     } finally {
       setRuleSaving(false);
       setRulePrompt(null);

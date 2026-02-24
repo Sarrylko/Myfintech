@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { login, register, setTokens, getToken } from "@/lib/api";
+import { login, register, getProfile } from "@/lib/api";
 
 type Mode = "login" | "register";
 
@@ -16,7 +16,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (getToken()) router.replace("/dashboard");
+    getProfile().then(() => router.replace("/dashboard")).catch(() => {});
   }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -25,13 +25,11 @@ export default function LoginPage() {
     setLoading(true);
     try {
       if (mode === "login") {
-        const tokens = await login(email, password);
-        setTokens(tokens);
+        await login(email, password);
         router.replace("/dashboard");
       } else {
         await register(email, password, fullName);
-        const tokens = await login(email, password);
-        setTokens(tokens);
+        await login(email, password);
         router.replace("/dashboard");
       }
     } catch (err) {

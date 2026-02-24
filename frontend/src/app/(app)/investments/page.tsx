@@ -2,11 +2,23 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
-  getToken, listAccounts, listHouseholdMembers, listHoldings,
-  createHolding, updateHolding, deleteHolding, getTickerInfo,
-  getRefreshStatus, getMarketStatus, refreshInvestmentPrices,
-  Account, Holding, HoldingCreate, HoldingUpdate,
-  UserResponse, RefreshStatus, MarketStatus,
+  listAccounts,
+  listHouseholdMembers,
+  listHoldings,
+  createHolding,
+  updateHolding,
+  deleteHolding,
+  getTickerInfo,
+  getRefreshStatus,
+  getMarketStatus,
+  refreshInvestmentPrices,
+  Account,
+  Holding,
+  HoldingCreate,
+  HoldingUpdate,
+  UserResponse,
+  RefreshStatus,
+  MarketStatus,
 } from "@/lib/api";
 
 // ─── Subtype classification ───────────────────────────────────────────────────
@@ -125,11 +137,9 @@ function HoldingsTable({
     if (tickerTimer.current) clearTimeout(tickerTimer.current);
     if (!ticker) return;
     tickerTimer.current = setTimeout(async () => {
-      const token = getToken();
-      if (!token) return;
       setLookingUpTicker(true);
       try {
-        const info = await getTickerInfo(ticker, token);
+        const info = await getTickerInfo(ticker);
         const resolvedName = info.found ? (info.name ?? "Unknown") : "Unknown";
         const price = info.last_price ?? null;
         if (isAdd) {
@@ -160,11 +170,10 @@ function HoldingsTable({
   }
 
   async function handleSaveEdit() {
-    const token = getToken();
-    if (!token || !editingId) return;
+    if (!editingId) return;
     setSaving(true); setRowError("");
     try {
-      await updateHolding(editingId, nullifyEmpty(editForm as Record<string, unknown>) as HoldingUpdate, token);
+      await updateHolding(editingId, nullifyEmpty(editForm as Record<string, unknown>) as HoldingUpdate);
       setEditingId(null);
       onChanged();
     } catch (e) {
@@ -176,11 +185,9 @@ function HoldingsTable({
 
   async function handleDelete(holdingId: string) {
     if (!window.confirm("Delete this position?")) return;
-    const token = getToken();
-    if (!token) return;
     setSaving(true);
     try {
-      await deleteHolding(holdingId, token);
+      await deleteHolding(holdingId);
       onChanged();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Delete failed");
@@ -190,15 +197,13 @@ function HoldingsTable({
   }
 
   async function handleSaveAdd() {
-    const token = getToken();
-    if (!token) return;
     if (!addForm.quantity || Number(addForm.quantity) <= 0) {
       setRowError("Shares/quantity is required and must be > 0");
       return;
     }
     setSaving(true); setRowError("");
     try {
-      await createHolding(accountId, nullifyEmpty(addForm as Record<string, unknown>) as HoldingCreate, token);
+      await createHolding(accountId, nullifyEmpty(addForm as Record<string, unknown>) as HoldingCreate);
       setShowAddForm(false);
       setAddForm(BLANK_ADD);
       addLastPrice.current = null;
@@ -533,9 +538,7 @@ export default function InvestmentsPage() {
   const [refreshToast, setRefreshToast] = useState("");
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) return;
-    Promise.all([listAccounts(token), listHouseholdMembers(token)])
+    Promise.all([listAccounts(), listHouseholdMembers()])
       .then(([all, mems]) => {
         setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden));
         setMembers(mems);
@@ -546,11 +549,9 @@ export default function InvestmentsPage() {
 
   // Fetch refresh + market status; poll every 60s
   useEffect(() => {
-    const token = getToken();
-    if (!token) return;
     function fetchStatus() {
-      getRefreshStatus(token!).then(setRefreshStatus).catch(() => {});
-      getMarketStatus(token!).then(setMarketStatus).catch(() => {});
+      getRefreshStatus().then(setRefreshStatus).catch(() => {});
+      getMarketStatus().then(setMarketStatus).catch(() => {});
     }
     fetchStatus();
     const interval = setInterval(fetchStatus, 60_000);
@@ -558,40 +559,37 @@ export default function InvestmentsPage() {
   }, []);
 
   function refetchHoldings(accountId: string) {
-    const token = getToken();
-    if (!token) return;
     setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: true }));
-    listHoldings(accountId, token)
+    listHoldings(accountId)
       .then((h) => setHoldingsMap((m) => ({ ...m, [accountId]: h })))
       .catch(() => {})
       .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: false })));
     // Also refresh account list so Total Value cards stay in sync
-    listAccounts(token)
+    listAccounts()
       .then((all) => setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden)))
       .catch(() => {});
   }
 
   async function handleRefreshNow() {
-    const token = getToken();
-    if (!token || refreshing) return;
+    if (refreshing) return;
     setRefreshing(true);
     try {
-      const result = await refreshInvestmentPrices(token);
+      const result = await refreshInvestmentPrices();
       // Re-fetch accounts to get updated current_balance (drives Total Value cards)
-      listAccounts(token)
+      listAccounts()
         .then((all) => setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden)))
         .catch(() => {});
       // Re-fetch holdings for all currently expanded accounts
       const expanded = Object.keys(holdingsMap);
       for (const id of expanded) {
         setHoldingsLoadingMap((lm) => ({ ...lm, [id]: true }));
-        listHoldings(id, token)
+        listHoldings(id)
           .then((h) => setHoldingsMap((m) => ({ ...m, [id]: h })))
           .catch(() => {})
           .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [id]: false })));
       }
       // Update refresh status
-      getRefreshStatus(token).then(setRefreshStatus).catch(() => {});
+      getRefreshStatus().then(setRefreshStatus).catch(() => {});
       setRefreshToast(`Updated ${result.refreshed} holding${result.refreshed !== 1 ? "s" : ""}`);
       setTimeout(() => setRefreshToast(""), 4000);
     } catch {
@@ -609,10 +607,9 @@ export default function InvestmentsPage() {
       // Fetch holdings on first expand
       setHoldingsMap((m) => {
         if (m[accountId] !== undefined) return m; // already loaded
-        const token = getToken();
-        if (token) {
+        if () {
           setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: true }));
-          listHoldings(accountId, token)
+          listHoldings(accountId)
             .then((h) => setHoldingsMap((cur) => ({ ...cur, [accountId]: h })))
             .catch(() => setHoldingsMap((cur) => ({ ...cur, [accountId]: [] })))
             .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: false })));

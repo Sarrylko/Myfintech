@@ -50,15 +50,6 @@ class UserPasswordChange(BaseModel):
     new_password: str
 
 
-class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-
-
-class TokenRefresh(BaseModel):
-    refresh_token: str
-
 
 class HouseholdResponse(BaseModel):
     id: uuid.UUID

@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
-  getToken,
   listRules,
   createRule,
   updateRule,
@@ -202,9 +201,7 @@ export default function RulesPage() {
   const [applyResult, setApplyResult] = useState<number | null>(null);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) { router.replace("/login"); return; }
-    listRules(token)
+    listRules()
       .then(setRules)
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -245,8 +242,6 @@ export default function RulesPage() {
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
-    const token = getToken();
-    if (!token) return;
     if (!addForm.match_value.trim() && addForm.action !== "ignore") {
       setAddError("Match value is required."); return;
     }
@@ -256,7 +251,7 @@ export default function RulesPage() {
       const r = await createRule({
         ...payload,
         name: payload.name || `${payload.category_string || payload.action} — ${addForm.match_value}`,
-      }, token);
+      });
       setRules((prev) => [r, ...prev]);
       setShowAdd(false);
       setAddForm({ ...EMPTY_FORM });
@@ -269,12 +264,11 @@ export default function RulesPage() {
 
   async function handleSaveEdit(e: React.FormEvent) {
     e.preventDefault();
-    const token = getToken();
-    if (!token || !editingId) return;
+    if (!editingId) return;
     setEditSaving(true); setEditError("");
     try {
       const payload = formToPayload(editForm);
-      const updated = await updateRule(editingId, { ...payload, name: editForm.name || undefined }, token);
+      const updated = await updateRule(editingId, { ...payload, name: editForm.name || undefined });
       setRules((prev) => prev.map((r) => r.id === updated.id ? updated : r));
       setEditingId(null);
     } catch (err) {
@@ -285,30 +279,24 @@ export default function RulesPage() {
   }
 
   async function handleToggle(rule: Rule) {
-    const token = getToken();
-    if (!token) return;
     try {
-      const updated = await updateRule(rule.id, { is_active: !rule.is_active }, token);
+      const updated = await updateRule(rule.id, { is_active: !rule.is_active });
       setRules((prev) => prev.map((r) => r.id === updated.id ? updated : r));
     } catch {}
   }
 
   async function handleDelete(id: string) {
-    const token = getToken();
-    if (!token) return;
     if (!confirm("Delete this rule?")) return;
     try {
-      await deleteRule(id, token);
+      await deleteRule(id);
       setRules((prev) => prev.filter((r) => r.id !== id));
     } catch {}
   }
 
   async function handleApply() {
-    const token = getToken();
-    if (!token) return;
     setApplying(true); setApplyResult(null);
     try {
-      const res = await applyRules(token);
+      const res = await applyRules();
       setApplyResult(res.applied);
     } catch {} finally {
       setApplying(false);
@@ -316,8 +304,6 @@ export default function RulesPage() {
   }
 
   async function addCreditCardRule() {
-    const token = getToken();
-    if (!token) return;
     const r = await createRule({
       name: "Credit Card Sign Flip",
       match_field: "account_type",
@@ -326,7 +312,7 @@ export default function RulesPage() {
       action: "categorize",
       negate_amount: true,
       priority: 100,
-    }, token);
+    });
     setRules((prev) => [r, ...prev]);
   }
 

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  getToken,
   detectRecurring,
   confirmRecurring,
   listRecurring,
@@ -178,22 +177,18 @@ export default function RecurringPage() {
 
   // Load saved recurring on mount
   useEffect(() => {
-    const token = getToken();
-    if (!token) return;
-    listRecurring(token)
+    listRecurring()
       .then(setSaved)
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
   }, []);
 
   async function handleDetect() {
-    const token = getToken();
-    if (!token) return;
     setDetecting(true);
     setError("");
     setCandidates(null);
     setSelected(new Set());
     try {
-      const results = await detectRecurring(token);
+      const results = await detectRecurring();
       // Filter out already-saved ones (match by name+frequency)
       const savedKeys = new Set(saved.map((s) => `${s.name.toLowerCase()}|${s.frequency}`));
       const filtered = results.filter(
@@ -230,13 +225,11 @@ export default function RecurringPage() {
 
   async function handleConfirm() {
     if (!candidates || selected.size === 0) return;
-    const token = getToken();
-    if (!token) return;
     setConfirming(true);
     setError("");
     try {
       const toSave = candidates.filter((c) => selected.has(c.key));
-      const newlySaved = await confirmRecurring(toSave, token);
+      const newlySaved = await confirmRecurring(toSave);
       setSaved((prev) => [...prev, ...newlySaved]);
       setCandidates(null);
       setSelected(new Set());
@@ -250,11 +243,9 @@ export default function RecurringPage() {
   }
 
   async function handleToggle(id: string, active: boolean) {
-    const token = getToken();
-    if (!token) return;
     setLoadingId(id);
     try {
-      const updated = await updateRecurring(id, { is_active: active }, token);
+      const updated = await updateRecurring(id, { is_active: active });
       setSaved((prev) => prev.map((r) => (r.id === id ? updated : r)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Update failed");
@@ -264,11 +255,9 @@ export default function RecurringPage() {
   }
 
   async function handleDelete(id: string) {
-    const token = getToken();
-    if (!token) return;
     setLoadingId(id);
     try {
-      await deleteRecurring(id, token);
+      await deleteRecurring(id);
       setSaved((prev) => prev.filter((r) => r.id !== id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");

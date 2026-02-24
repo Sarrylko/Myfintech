@@ -31,10 +31,6 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getToken(): string {
-  return localStorage.getItem("access_token") ?? "";
-}
-
 function fmt(value: number, showSign = false): string {
   const formatted = new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -574,24 +570,22 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   const fetchSnapshots = async (token: string) => {
-    const res = await listNetWorthSnapshots(365 * 3, token).catch(() => []);
+    const res = await listNetWorthSnapshots(365 * 3).catch(() => []);
     setSnapshots(res);
   };
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) return;
 
     async function fetchAll() {
       const month = today.getMonth() + 1;
       const year = today.getFullYear();
 
       const [accRes, budRes, ltRes, txRes, propRes] = await Promise.allSettled([
-        listAccounts(token),
-        listBudgets(month, year, token),
-        listLongTermBudgets(year, token),
-        listAllTransactions(token, 10),
-        listProperties(token),
+        listAccounts(),
+        listBudgets(month, year),
+        listLongTermBudgets(year),
+        listAllTransactions(10),
+        listProperties(),
       ]);
 
       if (accRes.status === "fulfilled") setAccounts(accRes.value);
@@ -602,11 +596,11 @@ export default function Dashboard() {
       if (propRes.status === "fulfilled") {
         const props = propRes.value;
         setProperties(props);
-        const loanResults = await Promise.allSettled(props.map((p) => listLoans(p.id, token)));
+        const loanResults = await Promise.allSettled(props.map((p) => listLoans(p.id)));
         setLoans(loanResults.flatMap((r) => r.status === "fulfilled" ? r.value : []));
       }
 
-      await fetchSnapshots(token);
+      await fetchSnapshots();
       setLoading(false);
     }
 
@@ -614,9 +608,8 @@ export default function Dashboard() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleTakeSnapshot = async () => {
-    const token = getToken();
-    await takeNetWorthSnapshot(token);
-    await fetchSnapshots(token);
+    await takeNetWorthSnapshot();
+    await fetchSnapshots();
   };
 
   // ── Net worth calculation ──────────────────────────────────────────────────

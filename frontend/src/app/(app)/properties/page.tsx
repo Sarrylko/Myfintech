@@ -3,7 +3,6 @@
 import { useEffect, useState, memo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  getToken,
   listProperties,
   updateProperty,
   deleteProperty,
@@ -283,25 +282,21 @@ export default function PropertiesPage() {
   const [valuations, setValuations] = useState<Record<string, PropertyValuation[]>>({});
   const [documents, setDocuments] = useState<Record<string, PropertyDocument[]>>({});
 
-  const token = getToken();
-
   useEffect(() => {
-    if (!token) { router.replace("/login"); return; }
     load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function load() {
-    if (!token) return;
     setLoading(true);
     try {
-      const props = await listProperties(token);
+      const props = await listProperties();
       setProperties(props);
       // Load loans + costs for all properties upfront (powers equity bar + monthly cost summary)
       if (props.length > 0) {
         const [allLoans, allCosts] = await Promise.all([
-          Promise.all(props.map((p) => listLoans(p.id, token))),
-          Promise.all(props.map((p) => listPropertyCosts(p.id, token))),
+          Promise.all(props.map((p) => listLoans(p.id))),
+          Promise.all(props.map((p) => listPropertyCosts(p.id))),
         ]);
         setLoans(Object.fromEntries(props.map((p, i) => [p.id, allLoans[i]])));
         setCosts(Object.fromEntries(props.map((p, i) => [p.id, allCosts[i]])));
@@ -315,7 +310,6 @@ export default function PropertiesPage() {
 
   // ── Tab toggling + lazy data loads ────────────────────────────────────────
   async function toggleTab(propertyId: string, tab: string) {
-    if (!token) return;
     const current = activeTab[propertyId];
     if (current === tab) {
       setActiveTab((prev) => ({ ...prev, [propertyId]: null }));
@@ -325,7 +319,7 @@ export default function PropertiesPage() {
     setEditingDetails(null); // close details panel when opening a tab
     if (tab === "costs" && costs[propertyId] === undefined) {
       try {
-        const data = await listPropertyCosts(propertyId, token);
+        const data = await listPropertyCosts(propertyId);
         setCosts((prev) => ({ ...prev, [propertyId]: data }));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load costs");
@@ -333,7 +327,7 @@ export default function PropertiesPage() {
     }
     if (tab === "maintenance" && expenses[propertyId] === undefined) {
       try {
-        const data = await listMaintenanceExpenses(propertyId, token);
+        const data = await listMaintenanceExpenses(propertyId);
         setExpenses((prev) => ({ ...prev, [propertyId]: data }));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load expenses");
@@ -341,7 +335,7 @@ export default function PropertiesPage() {
     }
     if (tab === "valuations" && valuations[propertyId] === undefined) {
       try {
-        const data = await listPropertyValuations(propertyId, token);
+        const data = await listPropertyValuations(propertyId);
         setValuations((prev) => ({ ...prev, [propertyId]: data }));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load value history");
@@ -349,7 +343,7 @@ export default function PropertiesPage() {
     }
     if (tab === "documents" && documents[propertyId] === undefined) {
       try {
-        const data = await listPropertyDocuments(propertyId, token);
+        const data = await listPropertyDocuments(propertyId);
         setDocuments((prev) => ({ ...prev, [propertyId]: data }));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load documents");
@@ -359,10 +353,9 @@ export default function PropertiesPage() {
 
   // ── Current value quick-edit ──────────────────────────────────────────────
   async function saveValue(id: string) {
-    if (!token) return;
     setSaving(true);
     try {
-      const updated = await updateProperty(id, { current_value: editValue ? Number(editValue) : undefined }, token);
+      const updated = await updateProperty(id, { current_value: editValue ? Number(editValue) : undefined });
       setProperties((prev) => prev.map((p) => (p.id === id ? updated : p)));
       setEditing(null);
     } catch (err) {
@@ -381,7 +374,6 @@ export default function PropertiesPage() {
   }
 
   async function saveDetails(id: string) {
-    if (!token) return;
     setSavingDetails(true);
     try {
       const payload: Record<string, unknown> = {};
@@ -404,7 +396,7 @@ export default function PropertiesPage() {
       payload.county = detailForm.county.trim() || null;
       payload.pin = detailForm.pin.trim() || null;
 
-      const updated = await updateProperty(id, payload, token);
+      const updated = await updateProperty(id, payload);
       setProperties((prev) => prev.map((p) => (p.id === id ? updated : p)));
       setEditingDetails(null);
     } catch (err) {
@@ -416,11 +408,10 @@ export default function PropertiesPage() {
 
   // ── Delete property ───────────────────────────────────────────────────────
   async function handleDelete(id: string) {
-    if (!token) return;
     if (!confirm("Remove this property?")) return;
     setDeleting(id);
     try {
-      await deleteProperty(id, token);
+      await deleteProperty(id);
       setProperties((prev) => prev.filter((p) => p.id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete property");
@@ -881,7 +872,6 @@ export default function PropertiesPage() {
                   <LoansTab
                     propertyId={p.id}
                     loans={propLoans}
-                    token={token!}
                     onUpdate={(updated) => setLoans((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
@@ -891,7 +881,6 @@ export default function PropertiesPage() {
                   <CostsTab
                     propertyId={p.id}
                     costs={costs[p.id] ?? []}
-                    token={token!}
                     onUpdate={(updated) => setCosts((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
@@ -901,7 +890,6 @@ export default function PropertiesPage() {
                   <MaintenanceTab
                     propertyId={p.id}
                     expenses={expenses[p.id] ?? []}
-                    token={token!}
                     onUpdate={(updated) => setExpenses((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
@@ -912,7 +900,6 @@ export default function PropertiesPage() {
                     propertyId={p.id}
                     purchasePrice={p.purchase_price ? Number(p.purchase_price) : null}
                     valuations={valuations[p.id] ?? []}
-                    token={token!}
                     onUpdate={(updated) => setValuations((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
@@ -922,7 +909,6 @@ export default function PropertiesPage() {
                   <DocumentsTab
                     propertyId={p.id}
                     docs={documents[p.id] ?? []}
-                    token={token!}
                     onUpdate={(updated) => setDocuments((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
@@ -1061,11 +1047,10 @@ function LoanForm({
 }
 
 function LoansTab({
-  propertyId, loans, token, onUpdate,
+  propertyId, loans, onUpdate,
 }: {
   propertyId: string;
   loans: Loan[];
-  token: string;
   onUpdate: (updated: Loan[]) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
@@ -1079,8 +1064,8 @@ function LoansTab({
   const [accounts, setAccounts] = useState<Account[]>([]);
 
   useEffect(() => {
-    listAccounts(token).then(setAccounts).catch(() => {});
-  }, [token]);
+    listAccounts().then(setAccounts).catch(() => {});
+  }, []);
 
   // Build a quick lookup: accountId → account name label
   const accountMap = Object.fromEntries(
@@ -1113,7 +1098,7 @@ function LoansTab({
     setAddSaving(true);
     setTabError("");
     try {
-      const loan = await createLoan(propertyId, addForm as LoanCreate, token);
+      const loan = await createLoan(propertyId, addForm as LoanCreate);
       onUpdate([...loans, loan]);
       setShowAdd(false);
       setAddForm({ ...BLANK_LOAN });
@@ -1128,7 +1113,7 @@ function LoansTab({
     setEditSaving(true);
     setTabError("");
     try {
-      const loan = await updateLoan(id, editForm as LoanCreate, token);
+      const loan = await updateLoan(id, editForm as LoanCreate);
       onUpdate(loans.map((l) => (l.id === id ? loan : l)));
       setEditId(null);
     } catch (err) {
@@ -1143,7 +1128,7 @@ function LoansTab({
     setDeletingId(id);
     setTabError("");
     try {
-      await deleteLoan(id, token);
+      await deleteLoan(id);
       onUpdate(loans.filter((l) => l.id !== id));
     } catch (err) {
       setTabError(err instanceof Error ? err.message : "Failed to delete loan");
@@ -1237,11 +1222,10 @@ const BLANK_COST: PropertyCostCreate = {
 };
 
 function CostsTab({
-  propertyId, costs, token, onUpdate,
+  propertyId, costs, onUpdate,
 }: {
   propertyId: string;
   costs: PropertyCost[];
-  token: string;
   onUpdate: (updated: PropertyCost[]) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
@@ -1270,7 +1254,7 @@ function CostsTab({
         ...addForm, amount: Number(addForm.amount),
         label: addForm.label || undefined, notes: addForm.notes || undefined,
         effective_date: addForm.effective_date || undefined,
-      } as PropertyCostCreate, token);
+      } as PropertyCostCreate);
       onUpdate([...costs, created]);
       setShowAdd(false);
       setAddForm({ ...BLANK_COST, amount: "" as unknown as number });
@@ -1289,7 +1273,7 @@ function CostsTab({
         ...editForm, amount: Number(editForm.amount),
         label: editForm.label || undefined, notes: editForm.notes || undefined,
         effective_date: editForm.effective_date || undefined,
-      } as PropertyCostCreate, token);
+      } as PropertyCostCreate);
       onUpdate(costs.map((c) => (c.id === id ? updated : c)));
       setEditId(null);
     } catch (err) {
@@ -1304,7 +1288,7 @@ function CostsTab({
     setDeletingId(id);
     setTabError("");
     try {
-      await deletePropertyCost(id, token);
+      await deletePropertyCost(id);
       onUpdate(costs.filter((c) => c.id !== id));
     } catch (err) {
       setTabError(err instanceof Error ? err.message : "Failed to delete cost");
@@ -1316,7 +1300,7 @@ function CostsTab({
   async function toggleActive(c: PropertyCost) {
     setTabError("");
     try {
-      const updated = await updatePropertyCost(c.id, { is_active: !c.is_active }, token);
+      const updated = await updatePropertyCost(c.id, { is_active: !c.is_active });
       onUpdate(costs.map((x) => (x.id === c.id ? updated : x)));
     } catch (err) {
       setTabError(err instanceof Error ? err.message : "Failed to update cost");
@@ -1508,11 +1492,10 @@ const ExpenseFormFields = memo(function ExpenseFormFields({
 });
 
 function MaintenanceTab({
-  propertyId, expenses, token, onUpdate,
+  propertyId, expenses, onUpdate,
 }: {
   propertyId: string;
   expenses: MaintenanceExpense[];
-  token: string;
   onUpdate: (updated: MaintenanceExpense[]) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
@@ -1550,7 +1533,7 @@ function MaintenanceTab({
         amount: Number(addForm.amount),
         vendor: addForm.vendor || undefined,
         notes: addForm.notes || undefined,
-      } as MaintenanceExpenseCreate, token);
+      } as MaintenanceExpenseCreate);
       onUpdate([created, ...expenses]);
       setShowAdd(false);
       setAddForm({ ...BLANK_EXPENSE, amount: "" as unknown as number });
@@ -1570,7 +1553,7 @@ function MaintenanceTab({
         amount: Number(editForm.amount),
         vendor: editForm.vendor || undefined,
         notes: editForm.notes || undefined,
-      } as MaintenanceExpenseCreate, token);
+      } as MaintenanceExpenseCreate);
       onUpdate(expenses.map((e) => (e.id === id ? updated : e)));
       setEditId(null);
     } catch (err) {
@@ -1585,7 +1568,7 @@ function MaintenanceTab({
     setDeletingId(id);
     setTabError("");
     try {
-      await deleteMaintenanceExpense(id, token);
+      await deleteMaintenanceExpense(id);
       onUpdate(expenses.filter((e) => e.id !== id));
     } catch (err) {
       setTabError(err instanceof Error ? err.message : "Failed to delete expense");
@@ -1616,11 +1599,11 @@ function MaintenanceTab({
     setTabError("");
     setImportResult(null);
     try {
-      const result = await importMaintenanceExpenses(propertyId, importFile, token);
+      const result = await importMaintenanceExpenses(propertyId, importFile);
       setImportResult(result);
       if (result.imported > 0) {
         // Reload the expenses list
-        const refreshed = await listMaintenanceExpenses(propertyId, token);
+        const refreshed = await listMaintenanceExpenses(propertyId);
         onUpdate(refreshed);
       }
     } catch (err) {
@@ -1812,12 +1795,11 @@ const SOURCE_COLORS: Record<string, string> = {
 };
 
 function ValuationsTab({
-  propertyId, purchasePrice, valuations, token, onUpdate,
+  propertyId, purchasePrice, valuations, onUpdate,
 }: {
   propertyId: string;
   purchasePrice: number | null;
   valuations: PropertyValuation[];
-  token: string;
   onUpdate: (updated: PropertyValuation[]) => void;
 }) {
   const today = new Date().toISOString().split("T")[0];
@@ -1849,7 +1831,7 @@ function ValuationsTab({
         source: addForm.source,
         valuation_date: addForm.valuation_date ? new Date(addForm.valuation_date).toISOString() : undefined,
         notes: addForm.notes || undefined,
-      }, token);
+      });
       onUpdate([created, ...valuations]);
       setAddForm({ value: "", source: "manual", valuation_date: today, notes: "" });
       setShowAdd(false);
@@ -1863,7 +1845,7 @@ function ValuationsTab({
   async function handleDelete(id: string) {
     if (!confirm("Delete this valuation snapshot?")) return;
     try {
-      await deletePropertyValuation(id, token);
+      await deletePropertyValuation(id);
       onUpdate(valuations.filter((v) => v.id !== id));
     } catch (err) {
       setTabError(err instanceof Error ? err.message : "Failed to delete");
@@ -2007,12 +1989,10 @@ function fmtFileSize(bytes: number): string {
 function DocumentsTab({
   propertyId,
   docs,
-  token,
   onUpdate,
 }: {
   propertyId: string;
   docs: PropertyDocument[];
-  token: string;
   onUpdate: (updated: PropertyDocument[]) => void;
 }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -2032,9 +2012,7 @@ function DocumentsTab({
         propertyId,
         selectedFile,
         category || null,
-        description.trim() || null,
-        token
-      );
+        description.trim() || null);
       onUpdate([doc, ...docs]);
       setSelectedFile(null);
       setCategory("");
@@ -2049,7 +2027,7 @@ function DocumentsTab({
   async function handleDownload(doc: PropertyDocument) {
     setDownloading(doc.id);
     try {
-      await downloadPropertyDocument(propertyId, doc.id, doc.filename, token);
+      await downloadPropertyDocument(propertyId, doc.id, doc.filename);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Download failed");
     } finally {
@@ -2061,7 +2039,7 @@ function DocumentsTab({
     if (!confirm("Delete this document? This cannot be undone.")) return;
     setDeletingDoc(docId);
     try {
-      await deletePropertyDocument(propertyId, docId, token);
+      await deletePropertyDocument(propertyId, docId);
       onUpdate(docs.filter((d) => d.id !== docId));
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Delete failed");

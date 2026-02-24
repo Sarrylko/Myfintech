@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { getToken, clearTokens } from "@/lib/api";
+import { logout } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
 import { useTheme } from "@/components/ThemeProvider";
 
@@ -16,13 +16,13 @@ export default function AppLayout({
   const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
-    if (!getToken()) {
-      router.replace("/login");
-    }
+    // With httpOnly cookies, we can't check localStorage — a failed API call in
+    // apiFetch will auto-redirect to /login when the session expires.
+    // This effect does nothing but satisfies the dependency lint.
   }, [router, pathname]);
 
-  function handleSignOut() {
-    clearTokens();
+  async function handleSignOut() {
+    await logout().catch(() => {});
     router.replace("/login");
   }
 
