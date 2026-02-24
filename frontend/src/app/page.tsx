@@ -1,3 +1,5 @@
+import { APP_VERSION } from "@/lib/version";
+
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-white">
@@ -15,15 +17,16 @@ export default function LandingPage() {
       </header>
 
       {/* Hero */}
-      <section className="max-w-6xl mx-auto px-6 py-24 text-center">
-        <h1 className="text-5xl font-bold text-gray-900 leading-tight mb-6">
+      <section className="max-w-6xl mx-auto px-6 py-12 md:py-24 text-center">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-gray-900 leading-tight mb-6">
           Your entire financial life,
           <br />
           <span className="text-primary-600">in one place.</span>
         </h1>
         <p className="text-xl text-gray-500 max-w-2xl mx-auto mb-10">
-          MyFintech connects your bank accounts, investments, and real estate to
-          give you a clear picture of your net worth — updated automatically.
+          MyFintech connects your bank accounts, investments, real estate, and
+          tax documents to give you a clear picture of your net worth — updated
+          automatically, stored on your own infrastructure.
         </p>
         <div className="flex gap-4 justify-center">
           <a
@@ -48,16 +51,27 @@ export default function LandingPage() {
             <div className="w-3 h-3 rounded-full bg-green-500" />
             <span className="ml-2 text-gray-400 text-sm">Dashboard</span>
           </div>
-          <div className="grid grid-cols-4 gap-3 mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
             {[
               { label: "Net Worth", value: "$284,500" },
-              { label: "Cash", value: "$42,100" },
               { label: "Investments", value: "$198,400" },
-              { label: "Real Estate", value: "$44,000" },
+              { label: "Cash", value: "$42,100" },
             ].map((card) => (
-              <div key={card.label} className="bg-gray-800 rounded-lg p-4">
+              <div key={card.label} className="bg-gray-800 rounded-lg p-3 sm:p-4">
                 <p className="text-gray-400 text-xs mb-1">{card.label}</p>
-                <p className="text-white font-bold text-lg">{card.value}</p>
+                <p className="text-white font-bold text-base sm:text-lg">{card.value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+            {[
+              { label: "Real Estate", value: "$44,000" },
+              { label: "Rental Income", value: "$1,850/mo" },
+              { label: "Documents", value: "14 stored" },
+            ].map((card) => (
+              <div key={card.label} className="bg-gray-800 rounded-lg p-3 sm:p-4">
+                <p className="text-gray-400 text-xs mb-1">{card.label}</p>
+                <p className="text-white font-bold text-base sm:text-lg">{card.value}</p>
               </div>
             ))}
           </div>
@@ -85,8 +99,8 @@ export default function LandingPage() {
             Everything you need to manage your wealth
           </h2>
           <p className="text-gray-500 text-center max-w-xl mx-auto mb-16">
-            One dashboard for all your accounts, with the data you need to make
-            smart financial decisions.
+            One dashboard for all your accounts, documents, and properties —
+            with the data you need to make smart financial decisions.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {features.map((f) => (
@@ -149,9 +163,10 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="border-t border-gray-100 py-8">
-        <div className="max-w-6xl mx-auto px-6 flex items-center justify-between text-sm text-gray-400">
+        <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-sm text-gray-400">
           <span>MyFintech &copy; {new Date().getFullYear()}</span>
           <span>Your data. Your control.</span>
+          <span>v{APP_VERSION}</span>
         </div>
       </footer>
     </div>
@@ -181,19 +196,37 @@ const features = [
     icon: "📈",
     title: "Investment Portfolio",
     description:
-      "Track your brokerage holdings, cost basis, and unrealized gains in one unified view across all your accounts.",
+      "Track brokerage and retirement holdings across Plaid and SnapTrade-connected brokers. See cost basis, unrealized gains, and account allocation in one view.",
   },
   {
     icon: "🏠",
     title: "Real Estate",
     description:
-      "Add your properties and track their estimated valuations as part of your total net worth calculation.",
+      "Add properties with loans, recurring costs, and maintenance expenses. Track valuations, equity, and documents for each property.",
+  },
+  {
+    icon: "🏘",
+    title: "Rental Income",
+    description:
+      "Manage tenants, leases, and rent payments for your rental properties. Track income and expenses for tax reporting.",
+  },
+  {
+    icon: "📁",
+    title: "Tax & Document Vault",
+    description:
+      "Upload and organise W-2s, 1099s, prior-year returns, investment statements, insurance policies, and estate documents — all in one secure place.",
+  },
+  {
+    icon: "🔁",
+    title: "Recurring Bills & Smart Rules",
+    description:
+      "Track subscriptions and recurring expenses automatically. Set rules to categorise transactions the moment they arrive.",
   },
   {
     icon: "🔒",
     title: "Private & Secure",
     description:
-      "Your data stays on your own infrastructure. Bank tokens are encrypted at rest. No data is ever sold or shared.",
+      "Self-hosted on your own infrastructure. httpOnly cookies, rate-limited login, account lockout, and Fernet-encrypted storage. Your data is never sold or shared.",
   },
 ];
 
@@ -206,11 +239,11 @@ const steps = [
   {
     title: "Link your accounts",
     description:
-      "Connect your bank, credit cards, and brokerages securely via Plaid with read-only access.",
+      "Connect your bank, credit cards, and brokerages securely via Plaid or SnapTrade with read-only access.",
   },
   {
     title: "See your full picture",
     description:
-      "Your net worth, transactions, budgets, and investments update automatically from that point on.",
+      "Your net worth, transactions, budgets, investments, and documents update automatically from that point on.",
   },
 ];
