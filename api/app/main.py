@@ -11,7 +11,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.core.config import settings
-from app.routers import auth, accounts, budget, capital_events, categories, financial_documents, health, investments, networth, plaid, properties, property_cost_statuses, property_details, property_documents, recurring, rentals, reports, rules, snaptrade, users
+from app.routers import auth, accounts, budget, business_entities, capital_events, categories, financial_documents, health, investments, networth, plaid, properties, property_cost_statuses, property_details, property_documents, recurring, rentals, reports, rules, snaptrade, users
 
 logging.basicConfig(
     level=getattr(logging, settings.api_log_level.upper()),
@@ -37,7 +37,7 @@ limiter = Limiter(key_func=get_remote_address, storage_uri=settings.redis_url)
 
 app = FastAPI(
     title="MyFintech API",
-    version="0.2.0",
+    version="0.6.0",
     docs_url="/docs" if settings.environment == "development" else None,
     redoc_url=None,
 )
@@ -80,3 +80,4 @@ app.include_router(users.router, prefix="/api/v1")
 app.include_router(budget.router, prefix="/api/v1")
 app.include_router(snaptrade.router, prefix="/api/v1")
 app.include_router(networth.router, prefix="/api/v1")
+app.include_router(business_entities.router, prefix="/api/v1")

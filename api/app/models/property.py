@@ -38,6 +38,12 @@ class Property(Base):
     redfin_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     pin: Mapped[str | None] = mapped_column(Text, nullable=True)
     county: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("business_entities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
