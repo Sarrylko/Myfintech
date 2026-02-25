@@ -97,3 +97,4 @@ class HouseholdMemberUpdate(BaseModel):
     full_name: str | None = None
     email: EmailStr | None = None
     role: str | None = None
+    phone: str | None = None  # WhatsApp number for notifications (e.g. +12223334444)

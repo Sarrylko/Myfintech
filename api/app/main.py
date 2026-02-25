@@ -11,7 +11,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.core.config import settings
-from app.routers import auth, accounts, budget, capital_events, categories, financial_documents, health, investments, networth, plaid, properties, property_details, property_documents, recurring, rentals, reports, rules, snaptrade, users
+from app.routers import auth, accounts, budget, capital_events, categories, financial_documents, health, investments, networth, plaid, properties, property_cost_statuses, property_details, property_documents, recurring, rentals, reports, rules, snaptrade, users
 
 logging.basicConfig(
     level=getattr(logging, settings.api_log_level.upper()),
@@ -69,6 +69,7 @@ app.include_router(rules.router, prefix="/api/v1")
 app.include_router(properties.router, prefix="/api/v1")
 app.include_router(property_details.router, prefix="/api/v1")
 app.include_router(property_documents.router, prefix="/api/v1")
+app.include_router(property_cost_statuses.router, prefix="/api/v1")
 app.include_router(financial_documents.router, prefix="/api/v1")
 app.include_router(capital_events.router, prefix="/api/v1")
 app.include_router(investments.router, prefix="/api/v1")

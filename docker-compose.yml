@@ -68,7 +68,7 @@ services:
     volumes:
       - ./api/app:/app/app:delegated
       - ./api/alembic:/app/alembic:delegated
-      - uploads_data:/app/uploads
+      - ${UPLOADS_HOST_PATH:-C:/MyFintechUploads}:/app/uploads
     networks:
       - public
       - private
@@ -160,6 +160,43 @@ services:
       retries: 5
     profiles: ["default", "dev", "prod"]
 
+  # ─── Inbox file watcher ─────────────────────
+  file-watcher:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+      target: ${ENVIRONMENT:-development}
+    command: python -m app.watcher_main
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+      INBOX_POLL_SECONDS: ${INBOX_POLL_SECONDS:-30}
+    volumes:
+      - ./api/app:/app/app:delegated
+      - ${UPLOADS_HOST_PATH:-C:/MyFintechUploads}:/app/uploads
+      - ${INBOX_HOST_PATH:-C:/MyFintechInbox}:/app/inbox
+    networks:
+      - private
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles: ["default", "dev", "prod"]
+
+  # ─── WhatsApp notification bot ──────────────
+  whatsapp-bot:
+    build:
+      context: ./whatsapp-bot
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    shm_size: '1gb'
+    volumes:
+      - whatsapp_session:/app/.wwebjs_auth
+    networks:
+      - public
+      - private
+    profiles: ["default", "dev", "prod"]
+
   # ─── Dev-only: Adminer ──────────────────────
   adminer:
     image: adminer:latest
@@ -181,7 +218,7 @@ volumes:
     driver: local
   caddy_config:
     driver: local
-  uploads_data:
+  whatsapp_session:
     driver: local
 
 networks:

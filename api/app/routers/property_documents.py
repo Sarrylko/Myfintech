@@ -12,6 +12,7 @@ from app.core.deps import get_current_user
 from app.models.property import Property, PropertyDocument
 from app.models.user import User
 from app.schemas.property_document import PropertyDocumentResponse
+from app.services.pdf_extractor import extract_pdf_text
 
 router = APIRouter(tags=["property-documents"])
 
@@ -115,7 +116,10 @@ async def upload_document(
     stored_name = f"{uuid.uuid4()}_{original_name}"
     dir_path = Path(settings.upload_dir) / "properties" / str(property_id)
     dir_path.mkdir(parents=True, exist_ok=True)
-    (dir_path / stored_name).write_bytes(content)
+    file_path = dir_path / stored_name
+    file_path.write_bytes(content)
+
+    extracted_text = extract_pdf_text(str(file_path))
 
     doc = PropertyDocument(
         property_id=property_id,
@@ -126,6 +130,7 @@ async def upload_document(
         content_type=mime,
         category=category or None,
         description=description or None,
+        extracted_text=extracted_text,
     )
     db.add(doc)
     await db.flush()

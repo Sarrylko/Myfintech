@@ -40,3 +40,7 @@ yfinance==0.2.54
 
 # ─── SnapTrade ────────────────────────────────
 snaptrade-python-sdk==11.0.161
+
+# ─── Inbox watcher + PDF extraction ──────────
+pdfplumber==0.11.4
+watchdog==4.0.1

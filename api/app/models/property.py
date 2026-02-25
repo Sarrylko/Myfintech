@@ -79,6 +79,7 @@ class PropertyDocument(Base):
     content_type: Mapped[str] = mapped_column(String(100))
     category: Mapped[str | None] = mapped_column(String(50))
     description: Mapped[str | None] = mapped_column(Text)
+    extracted_text: Mapped[str | None] = mapped_column(Text)  # LLM fast-path; None = vision fallback
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

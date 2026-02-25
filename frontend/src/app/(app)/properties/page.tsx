@@ -27,6 +27,8 @@ import {
   uploadPropertyDocument,
   downloadPropertyDocument,
   deletePropertyDocument,
+  listPropertyCostStatuses,
+  upsertPropertyCostStatus,
   Account,
   Property,
   Loan,
@@ -37,6 +39,7 @@ import {
   MaintenanceExpenseCreate,
   PropertyValuation,
   PropertyDocument,
+  PropertyCostStatus,
 } from "@/lib/api";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -281,6 +284,8 @@ export default function PropertiesPage() {
   const [expenses, setExpenses] = useState<Record<string, MaintenanceExpense[]>>({});
   const [valuations, setValuations] = useState<Record<string, PropertyValuation[]>>({});
   const [documents, setDocuments] = useState<Record<string, PropertyDocument[]>>({});
+  const [costStatuses, setCostStatuses] = useState<Record<string, PropertyCostStatus[]>>({});
+  const [togglingStatus, setTogglingStatus] = useState<string | null>(null); // "propId-category"
 
   useEffect(() => {
     load();
@@ -294,17 +299,44 @@ export default function PropertiesPage() {
       setProperties(props);
       // Load loans + costs for all properties upfront (powers equity bar + monthly cost summary)
       if (props.length > 0) {
-        const [allLoans, allCosts] = await Promise.all([
+        const [allLoans, allCosts, allStatuses] = await Promise.all([
           Promise.all(props.map((p) => listLoans(p.id))),
           Promise.all(props.map((p) => listPropertyCosts(p.id))),
+          Promise.all(props.map((p) => listPropertyCostStatuses(p.id))),
         ]);
         setLoans(Object.fromEntries(props.map((p, i) => [p.id, allLoans[i]])));
         setCosts(Object.fromEntries(props.map((p, i) => [p.id, allCosts[i]])));
+        setCostStatuses(Object.fromEntries(props.map((p, i) => [p.id, allStatuses[i]])));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load properties");
     } finally {
       setLoading(false);
+    }
+  }
+
+  // ── Cost status toggle ────────────────────────────────────────────────────
+  const CURRENT_YEAR = new Date().getFullYear();
+
+  async function toggleCostStatus(propertyId: string, category: string) {
+    const key = `${propertyId}-${category}`;
+    if (togglingStatus === key) return;
+    const statuses = costStatuses[propertyId] ?? [];
+    const existing = statuses.find((s) => s.year === CURRENT_YEAR && s.category === category);
+    const newIsPaid = !(existing?.is_paid ?? false);
+    setTogglingStatus(key);
+    try {
+      const updated = await upsertPropertyCostStatus(propertyId, CURRENT_YEAR, category, newIsPaid);
+      setCostStatuses((prev) => {
+        const list = (prev[propertyId] ?? []).filter(
+          (s) => !(s.year === CURRENT_YEAR && s.category === category)
+        );
+        return { ...prev, [propertyId]: [...list, updated] };
+      });
+    } catch {
+      // silently ignore — UI reverts
+    } finally {
+      setTogglingStatus(null);
     }
   }
 
@@ -488,7 +520,7 @@ export default function PropertiesPage() {
                 {/* ── Header ── */}
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-lg">🏠</span>
                       <h3 className="font-semibold text-gray-900">{p.address}</h3>
                       <span className="text-xs bg-gray-100 text-gray-500 rounded px-2 py-0.5">
@@ -499,6 +531,62 @@ export default function PropertiesPage() {
                           Primary Residence
                         </span>
                       )}
+                      {/* ── Cost status indicators ── */}
+                      {(() => {
+                        const isEscrowed = (loans[p.id] ?? []).some((l) => l.escrow_included);
+                        const cats = [
+                          { key: "property_tax", label: "Tax", fullLabel: "Property Tax", hint: "Typically Apr & Oct" },
+                          { key: "hoa",          label: "HOA", fullLabel: "HOA",          hint: "Monthly"             },
+                          { key: "insurance",    label: "Ins", fullLabel: "Insurance",    hint: "Annual renewal"      },
+                        ].filter(({ key }) => !(isEscrowed && (key === "property_tax" || key === "insurance")));
+                        return (
+                          <>
+                            <span className="text-xs text-gray-400 font-mono shrink-0">{CURRENT_YEAR}:</span>
+                            {cats.map(({ key, label, fullLabel, hint }) => {
+                              const status = (costStatuses[p.id] ?? []).find(
+                                (s) => s.year === CURRENT_YEAR && s.category === key
+                              );
+                              const isPaid = status?.is_paid ?? false;
+                              const toggleKey = `${p.id}-${key}`;
+                              const tipText = `${fullLabel} ${CURRENT_YEAR} — ${isPaid ? "Paid — click to mark due" : `Due (${hint}) — click to mark paid`}`;
+                              const icon =
+                                key === "property_tax" ? (
+                                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                                    <rect x="3" y="2" width="10" height="12" rx="1" />
+                                    <line x1="5.5" y1="6" x2="10.5" y2="6" />
+                                    <line x1="5.5" y1="9" x2="8.5" y2="9" />
+                                  </svg>
+                                ) : key === "hoa" ? (
+                                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M8 2 L13 7 L13 14 L3 14 L3 7 Z" />
+                                    <rect x="6.5" y="10" width="3" height="4" />
+                                  </svg>
+                                ) : (
+                                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M8 2 L13 4 L13 9 C13 12.5 8 14 8 14 C8 14 3 12.5 3 9 L3 4 Z" />
+                                  </svg>
+                                );
+                              return (
+                                <button
+                                  key={key}
+                                  type="button"
+                                  onClick={() => toggleCostStatus(p.id, key)}
+                                  disabled={togglingStatus === toggleKey}
+                                  title={tipText}
+                                  className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded border text-xs font-medium transition-colors ${
+                                    isPaid
+                                      ? "bg-green-50 text-green-600 border-green-200 hover:bg-green-100"
+                                      : "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100"
+                                  } ${togglingStatus === toggleKey ? "opacity-50 cursor-wait" : "cursor-pointer"}`}
+                                >
+                                  {icon}
+                                  <span className="hidden sm:inline ml-0.5">{label}</span>
+                                </button>
+                              );
+                            })}
+                          </>
+                        );
+                      })()}
                     </div>
                     {(p.city || p.county || p.state || p.zip_code) && (
                       <p className="text-sm text-gray-500 ml-7">

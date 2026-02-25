@@ -12,6 +12,7 @@ from app.core.deps import get_current_user
 from app.models.financial_document import FinancialDocument
 from app.models.user import User
 from app.schemas.financial_document import FinancialDocumentResponse
+from app.services.pdf_extractor import extract_pdf_text
 
 router = APIRouter(tags=["financial-documents"])
 
@@ -103,7 +104,10 @@ async def upload_financial_document(
     stored_name = f"{uuid.uuid4()}_{original_name}"
     dir_path = Path(settings.upload_dir) / "financial" / str(user.household_id)
     dir_path.mkdir(parents=True, exist_ok=True)
-    (dir_path / stored_name).write_bytes(content)
+    file_path = dir_path / stored_name
+    file_path.write_bytes(content)
+
+    extracted_text = extract_pdf_text(str(file_path))
 
     doc = FinancialDocument(
         household_id=user.household_id,
@@ -116,6 +120,7 @@ async def upload_financial_document(
         file_size=total,
         content_type=mime,
         description=description or None,
+        extracted_text=extracted_text,
     )
     db.add(doc)
     await db.flush()

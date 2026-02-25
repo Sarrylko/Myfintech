@@ -468,6 +468,46 @@ export async function deletePropertyDocument(propertyId: string, docId: string):
   });
 }
 
+// ─── Property Cost Statuses ───────────────────────────────────────────────────
+
+export interface PropertyCostStatus {
+  id: string;
+  property_id: string;
+  year: number;
+  category: string;  // "property_tax" | "hoa" | "insurance"
+  is_paid: boolean;
+  paid_date: string | null;
+  updated_at: string;
+}
+
+export async function listPropertyCostStatuses(
+  propertyId: string,
+  year?: number
+): Promise<PropertyCostStatus[]> {
+  const params = year ? `?year=${year}` : "";
+  return apiFetch<PropertyCostStatus[]>(
+    `/api/v1/properties/${propertyId}/cost-statuses${params}`,
+    {}
+  );
+}
+
+export async function upsertPropertyCostStatus(
+  propertyId: string,
+  year: number,
+  category: string,
+  isPaid: boolean,
+  paidDate?: string | null
+): Promise<PropertyCostStatus> {
+  return apiFetch<PropertyCostStatus>(
+    `/api/v1/properties/${propertyId}/cost-statuses/${year}/${category}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_paid: isPaid, paid_date: paidDate ?? null }),
+    }
+  );
+}
+
 // ─── Rentals ─────────────────────────────────────────────────────────────────
 
 export interface Unit {
