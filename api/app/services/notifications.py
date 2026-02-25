@@ -165,8 +165,8 @@ def check_budget_alerts():
             budgets = db.execute(
                 select(Budget)
                 .where(
-                    BudgetModel.household_id == hid,
-                    BudgetModel.year == today.year,
+                    Budget.household_id == hid,
+                    Budget.year == today.year,
                 )
             ).scalars().all()
 

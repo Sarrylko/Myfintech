@@ -10,6 +10,8 @@ class AccountResponse(BaseModel):
     plaid_item_id: uuid.UUID | None
     snaptrade_connection_id: uuid.UUID | None = None
     owner_user_id: uuid.UUID | None
+    entity_id: uuid.UUID | None = None
+    account_scope: str = "personal"
     name: str
     official_name: str | None
     institution_name: str | None
@@ -39,6 +41,8 @@ class ManualAccountCreate(BaseModel):
 
 class AccountUpdate(BaseModel):
     owner_user_id: uuid.UUID | None = None
+    entity_id: uuid.UUID | None = None
+    account_scope: str | None = None  # personal | business
     name: str | None = None
     institution_name: str | None = None
     type: str | None = None

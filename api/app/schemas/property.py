@@ -45,6 +45,7 @@ class PropertyUpdate(BaseModel):
     leasing_fee_amount: Decimal | None = None
     zillow_url: str | None = None
     redfin_url: str | None = None
+    entity_id: uuid.UUID | None = None
 
 
 class PropertyResponse(BaseModel):
@@ -70,4 +71,5 @@ class PropertyResponse(BaseModel):
     leasing_fee_amount: Decimal | None
     zillow_url: str | None
     redfin_url: str | None
+    entity_id: uuid.UUID | None = None
     created_at: datetime

@@ -13,6 +13,7 @@ import {
   updateAccount,
   deleteAccount,
   listHouseholdMembers,
+  listBusinessEntities,
   getSnapTradeConnectUrl,
   listSnapTradeConnections,
   syncSnapTradeAuthorizations,
@@ -24,6 +25,7 @@ import {
   ManualAccountCreate,
   UserResponse,
   SnapTradeConnection,
+  BusinessEntityResponse,
 } from "@/lib/api";
 
 declare global {
@@ -124,6 +126,9 @@ export default function AccountsPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
 
+  // Business entities (for account linking)
+  const [entities, setEntities] = useState<BusinessEntityResponse[]>([]);
+
   // Delete institution (Plaid item) state
   const [deleteItemTarget, setDeleteItemTarget] = useState<PlaidItem | null>(null);
   const [deleteItemSaving, setDeleteItemSaving] = useState(false);
@@ -161,6 +166,7 @@ export default function AccountsPage() {
   }, [router]);
 
   useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { listBusinessEntities().then(setEntities).catch(() => {}); }, []);
 
   async function handleLinkAccount() {
     if (!plaidReady || !window.Plaid) {
@@ -234,6 +240,8 @@ export default function AccountsPage() {
       mask: acct.mask ?? undefined,
       current_balance: acct.current_balance !== null ? parseFloat(acct.current_balance!) : undefined,
       is_hidden: acct.is_hidden,
+      entity_id: acct.entity_id ?? null,
+      account_scope: acct.account_scope ?? "personal",
     });
   }
 
@@ -658,6 +666,42 @@ export default function AccountsPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Business entity + scope */}
+              {entities.length > 0 && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="acct-entity-select" className="block text-sm font-medium text-gray-700 mb-1">
+                      Business Entity
+                    </label>
+                    <select
+                      id="acct-entity-select"
+                      value={editForm.entity_id ?? ""}
+                      onChange={(e) => setEditForm((p) => ({ ...p, entity_id: e.target.value || null }))}
+                      className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                    >
+                      <option value="">— Personal —</option>
+                      {entities.map((e) => (
+                        <option key={e.id} value={e.id}>{e.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="acct-scope-select" className="block text-sm font-medium text-gray-700 mb-1">
+                      Account Scope
+                    </label>
+                    <select
+                      id="acct-scope-select"
+                      value={editForm.account_scope ?? "personal"}
+                      onChange={(e) => setEditForm((p) => ({ ...p, account_scope: e.target.value }))}
+                      className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                    >
+                      <option value="personal">Personal</option>
+                      <option value="business">Business</option>
+                    </select>
+                  </div>
+                </div>
+              )}
 
               {/* Hidden toggle */}
               <label className="flex items-center gap-2 cursor-pointer">

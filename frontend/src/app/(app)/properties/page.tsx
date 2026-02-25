@@ -29,6 +29,7 @@ import {
   deletePropertyDocument,
   listPropertyCostStatuses,
   upsertPropertyCostStatus,
+  listBusinessEntities,
   Account,
   Property,
   Loan,
@@ -40,6 +41,7 @@ import {
   PropertyValuation,
   PropertyDocument,
   PropertyCostStatus,
+  BusinessEntityResponse,
 } from "@/lib/api";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -235,6 +237,7 @@ interface DetailForm {
   redfin_url: string;
   county: string;
   pin: string;
+  entity_id: string;
 }
 
 function toDetailForm(p: Property): DetailForm {
@@ -252,6 +255,7 @@ function toDetailForm(p: Property): DetailForm {
     redfin_url: p.redfin_url ?? "",
     county: p.county ?? "",
     pin: p.pin ?? "",
+    entity_id: p.entity_id ?? "",
   };
 }
 
@@ -268,10 +272,16 @@ export default function PropertiesPage() {
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Business entities (for property linking)
+  const [entities, setEntities] = useState<BusinessEntityResponse[]>([]);
+
   // Detail edit panel
   const [editingDetails, setEditingDetails] = useState<string | null>(null);
   const [detailForm, setDetailForm] = useState<DetailForm>({
     purchase_price: "", purchase_date: "", closing_costs: "",
+    is_primary_residence: false, is_property_managed: false,
+    management_fee_pct: "", leasing_fee_amount: "",
+    zillow_url: "", redfin_url: "", county: "", pin: "", entity_id: "",
   });
   const [savingDetails, setSavingDetails] = useState(false);
 
@@ -289,6 +299,7 @@ export default function PropertiesPage() {
 
   useEffect(() => {
     load();
+    listBusinessEntities().then(setEntities).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -427,6 +438,7 @@ export default function PropertiesPage() {
       payload.redfin_url = detailForm.redfin_url.trim() || null;
       payload.county = detailForm.county.trim() || null;
       payload.pin = detailForm.pin.trim() || null;
+      payload.entity_id = detailForm.entity_id || null;
 
       const updated = await updateProperty(id, payload);
       setProperties((prev) => prev.map((p) => (p.id === id ? updated : p)));
@@ -796,6 +808,29 @@ export default function PropertiesPage() {
                         </p>
                       </div>
                     </div>
+
+                    {/* Business Entity Link */}
+                    {entities.length > 0 && (
+                      <div className="mb-5">
+                        <label htmlFor="prop-entity-select" className="block text-xs font-medium text-gray-600 mb-1">
+                          Business Entity <span className="font-normal text-gray-400">(optional)</span>
+                        </label>
+                        <select
+                          id="prop-entity-select"
+                          value={detailForm.entity_id}
+                          onChange={(e) => setDetailForm((f) => ({ ...f, entity_id: e.target.value }))}
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                        >
+                          <option value="">— Personal (no entity) —</option>
+                          {entities.map((e) => (
+                            <option key={e.id} value={e.id}>{e.name}</option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-gray-400 mt-1">
+                          Link this property to an LLC, trust, or other business entity
+                        </p>
+                      </div>
+                    )}
 
                     <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
                       Edit Purchase Details
