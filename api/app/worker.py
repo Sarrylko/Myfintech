@@ -38,6 +38,19 @@ celery_app.conf.beat_schedule = {
         "task": "app.services.price_refresh.refresh_investment_prices",
         "schedule": crontab(minute="*/5"),  # every 5 min; task handles per-household interval check
     },
+    # ── WhatsApp notifications ──────────────────
+    "send-daily-summary": {
+        "task": "app.services.notifications.send_daily_summary",
+        "schedule": crontab(hour=8, minute=0),
+    },
+    "check-budget-alerts": {
+        "task": "app.services.notifications.check_budget_alerts",
+        "schedule": crontab(hour=9, minute=0),
+    },
+    "check-bill-reminders": {
+        "task": "app.services.notifications.check_bill_reminders",
+        "schedule": crontab(hour=9, minute=5),
+    },
 }
 
 # Explicitly include task modules so the worker registers them on startup.
@@ -47,4 +60,5 @@ celery_app.conf.include = [
     "app.services.sync",
     "app.services.networth",
     "app.services.property",
+    "app.services.notifications",
 ]

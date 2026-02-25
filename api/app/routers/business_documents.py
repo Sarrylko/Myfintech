@@ -9,18 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.financial_document import FinancialDocument
+from app.models.business_document import BusinessDocument
+from app.models.business_entity import BusinessEntity
 from app.models.user import User
-from app.schemas.financial_document import FinancialDocumentResponse
+from app.schemas.business_document import BusinessDocumentResponse
 from app.services.pdf_extractor import extract_pdf_text
 
-router = APIRouter(tags=["financial-documents"])
+router = APIRouter(tags=["business-documents"])
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-CHUNK_SIZE = 1024 * 1024  # 1 MB streaming chunks
+CHUNK_SIZE = 1024 * 1024           # 1 MB
 
-# Allowed file extensions and their canonical MIME types.
-# Client-supplied Content-Type is ignored; we derive it from the extension.
 _ALLOWED: dict[str, str] = {
     "pdf":  "application/pdf",
     "doc":  "application/msword",
@@ -38,57 +37,69 @@ _ALLOWED: dict[str, str] = {
 
 
 def _validate_upload(filename: str) -> str:
-    """Return the safe MIME type for the file, or raise 400."""
     ext = Path(filename).suffix.lstrip(".").lower()
     mime = _ALLOWED.get(ext)
     if mime is None:
-        allowed = ", ".join(sorted(_ALLOWED))
         raise HTTPException(
             status_code=400,
-            detail=f"File type '.{ext}' is not allowed. Allowed: {allowed}",
+            detail=f"File type '.{ext}' not allowed. Allowed: {', '.join(sorted(_ALLOWED))}",
         )
     return mime
 
 
-# ─── List ────────────────────────────────────────────────────────────────────
+async def _get_entity(entity_id: uuid.UUID, user: User, db: AsyncSession) -> BusinessEntity:
+    result = await db.execute(
+        select(BusinessEntity).where(
+            BusinessEntity.id == entity_id,
+            BusinessEntity.household_id == user.household_id,
+        )
+    )
+    entity = result.scalar_one_or_none()
+    if not entity:
+        raise HTTPException(status_code=404, detail="Business entity not found")
+    return entity
 
-@router.get("/financial-documents", response_model=list[FinancialDocumentResponse])
-async def list_financial_documents(
-    year: int | None = None,
-    document_type: str | None = None,
+
+# ── List ──────────────────────────────────────────────────────────────────────
+
+@router.get(
+    "/business-entities/{entity_id}/documents",
+    response_model=list[BusinessDocumentResponse],
+)
+async def list_documents(
+    entity_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = (
-        select(FinancialDocument)
-        .where(FinancialDocument.household_id == user.household_id)
-        .order_by(FinancialDocument.uploaded_at.desc())
+    await _get_entity(entity_id, user, db)
+    result = await db.execute(
+        select(BusinessDocument)
+        .where(BusinessDocument.entity_id == entity_id)
+        .order_by(BusinessDocument.uploaded_at.desc())
     )
-    if year is not None:
-        query = query.where(FinancialDocument.reference_year == year)
-    if document_type is not None:
-        query = query.where(FinancialDocument.document_type == document_type)
-    result = await db.execute(query)
     return result.scalars().all()
 
 
-# ─── Upload ───────────────────────────────────────────────────────────────────
+# ── Upload ────────────────────────────────────────────────────────────────────
 
-@router.post("/financial-documents", response_model=FinancialDocumentResponse, status_code=201)
-async def upload_financial_document(
+@router.post(
+    "/business-entities/{entity_id}/documents",
+    response_model=BusinessDocumentResponse,
+    status_code=201,
+)
+async def upload_document(
+    entity_id: uuid.UUID,
     file: UploadFile = File(...),
-    document_type: str = Form("other"),
-    category: str = Form("other"),
-    reference_year: int | None = Form(None),
-    owner_user_id: uuid.UUID | None = Form(None),
+    category: str | None = Form(None),
     description: str | None = Form(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _get_entity(entity_id, user, db)
+
     original_name = file.filename or "upload"
     mime = _validate_upload(original_name)
 
-    # Stream the upload in chunks to avoid loading the entire file into RAM
     chunks: list[bytes] = []
     total = 0
     while True:
@@ -102,23 +113,21 @@ async def upload_financial_document(
     content = b"".join(chunks)
 
     stored_name = f"{uuid.uuid4()}_{original_name}"
-    dir_path = Path(settings.upload_dir) / "financial" / str(user.household_id)
+    dir_path = Path(settings.upload_dir) / "business" / str(entity_id)
     dir_path.mkdir(parents=True, exist_ok=True)
     file_path = dir_path / stored_name
     file_path.write_bytes(content)
 
     extracted_text = extract_pdf_text(str(file_path))
 
-    doc = FinancialDocument(
+    doc = BusinessDocument(
+        entity_id=entity_id,
         household_id=user.household_id,
-        owner_user_id=owner_user_id,
-        document_type=document_type,
-        category=category,
-        reference_year=reference_year,
         filename=original_name,
         stored_filename=stored_name,
         file_size=total,
         content_type=mime,
+        category=category or None,
         description=description or None,
         extracted_text=extracted_text,
     )
@@ -128,54 +137,56 @@ async def upload_financial_document(
     return doc
 
 
-# ─── Download ─────────────────────────────────────────────────────────────────
+# ── Download ──────────────────────────────────────────────────────────────────
 
-@router.get("/financial-documents/{doc_id}/download")
-async def download_financial_document(
+@router.get("/business-entities/{entity_id}/documents/{doc_id}/download")
+async def download_document(
+    entity_id: uuid.UUID,
     doc_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _get_entity(entity_id, user, db)
+
     result = await db.execute(
-        select(FinancialDocument).where(
-            FinancialDocument.id == doc_id,
-            FinancialDocument.household_id == user.household_id,
+        select(BusinessDocument).where(
+            BusinessDocument.id == doc_id,
+            BusinessDocument.entity_id == entity_id,
         )
     )
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    file_path = (
-        Path(settings.upload_dir) / "financial" / str(user.household_id) / doc.stored_filename
-    )
+    file_path = Path(settings.upload_dir) / "business" / str(entity_id) / doc.stored_filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
     return FileResponse(path=str(file_path), filename=doc.filename, media_type=doc.content_type)
 
 
-# ─── Delete ───────────────────────────────────────────────────────────────────
+# ── Delete ────────────────────────────────────────────────────────────────────
 
-@router.delete("/financial-documents/{doc_id}", status_code=204)
-async def delete_financial_document(
+@router.delete("/business-entities/{entity_id}/documents/{doc_id}", status_code=204)
+async def delete_document(
+    entity_id: uuid.UUID,
     doc_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _get_entity(entity_id, user, db)
+
     result = await db.execute(
-        select(FinancialDocument).where(
-            FinancialDocument.id == doc_id,
-            FinancialDocument.household_id == user.household_id,
+        select(BusinessDocument).where(
+            BusinessDocument.id == doc_id,
+            BusinessDocument.entity_id == entity_id,
         )
     )
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    file_path = (
-        Path(settings.upload_dir) / "financial" / str(user.household_id) / doc.stored_filename
-    )
+    file_path = Path(settings.upload_dir) / "business" / str(entity_id) / doc.stored_filename
     try:
         file_path.unlink(missing_ok=True)
     except OSError:

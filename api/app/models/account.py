@@ -71,6 +71,15 @@ class Account(Base):
     currency_code: Mapped[str] = mapped_column(String(3), default="USD")
     is_hidden: Mapped[bool] = mapped_column(Boolean, default=False)
     is_manual: Mapped[bool] = mapped_column(Boolean, default=False)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("business_entities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    account_scope: Mapped[str] = mapped_column(
+        String(10), server_default="personal"
+    )  # personal | business
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

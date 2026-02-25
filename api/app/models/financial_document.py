@@ -38,6 +38,7 @@ class FinancialDocument(Base):
     content_type: Mapped[str] = mapped_column(String(100))    # MIME type
     # ── Metadata ───────────────────────────────────────────────────────────────
     description: Mapped[str | None] = mapped_column(Text)     # e.g. "Employer: Acme Corp"
+    extracted_text: Mapped[str | None] = mapped_column(Text)  # LLM fast-path; None = vision fallback
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

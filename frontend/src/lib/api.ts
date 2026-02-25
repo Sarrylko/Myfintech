@@ -166,6 +166,8 @@ export interface Account {
   plaid_item_id: string | null;
   snaptrade_connection_id: string | null;
   owner_user_id: string | null;
+  entity_id: string | null;
+  account_scope: string;
   name: string;
   official_name: string | null;
   institution_name: string | null;
@@ -193,6 +195,8 @@ export interface ManualAccountCreate {
 
 export interface AccountUpdate {
   owner_user_id?: string | null;
+  entity_id?: string | null;
+  account_scope?: string;
   name?: string;
   institution_name?: string;
   type?: string;
@@ -354,6 +358,7 @@ export interface Property {
   leasing_fee_amount: string | null;
   zillow_url: string | null;
   redfin_url: string | null;
+  entity_id: string | null;
   created_at: string;
 }
 
@@ -466,6 +471,46 @@ export async function deletePropertyDocument(propertyId: string, docId: string):
   return apiFetch<void>(`/api/v1/properties/${propertyId}/documents/${docId}`, {
     method: "DELETE",
   });
+}
+
+// ─── Property Cost Statuses ───────────────────────────────────────────────────
+
+export interface PropertyCostStatus {
+  id: string;
+  property_id: string;
+  year: number;
+  category: string;  // "property_tax" | "hoa" | "insurance"
+  is_paid: boolean;
+  paid_date: string | null;
+  updated_at: string;
+}
+
+export async function listPropertyCostStatuses(
+  propertyId: string,
+  year?: number
+): Promise<PropertyCostStatus[]> {
+  const params = year ? `?year=${year}` : "";
+  return apiFetch<PropertyCostStatus[]>(
+    `/api/v1/properties/${propertyId}/cost-statuses${params}`,
+    {}
+  );
+}
+
+export async function upsertPropertyCostStatus(
+  propertyId: string,
+  year: number,
+  category: string,
+  isPaid: boolean,
+  paidDate?: string | null
+): Promise<PropertyCostStatus> {
+  return apiFetch<PropertyCostStatus>(
+    `/api/v1/properties/${propertyId}/cost-statuses/${year}/${category}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_paid: isPaid, paid_date: paidDate ?? null }),
+    }
+  );
 }
 
 // ─── Rentals ─────────────────────────────────────────────────────────────────
@@ -1563,4 +1608,211 @@ export async function downloadFinancialDocument(
 
 export async function deleteFinancialDocument(docId: string): Promise<void> {
   return apiFetch<void>(`/api/v1/financial-documents/${docId}`, { method: "DELETE" });
+}
+
+// ─── Business Entities ─────────────────────────────────────────────────────
+
+export type EntityType = "llc" | "s_corp" | "c_corp" | "trust" | "partnership" | "sole_prop";
+
+export interface BusinessEntityResponse {
+  id: string;
+  household_id: string;
+  parent_id: string | null;
+  name: string;
+  entity_type: EntityType;
+  state_of_formation: string | null;
+  ein: string | null;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface BusinessEntityTree extends BusinessEntityResponse {
+  children: BusinessEntityTree[];
+}
+
+export interface EntityOwnershipResponse {
+  id: string;
+  entity_id: string;
+  owner_user_id: string | null;
+  owner_entity_id: string | null;
+  ownership_pct: string;
+  created_at: string;
+  owner_name: string | null;
+}
+
+export interface LinkedPropertySummary {
+  id: string;
+  address: string;
+  city: string | null;
+  state: string | null;
+  current_value: string | null;
+}
+
+export interface LinkedAccountSummary {
+  id: string;
+  name: string;
+  type: string;
+  institution_name: string | null;
+  current_balance: string | null;
+  account_scope: string;
+}
+
+export interface BusinessEntityDetail extends BusinessEntityResponse {
+  ownership: EntityOwnershipResponse[];
+  properties: LinkedPropertySummary[];
+  accounts: LinkedAccountSummary[];
+  children: BusinessEntityResponse[];
+}
+
+export interface BusinessEntityCreate {
+  name: string;
+  entity_type: EntityType;
+  parent_id?: string | null;
+  state_of_formation?: string | null;
+  ein?: string | null;
+  description?: string | null;
+  is_active?: boolean;
+}
+
+export interface BusinessEntityUpdate {
+  name?: string;
+  entity_type?: EntityType;
+  parent_id?: string | null;
+  state_of_formation?: string | null;
+  ein?: string | null;
+  description?: string | null;
+  is_active?: boolean;
+}
+
+export async function listBusinessEntities(): Promise<BusinessEntityResponse[]> {
+  return apiFetch<BusinessEntityResponse[]>("/api/v1/business-entities/");
+}
+
+export async function getBusinessEntityTree(): Promise<BusinessEntityTree[]> {
+  return apiFetch<BusinessEntityTree[]>("/api/v1/business-entities/tree");
+}
+
+export async function getBusinessEntityDetail(id: string): Promise<BusinessEntityDetail> {
+  return apiFetch<BusinessEntityDetail>(`/api/v1/business-entities/${id}`);
+}
+
+export async function createBusinessEntity(
+  payload: BusinessEntityCreate
+): Promise<BusinessEntityResponse> {
+  return apiFetch<BusinessEntityResponse>("/api/v1/business-entities/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateBusinessEntity(
+  id: string,
+  payload: BusinessEntityUpdate
+): Promise<BusinessEntityResponse> {
+  return apiFetch<BusinessEntityResponse>(`/api/v1/business-entities/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteBusinessEntity(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/business-entities/${id}`, { method: "DELETE" });
+}
+
+export async function addEntityOwnership(
+  entityId: string,
+  payload: { owner_user_id?: string | null; owner_entity_id?: string | null; ownership_pct: number }
+): Promise<EntityOwnershipResponse> {
+  return apiFetch<EntityOwnershipResponse>(
+    `/api/v1/business-entities/${entityId}/ownership`,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export async function removeEntityOwnership(
+  entityId: string,
+  ownershipId: string
+): Promise<void> {
+  return apiFetch<void>(
+    `/api/v1/business-entities/${entityId}/ownership/${ownershipId}`,
+    { method: "DELETE" }
+  );
+}
+
+// ─── Business Documents ────────────────────────────────────────────────────
+
+export interface BusinessDocument {
+  id: string;
+  entity_id: string;
+  filename: string;
+  file_size: number;
+  content_type: string;
+  category: string | null;
+  description: string | null;
+  uploaded_at: string;
+}
+
+export const BUSINESS_DOC_CATEGORIES: Record<string, string> = {
+  ein_certificate: "EIN Certificate",
+  operating_agreement: "Operating Agreement",
+  articles_of_organization: "Articles of Organization",
+  bylaws: "Bylaws",
+  annual_report: "Annual Report",
+  tax_return: "Tax Return",
+  bank_statement: "Bank Statement",
+  legal_agreement: "Legal Agreement",
+  shareholder_agreement: "Shareholder Agreement",
+  insurance: "Insurance",
+  other: "Other",
+};
+
+export async function listBusinessDocuments(entityId: string): Promise<BusinessDocument[]> {
+  return apiFetch<BusinessDocument[]>(`/api/v1/business-entities/${entityId}/documents`);
+}
+
+export async function uploadBusinessDocument(
+  entityId: string,
+  file: File,
+  category: string | null,
+  description: string | null
+): Promise<BusinessDocument> {
+  const form = new FormData();
+  form.append("file", file);
+  if (category) form.append("category", category);
+  if (description) form.append("description", description);
+  const res = await fetch(`/api/v1/business-entities/${entityId}/documents`, {
+    method: "POST",
+    body: form,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function downloadBusinessDocument(
+  entityId: string,
+  docId: string,
+  filename: string
+): Promise<void> {
+  const res = await fetch(`/api/v1/business-entities/${entityId}/documents/${docId}/download`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function deleteBusinessDocument(entityId: string, docId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/business-entities/${entityId}/documents/${docId}`, {
+    method: "DELETE",
+  });
 }
