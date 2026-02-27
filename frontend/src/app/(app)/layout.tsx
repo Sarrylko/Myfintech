@@ -1,36 +1,31 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
-import { logout } from "@/lib/api";
+import { usePathname } from "next/navigation";
+import { getProfile, UserResponse } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
 import { useTheme } from "@/components/ThemeProvider";
+import UserMenu from "@/components/UserMenu";
 
 export default function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const router = useRouter();
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [profile, setProfile] = useState<UserResponse | null>(null);
 
+  // Single profile fetch — shared with UserMenu via prop
   useEffect(() => {
-    // With httpOnly cookies, we can't check localStorage — a failed API call in
-    // apiFetch will auto-redirect to /login when the session expires.
-    // This effect does nothing but satisfies the dependency lint.
-  }, [router, pathname]);
+    getProfile().then(setProfile).catch(() => {});
+  }, []);
 
   // Close drawer on navigation
   useEffect(() => {
     setDrawerOpen(false);
   }, [pathname]);
-
-  async function handleSignOut() {
-    await logout().catch(() => {});
-    router.replace("/login");
-  }
 
   const currentPage =
     navItems.find(
@@ -64,8 +59,8 @@ export default function AppLayout({
         <span className="flex-1 text-center text-sm font-semibold">
           {currentPage}
         </span>
-        {/* right spacer keeps title centered */}
-        <div className="w-8" />
+        {/* User avatar in mobile top bar */}
+        <UserMenu initialProfile={profile} onProfileUpdate={setProfile} />
       </header>
 
       {/* ── Mobile drawer backdrop ──────────────────────────────── */}
@@ -147,18 +142,11 @@ export default function AppLayout({
             {theme === "dark" ? "☀️" : "🌙"}
             {theme === "dark" ? "Light Mode" : "Dark Mode"}
           </button>
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="w-full text-left text-sm text-gray-400 hover:text-white transition px-3 py-2 rounded-lg hover:bg-gray-800"
-          >
-            Sign Out
-          </button>
           <p className="mt-2 px-3 text-xs text-gray-600">v{APP_VERSION}</p>
         </div>
       </aside>
 
-      {/* ── Desktop sidebar (unchanged) ─────────────────────────── */}
+      {/* ── Desktop sidebar ─────────────────────────────────────── */}
       <aside className="w-64 bg-gray-900 text-white flex-col hidden md:flex">
         <div className="p-6 flex-1">
           <a
@@ -190,22 +178,26 @@ export default function AppLayout({
             {theme === "dark" ? "☀️" : "🌙"}
             {theme === "dark" ? "Light Mode" : "Dark Mode"}
           </button>
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="w-full text-left text-sm text-gray-400 hover:text-white transition px-3 py-2 rounded-lg hover:bg-gray-800"
-          >
-            Sign Out
-          </button>
           <p className="mt-2 px-3 text-xs text-gray-600">v{APP_VERSION}</p>
         </div>
       </aside>
 
-      {/* ── Main content ────────────────────────────────────────── */}
-      {/* pt-[4.5rem] on mobile = 56px top bar + 16px gap; md:pt-8 restores original */}
-      <main className="flex-1 p-8 pt-[4.5rem] md:pt-8 bg-slate-50 dark:bg-gray-950 min-h-screen">
-        {children}
-      </main>
+      {/* ── Main content area ────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col min-h-screen bg-slate-50 dark:bg-gray-950">
+        {/* Desktop top header with page name + user avatar */}
+        <header className="hidden md:flex h-14 items-center justify-between px-6 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
+          <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+            {currentPage}
+          </span>
+          <UserMenu initialProfile={profile} onProfileUpdate={setProfile} />
+        </header>
+
+        {/* Page content */}
+        {/* pt-[4.5rem] on mobile = 56px top bar + 16px gap; md:pt-0 because desktop has its own header */}
+        <main className="flex-1 p-8 pt-[4.5rem] md:pt-8">
+          {children}
+        </main>
+      </div>
     </div>
   );
 }
@@ -222,5 +214,4 @@ const navItems = [
   { href: "/taxes", label: "Tax Center", icon: "📊" },
   { href: "/recurring", label: "Recurring", icon: "🔁" },
   { href: "/rules", label: "Rules", icon: "⚡" },
-  { href: "/settings", label: "Settings", icon: "⚙" },
 ];

@@ -32,7 +32,10 @@
       "Bash(__NEW_LINE_3a19c61df98f8927__ echo \"\")",
       "Bash(powershell.exe -Command \"New-Item -ItemType Directory -Path ''C:\\\\MyFintechUploads'' -Force\")",
       "Bash(powershell.exe -Command \"Get-ChildItem C:\\\\MyFintech -Recurse -File | Select-Object FullName\")",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(wc -l /c/Github/MyFinTech/Myfintech/frontend/src/lib/api.ts /c/Github/MyFinTech/Myfintech/frontend/src/app/\\\\\\(app\\\\\\)/settings/page.tsx)",
+      "Bash(wc -l /c/Github/MyFinTech/Myfintech/frontend/src/app/\\\\\\(app\\\\\\)/settings/page.tsx)",
+      "Bash(wc -l \"c:\\\\Github\\\\MyFinTech\\\\Myfintech\\\\frontend\\\\src\\\\app\\\\\\(app\\)\\\\settings\\\\page.tsx\" \"c:\\\\Github\\\\MyFinTech\\\\Myfintech\\\\frontend\\\\src\\\\lib\\\\api.ts\")"
     ]
   }
 }
