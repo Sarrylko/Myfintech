@@ -145,6 +145,23 @@ export async function addHouseholdMember(
   });
 }
 
+export interface HouseholdMemberUpdate {
+  full_name?: string;
+  email?: string;
+  phone?: string;
+  role?: string;
+}
+
+export async function updateHouseholdMember(
+  memberId: string,
+  data: HouseholdMemberUpdate
+): Promise<UserResponse> {
+  return apiFetch<UserResponse>(`/api/v1/users/household/members/${memberId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
 export async function removeHouseholdMember(memberId: string): Promise<void> {
   return apiFetch<void>(`/api/v1/users/household/members/${memberId}`, {
     method: "DELETE",
