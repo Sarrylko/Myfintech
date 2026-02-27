@@ -10,8 +10,10 @@ import {
   changePassword,
   listHouseholdMembers,
   addHouseholdMember,
+  updateHouseholdMember,
   removeHouseholdMember,
   HouseholdMemberCreate,
+  HouseholdMemberUpdate,
   UserResponse,
   UserProfileUpdate,
   listCustomCategories,
@@ -144,6 +146,10 @@ export default function SettingsPage() {
   const [memberError, setMemberError] = useState("");
   const [memberSuccess, setMemberSuccess] = useState("");
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [editMemberForm, setEditMemberForm] = useState<HouseholdMemberUpdate>({});
+  const [memberEditSaving, setMemberEditSaving] = useState(false);
+  const [memberEditError, setMemberEditError] = useState("");
 
   useEffect(() => {
     listCustomCategories().then(setCustomCats).catch(() => {});
@@ -253,6 +259,30 @@ export default function SettingsPage() {
       setMemberError(err instanceof Error ? err.message : "Failed to add member");
     } finally {
       setMemberSaving(false);
+    }
+  }
+
+  function handleStartEditMember(m: UserResponse) {
+    setEditingMemberId(m.id);
+    setEditMemberForm({ full_name: m.full_name, email: m.email, phone: m.phone ?? "" });
+    setMemberEditError("");
+  }
+
+  async function handleSaveMember(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingMemberId) return;
+    setMemberEditSaving(true);
+    setMemberEditError("");
+    try {
+      const updated = await updateHouseholdMember(editingMemberId, editMemberForm);
+      setMembers((prev) => prev.map((m) => m.id === updated.id ? updated : m));
+      setEditingMemberId(null);
+      setMemberSuccess(`${updated.full_name} updated successfully.`);
+      setTimeout(() => setMemberSuccess(""), 4000);
+    } catch (err) {
+      setMemberEditError(err instanceof Error ? err.message : "Failed to update member");
+    } finally {
+      setMemberEditSaving(false);
     }
   }
 
@@ -707,34 +737,95 @@ export default function SettingsPage() {
           {/* Member list */}
           <div className="space-y-2 mb-4">
             {members.map((m) => (
-              <div key={m.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-sm font-semibold shrink-0">
-                    {m.full_name.charAt(0).toUpperCase()}
+              <div key={m.id} className="bg-gray-50 rounded-lg border border-gray-100">
+                {editingMemberId === m.id ? (
+                  <form onSubmit={handleSaveMember} className="p-4 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Full Name</label>
+                        <input
+                          type="text" required
+                          value={editMemberForm.full_name ?? ""}
+                          onChange={(e) => setEditMemberForm((p) => ({ ...p, full_name: e.target.value }))}
+                          placeholder="Full name"
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+                        <input
+                          type="email" required
+                          value={editMemberForm.email ?? ""}
+                          onChange={(e) => setEditMemberForm((p) => ({ ...p, email: e.target.value }))}
+                          placeholder="email@example.com"
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Phone (WhatsApp)</label>
+                        <input
+                          type="tel"
+                          value={editMemberForm.phone ?? ""}
+                          onChange={(e) => setEditMemberForm((p) => ({ ...p, phone: e.target.value }))}
+                          placeholder="+1 555 000 0000"
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                      </div>
+                    </div>
+                    {memberEditError && (
+                      <p className="text-xs text-red-600">{memberEditError}</p>
+                    )}
+                    <div className="flex gap-2">
+                      <button type="submit" disabled={memberEditSaving}
+                        className="bg-primary-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-primary-700 disabled:opacity-50 transition">
+                        {memberEditSaving ? "Saving…" : "Save"}
+                      </button>
+                      <button type="button" onClick={() => { setEditingMemberId(null); setMemberEditError(""); }}
+                        className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 transition">Cancel</button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-sm font-semibold shrink-0">
+                        {m.full_name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          {m.full_name}
+                          {m.id === profile?.id && <span className="ml-1.5 text-xs text-gray-400">(you)</span>}
+                        </p>
+                        <p className="text-xs text-gray-400">{m.email}{m.phone ? ` · ${m.phone}` : ""}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${m.role === "owner" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>
+                        {m.role === "owner" ? "Owner" : "Member"}
+                      </span>
+                      {profile?.role === "owner" && m.id !== profile.id && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleStartEditMember(m)}
+                            className="text-xs text-gray-400 hover:text-primary-600 transition ml-1"
+                            title="Edit member"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMember(m.id)}
+                            disabled={removingMemberId === m.id}
+                            className="text-xs text-gray-400 hover:text-red-500 transition disabled:opacity-40"
+                            title="Remove from household"
+                          >
+                            {removingMemberId === m.id ? "Removing…" : "Remove"}
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">
-                      {m.full_name}
-                      {m.id === profile?.id && <span className="ml-1.5 text-xs text-gray-400">(you)</span>}
-                    </p>
-                    <p className="text-xs text-gray-400">{m.email}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${m.role === "owner" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>
-                    {m.role === "owner" ? "Owner" : "Member"}
-                  </span>
-                  {profile?.role === "owner" && m.id !== profile.id && (
-                    <button
-                      onClick={() => handleRemoveMember(m.id)}
-                      disabled={removingMemberId === m.id}
-                      className="text-xs text-gray-400 hover:text-red-500 transition disabled:opacity-40 ml-1"
-                      title="Remove from household"
-                    >
-                      {removingMemberId === m.id ? "Removing…" : "Remove"}
-                    </button>
-                  )}
-                </div>
+                )}
               </div>
             ))}
             {members.length === 0 && (
