@@ -35,7 +35,12 @@
       "Bash(git stash:*)",
       "Bash(wc -l /c/Github/MyFinTech/Myfintech/frontend/src/lib/api.ts /c/Github/MyFinTech/Myfintech/frontend/src/app/\\\\\\(app\\\\\\)/settings/page.tsx)",
       "Bash(wc -l /c/Github/MyFinTech/Myfintech/frontend/src/app/\\\\\\(app\\\\\\)/settings/page.tsx)",
-      "Bash(wc -l \"c:\\\\Github\\\\MyFinTech\\\\Myfintech\\\\frontend\\\\src\\\\app\\\\\\(app\\)\\\\settings\\\\page.tsx\" \"c:\\\\Github\\\\MyFinTech\\\\Myfintech\\\\frontend\\\\src\\\\lib\\\\api.ts\")"
+      "Bash(wc -l \"c:\\\\Github\\\\MyFinTech\\\\Myfintech\\\\frontend\\\\src\\\\app\\\\\\(app\\)\\\\settings\\\\page.tsx\" \"c:\\\\Github\\\\MyFinTech\\\\Myfintech\\\\frontend\\\\src\\\\lib\\\\api.ts\")",
+      "Bash(test -f /c/Github/MyFinTech/Myfintech/Makefile)",
+      "Bash(test -d /c/Github/MyFinTech/Myfintech/rag-api)",
+      "Bash(docker stop fintech-rag-api fintech-qdrant fintech-ollama fintech-openwebui)",
+      "Bash(docker rm fintech-rag-api fintech-qdrant fintech-ollama fintech-openwebui)",
+      "Bash(docker rm fintech-ollama-init)"
     ]
   }
 }

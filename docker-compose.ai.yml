@@ -1,0 +1,144 @@
+# MyFintech AI Stack
+#
+# Start:   docker compose -f docker-compose.ai.yml up -d --build
+# Stop:    docker compose -f docker-compose.ai.yml down
+# Logs:    docker compose -f docker-compose.ai.yml logs -f
+# Rebuild: docker compose -f docker-compose.ai.yml up -d --build rag-api
+#
+# Prerequisites:
+#   - Main myfintech stack must be running (for myfintech_private network + Postgres)
+#   - UPLOADS_HOST_PATH must match the value in your main .env (default: C:/MyFintechUploads)
+#   - For GPU: nvidia-container-toolkit must be installed
+
+services:
+
+  # ── Vector database ─────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: fintech-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant:/qdrant/storage
+    networks:
+      - ai-internal
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo >/dev/tcp/localhost/6333' 2>/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── LLM inference (GPU) ─────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: fintech-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    networks:
+      - ai-internal
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 20s
+
+  # ── One-shot model pull — runs once, then exits ──────────────────────────────
+  # Uses the ollama CLI to pull models into the shared volume.
+  # OLLAMA_HOST points it at the running ollama server (not a local daemon).
+  # Runs only after ollama is healthy, so no wait loop needed.
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: fintech-ollama-init
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/bash", "-c", "ollama pull ${RAG_LLM_MODEL:-qwen2.5:7b-instruct} && ollama pull ${RAG_EMBED_MODEL:-nomic-embed-text} && echo 'Model pull complete.'"]
+    networks:
+      - ai-internal
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  # ── RAG API ─────────────────────────────────────────────────────────────────
+  rag-api:
+    build:
+      context: ./ai/rag-api
+    container_name: fintech-rag-api
+    restart: unless-stopped
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      QDRANT_URL: http://qdrant:6333
+      # Direct container-to-container via myfintech_private network
+      DATABASE_URL: "postgresql://MyFintechReadonly:Apple%40123@postgres:5432/myfintech"
+      FINANCE_DOC_ROOT: /data/finance
+      LLM_MODEL: ${RAG_LLM_MODEL:-qwen2.5:7b-instruct}
+      EMBED_MODEL: ${RAG_EMBED_MODEL:-nomic-embed-text}
+      QDRANT_COLLECTION: ${RAG_COLLECTION:-fintech_rag}
+      DB_SYNC_INTERVAL_SECONDS: ${RAG_DB_SYNC_INTERVAL:-3600}
+    volumes:
+      # Same upload path as the main stack — read-only access to all uploaded files
+      - ${UPLOADS_HOST_PATH:-C:/MyFintechUploads}:/data/finance:ro
+    ports:
+      - "8001:8000"
+    networks:
+      - ai-internal
+      - myfintech_private      # Direct path to Postgres (postgres:5432)
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+
+  # ── Chat UI ──────────────────────────────────────────────────────────────────
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: fintech-openwebui
+    restart: unless-stopped
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      # Wire OpenWebUI to the RAG API so financial context is always applied
+      OPENAI_API_BASE_URL: http://rag-api:8000/v1
+      OPENAI_API_KEY: "fintech-local"
+      WEBUI_NAME: "MyFintech AI"
+      DEFAULT_MODELS: fintech-assistant
+    volumes:
+      - openwebui:/app/backend/data
+    ports:
+      - "3001:8080"            # 3001 avoids conflict with whatsapp-bot on 3000
+    networks:
+      - ai-internal
+    depends_on:
+      - ollama
+      - rag-api
+
+# ── Networks ─────────────────────────────────────────────────────────────────
+networks:
+  ai-internal:
+    driver: bridge
+    name: fintech_ai_internal
+  myfintech_private:
+    external: true             # Joins the existing myfintech Postgres network
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  qdrant:
+    name: fintech_qdrant
+  ollama:
+    name: fintech_ollama
+  openwebui:
+    name: fintech_openwebui
