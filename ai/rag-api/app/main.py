@@ -151,7 +151,10 @@ async def chat_completions(request: Request):
 
     # Retrieve relevant context from Qdrant
     try:
-        context_chunks = await search(last_user, top_k=12)
+        context_chunks = await search(last_user, top_k=20)
+        if context_chunks:
+            sources = [f"{c.get('source','?')}:{c.get('table', c.get('filename','?'))}" for c in context_chunks]
+            log.info("Retrieved %d chunks: %s", len(context_chunks), sources)
     except Exception as e:
         log.error("Retrieval failed: %s", e)
         context_chunks = []

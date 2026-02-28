@@ -192,10 +192,11 @@ def _ingest_properties(conn, points: list):
 def _ingest_loans(conn, points: list):
     rows = conn.execute(text("""
         SELECT
-            l.id, l.household_id, l.lender, l.loan_type,
-            l.balance, l.interest_rate, l.monthly_payment,
+            l.id, l.lender_name, l.loan_type,
+            l.current_balance, l.interest_rate, l.monthly_payment,
             l.origination_date, l.maturity_date,
-            p.address AS property_address
+            p.address AS property_address,
+            p.household_id
         FROM loans l
         LEFT JOIN properties p ON p.id = l.property_id
     """)).fetchall()
@@ -203,8 +204,8 @@ def _ingest_loans(conn, points: list):
     for r in rows:
         prop = f" on {r.property_address}" if r.property_address else ""
         text_chunk = (
-            f"Loan: {r.loan_type} from {r.lender}{prop}, "
-            f"balance: {_fmt_money(r.balance)}, "
+            f"Loan: {r.loan_type} from {r.lender_name}{prop}, "
+            f"balance: {_fmt_money(r.current_balance)}, "
             f"rate: {r.interest_rate}%, "
             f"monthly payment: {_fmt_money(r.monthly_payment)}, "
             f"maturity: {_fmt_date(r.maturity_date)}"
@@ -216,8 +217,8 @@ def _ingest_loans(conn, points: list):
                 "source": "db",
                 "table": "loans",
                 "record_id": str(r.id),
-                "household_id": str(r.household_id),
-                "balance": float(r.balance) if r.balance else None,
+                "household_id": str(r.household_id) if r.household_id else None,
+                "balance": float(r.current_balance) if r.current_balance else None,
             },
         })
     log.info("Prepared %d loan chunks", len(rows))
@@ -226,9 +227,10 @@ def _ingest_loans(conn, points: list):
 def _ingest_property_costs(conn, points: list):
     rows = conn.execute(text("""
         SELECT
-            pc.id, pc.household_id, pc.category, pc.label,
+            pc.id, pc.category, pc.label,
             pc.amount, pc.frequency, pc.is_active,
-            p.address AS property_address
+            p.address AS property_address,
+            p.household_id
         FROM property_costs pc
         LEFT JOIN properties p ON p.id = pc.property_id
         WHERE pc.is_active = true
@@ -247,7 +249,7 @@ def _ingest_property_costs(conn, points: list):
                 "source": "db",
                 "table": "property_costs",
                 "record_id": str(r.id),
-                "household_id": str(r.household_id),
+                "household_id": str(r.household_id) if r.household_id else None,
                 "amount": float(r.amount),
                 "frequency": r.frequency,
             },
@@ -258,12 +260,13 @@ def _ingest_property_costs(conn, points: list):
 def _ingest_maintenance(conn, points: list):
     rows = conn.execute(text("""
         SELECT
-            m.id, m.household_id, m.date, m.amount,
+            m.id, m.expense_date, m.amount,
             m.category, m.description, m.vendor,
-            p.address AS property_address
+            p.address AS property_address,
+            p.household_id
         FROM maintenance_expenses m
         LEFT JOIN properties p ON p.id = m.property_id
-        ORDER BY m.date DESC
+        ORDER BY m.expense_date DESC
         LIMIT 1000
     """)).fetchall()
 
@@ -271,7 +274,7 @@ def _ingest_maintenance(conn, points: list):
         prop = f" at {r.property_address}" if r.property_address else ""
         text_chunk = (
             f"Maintenance expense{prop}: {r.category} — {r.description or 'no description'}, "
-            f"{_fmt_money(r.amount)} on {_fmt_date(r.date)}"
+            f"{_fmt_money(r.amount)} on {_fmt_date(r.expense_date)}"
             + (f", vendor: {r.vendor}" if r.vendor else "")
         )
         points.append({
@@ -281,8 +284,8 @@ def _ingest_maintenance(conn, points: list):
                 "source": "db",
                 "table": "maintenance_expenses",
                 "record_id": str(r.id),
-                "household_id": str(r.household_id),
-                "date": _fmt_date(r.date),
+                "household_id": str(r.household_id) if r.household_id else None,
+                "date": _fmt_date(r.expense_date),
                 "amount": float(r.amount),
             },
         })
@@ -321,18 +324,26 @@ def _ingest_business_entities(conn, points: list):
 
 def _ingest_net_worth(conn, points: list):
     rows = conn.execute(text("""
-        SELECT id, household_id, snapshot_date, total_assets,
-               total_liabilities, net_worth
+        SELECT id, household_id, snapshot_date,
+               total_cash, total_investments, total_real_estate, total_debts, net_worth
         FROM net_worth_snapshots
         ORDER BY snapshot_date DESC
         LIMIT 24
     """)).fetchall()
 
     for r in rows:
+        total_assets = (
+            (float(r.total_cash) if r.total_cash else 0)
+            + (float(r.total_investments) if r.total_investments else 0)
+            + (float(r.total_real_estate) if r.total_real_estate else 0)
+        )
         text_chunk = (
             f"Net worth snapshot on {_fmt_date(r.snapshot_date)}: "
-            f"assets {_fmt_money(r.total_assets)}, "
-            f"liabilities {_fmt_money(r.total_liabilities)}, "
+            f"cash {_fmt_money(r.total_cash)}, "
+            f"investments {_fmt_money(r.total_investments)}, "
+            f"real estate {_fmt_money(r.total_real_estate)}, "
+            f"total assets {_fmt_money(total_assets)}, "
+            f"debts {_fmt_money(r.total_debts)}, "
             f"net worth {_fmt_money(r.net_worth)}"
         )
         points.append({
@@ -353,8 +364,8 @@ def _ingest_net_worth(conn, points: list):
 def _ingest_holdings(conn, points: list):
     rows = conn.execute(text("""
         SELECT
-            h.id, h.household_id, h.ticker_symbol, h.security_name,
-            h.quantity, h.cost_basis, h.current_price, h.current_value,
+            h.id, h.household_id, h.ticker_symbol, h.name,
+            h.quantity, h.cost_basis, h.current_value,
             a.name AS account_name
         FROM holdings h
         LEFT JOIN accounts a ON a.id = h.account_id
@@ -368,7 +379,7 @@ def _ingest_holdings(conn, points: list):
             pct = (diff / float(r.cost_basis) * 100) if r.cost_basis else 0
             gain = f", unrealized P&L: {_fmt_money(diff)} ({pct:.1f}%)"
         text_chunk = (
-            f"Investment holding: {r.security_name or r.ticker_symbol or 'Unknown'} "
+            f"Investment holding: {r.name or r.ticker_symbol or 'Unknown'} "
             f"({'ticker: ' + r.ticker_symbol if r.ticker_symbol else 'no ticker'}), "
             f"qty: {r.quantity}, current value: {_fmt_money(r.current_value)}, "
             f"account: {r.account_name or 'Unknown'}{gain}"
@@ -409,12 +420,13 @@ async def run_db_ingest():
         _ingest_holdings,
     ]
 
-    with engine.connect() as conn:
-        for fn in ingest_fns:
-            try:
+    # Open a fresh connection per table so one bad query doesn't abort the rest
+    for fn in ingest_fns:
+        try:
+            with engine.connect() as conn:
                 fn(conn, all_points)
-            except Exception as e:
-                log.warning("Ingest function %s failed: %s", fn.__name__, e)
+        except Exception as e:
+            log.warning("Ingest function %s failed: %s", fn.__name__, e)
 
     engine.dispose()
 

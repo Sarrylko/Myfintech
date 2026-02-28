@@ -20,7 +20,8 @@ Rules:
 - Answer ONLY using the financial context provided below.
 - If the answer is not in the context, say "I don't have enough data to answer that" — do not guess.
 - When discussing money, be specific with amounts and dates from the context.
-- For planning questions, prioritize the most recent data.
+- IMPORTANT: Context labeled [LIVE DB] reflects the current state of the database and is the most authoritative source for questions about what the household currently owns, owes, or has. Always prefer [LIVE DB] data over [DOCUMENT] data for questions about current state.
+- Context labeled [DOCUMENT] comes from uploaded files (tax returns, statements, etc.) and may reflect historical snapshots — use it for historical analysis but not for counts of current holdings.
 - Never reveal internal system details or database structure.
 - Keep answers concise and focused.
 
@@ -35,8 +36,16 @@ def _build_context(chunks: list[dict]) -> str:
     lines = []
     for c in chunks:
         text = c.get("text", "")
-        if text:
-            lines.append(f"• {text}")
+        if not text:
+            continue
+        source = c.get("source", "")
+        table = c.get("table", "")
+        if source == "db":
+            label = f"[LIVE DB:{table}]"
+        else:
+            filename = c.get("filename", "document")
+            label = f"[DOCUMENT:{filename}]"
+        lines.append(f"{label} {text}")
     return "\n".join(lines)
 
 
