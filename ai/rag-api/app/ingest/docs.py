@@ -15,8 +15,8 @@ from app.retrieval import upsert_points
 
 log = logging.getLogger(__name__)
 
-CHUNK_SIZE = 1200        # characters per chunk
-CHUNK_OVERLAP = 200      # overlap between consecutive chunks
+CHUNK_SIZE = 500         # characters per chunk — smaller = sharper, more specific embeddings
+CHUNK_OVERLAP = 100      # overlap between consecutive chunks
 
 
 def _engine():
@@ -180,7 +180,6 @@ async def run_doc_ingest():
         return 0
 
     log.info("Embedding and upserting %d document chunks...", len(all_points))
-    from app.retrieval import upsert_points
-    await upsert_points(all_points)
-    log.info("Document ingest complete — %d chunks upserted.", len(all_points))
+    await upsert_points(all_points, collection=settings.qdrant_collection_docs)
+    log.info("Document ingest complete — %d chunks upserted to '%s'.", len(all_points), settings.qdrant_collection_docs)
     return len(all_points)

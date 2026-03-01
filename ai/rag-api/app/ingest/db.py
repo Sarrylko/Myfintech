@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy import create_engine, text
 
 from app.config import settings
-from app.retrieval import embed_text, upsert_points
+from app.retrieval import upsert_points
 
 log = logging.getLogger(__name__)
 
@@ -399,10 +399,121 @@ def _ingest_holdings(conn, points: list):
     log.info("Prepared %d holding chunks", len(rows))
 
 
+# ─── Summary chunks ──────────────────────────────────────────────────────────
+
+def _generate_summary_chunks(all_points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Build one synthetic 'master list' chunk per entity table.
+    These embed well for 'how many / list / count' queries because they contain
+    ALL item names and the total count in a single vector.
+    """
+    from collections import defaultdict
+    by_table: dict[str, list[dict]] = defaultdict(list)
+    for p in all_points:
+        tbl = p["payload"].get("table", "")
+        if tbl:
+            by_table[tbl].append(p)
+
+    summaries = []
+
+    # Properties
+    props = by_table.get("properties", [])
+    if props:
+        lines = []
+        for i, p in enumerate(props, 1):
+            addr = p["payload"].get("address", "Unknown address")
+            val = p["payload"].get("current_value")
+            val_str = f" — current value {_fmt_money(val)}" if val else ""
+            lines.append(f"  {i}. {addr}{val_str}")
+        text = f"Household property inventory — {len(props)} properties total:\n" + "\n".join(lines)
+        summaries.append({
+            "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, "summary:properties")),
+            "text": text,
+            "payload": {"source": "db", "table": "property_summary", "record_id": "summary"},
+        })
+        log.info("Generated properties summary chunk (%d properties)", len(props))
+
+    # Accounts
+    accounts = by_table.get("accounts", [])
+    if accounts:
+        lines = []
+        for i, p in enumerate(accounts, 1):
+            bal = p["payload"].get("balance")
+            bal_str = f" — balance {_fmt_money(bal)}" if bal is not None else ""
+            # Pull label from chunk text
+            chunk_text = p["payload"].get("text", "")
+            label = chunk_text.split(",")[0].replace("Account: ", "").strip("'") if chunk_text else "Account"
+            lines.append(f"  {i}. {label}{bal_str}")
+        text = f"Household accounts — {len(accounts)} accounts total:\n" + "\n".join(lines)
+        summaries.append({
+            "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, "summary:accounts")),
+            "text": text,
+            "payload": {"source": "db", "table": "account_summary", "record_id": "summary"},
+        })
+        log.info("Generated accounts summary chunk (%d accounts)", len(accounts))
+
+    # Loans
+    loans = by_table.get("loans", [])
+    if loans:
+        lines = []
+        for i, p in enumerate(loans, 1):
+            bal = p["payload"].get("balance")
+            bal_str = f" — balance {_fmt_money(bal)}" if bal is not None else ""
+            chunk_text = p["payload"].get("text", "")
+            label = chunk_text.split(",")[0].replace("Loan: ", "").strip() if chunk_text else "Loan"
+            lines.append(f"  {i}. {label}{bal_str}")
+        text = f"Household loans — {len(loans)} loans total:\n" + "\n".join(lines)
+        summaries.append({
+            "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, "summary:loans")),
+            "text": text,
+            "payload": {"source": "db", "table": "loan_summary", "record_id": "summary"},
+        })
+        log.info("Generated loans summary chunk (%d loans)", len(loans))
+
+    # Holdings
+    holdings = by_table.get("holdings", [])
+    if holdings:
+        lines = []
+        for i, p in enumerate(holdings, 1):
+            ticker = p["payload"].get("ticker") or ""
+            val = p["payload"].get("current_value")
+            val_str = f" — {_fmt_money(val)}" if val is not None else ""
+            ticker_str = f" ({ticker})" if ticker else ""
+            chunk_text = p["payload"].get("text", "")
+            label = chunk_text.split("(")[0].replace("Investment holding: ", "").strip() if chunk_text else "Holding"
+            lines.append(f"  {i}. {label}{ticker_str}{val_str}")
+        text = f"Investment portfolio — {len(holdings)} holdings total:\n" + "\n".join(lines)
+        summaries.append({
+            "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, "summary:holdings")),
+            "text": text,
+            "payload": {"source": "db", "table": "holding_summary", "record_id": "summary"},
+        })
+        log.info("Generated holdings summary chunk (%d holdings)", len(holdings))
+
+    # Business entities
+    biz = by_table.get("business_entities", [])
+    if biz:
+        lines = []
+        for i, p in enumerate(biz, 1):
+            etype = p["payload"].get("entity_type", "entity")
+            chunk_text = p["payload"].get("text", "")
+            label = chunk_text.split("(")[0].replace("Business entity: ", "").strip() if chunk_text else "Entity"
+            lines.append(f"  {i}. {label} ({etype})")
+        text = f"Business entities — {len(biz)} entities total:\n" + "\n".join(lines)
+        summaries.append({
+            "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, "summary:business_entities")),
+            "text": text,
+            "payload": {"source": "db", "table": "entity_summary", "record_id": "summary"},
+        })
+        log.info("Generated business entities summary chunk (%d entities)", len(biz))
+
+    return summaries
+
+
 # ─── Main entry point ────────────────────────────────────────────────────────
 
 async def run_db_ingest():
-    """Full ingest of all key financial tables into Qdrant."""
+    """Full ingest of all key financial tables into Qdrant DB collection."""
     log.info("Starting DB ingest...")
     engine = _engine()
     all_points: list[dict[str, Any]] = []
@@ -430,11 +541,15 @@ async def run_db_ingest():
 
     engine.dispose()
 
+    # Append synthetic summary chunks for entity tables
+    summaries = _generate_summary_chunks(all_points)
+    all_points.extend(summaries)
+
     if not all_points:
         log.warning("No DB points to upsert.")
         return 0
 
-    log.info("Embedding and upserting %d DB chunks...", len(all_points))
-    await upsert_points(all_points)
-    log.info("DB ingest complete — %d points upserted.", len(all_points))
+    log.info("Embedding and upserting %d DB chunks (incl. %d summaries)...", len(all_points), len(summaries))
+    await upsert_points(all_points, collection=settings.qdrant_collection_db)
+    log.info("DB ingest complete — %d points upserted to '%s'.", len(all_points), settings.qdrant_collection_db)
     return len(all_points)

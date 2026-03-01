@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     finance_doc_root: str = "/data/finance"
     llm_model: str = "qwen2.5:7b-instruct"
     embed_model: str = "nomic-embed-text"
-    qdrant_collection: str = "fintech_rag"
+    qdrant_collection: str = "fintech_rag"        # legacy — kept for migration cleanup
+    qdrant_collection_db: str = "fintech_rag_db"   # live database records
+    qdrant_collection_docs: str = "fintech_rag_docs" # uploaded document chunks
     db_sync_interval_seconds: int = 3600
 
     class Config:

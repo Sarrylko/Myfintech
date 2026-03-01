@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.config import settings
 from app.ingest.db import run_db_ingest
 from app.ingest.docs import run_doc_ingest
-from app.retrieval import collection_count, ensure_collection, search
+from app.retrieval import collection_count, ensure_collections, search_combined
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 log = logging.getLogger(__name__)
@@ -69,17 +69,21 @@ async def _wait_for_ollama():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Starting MyFintech RAG API...")
-    ensure_collection()
+    ensure_collections()
 
     # Wait for Ollama to be ready before ingesting
     await _wait_for_ollama()
 
-    count = collection_count()
-    if count == 0:
-        log.info("Collection is empty — running initial full ingest...")
+    db_count = collection_count(settings.qdrant_collection_db)
+    doc_count = collection_count(settings.qdrant_collection_docs)
+    if db_count == 0 and doc_count == 0:
+        log.info("Collections are empty — running initial full ingest...")
         asyncio.create_task(_run_full_ingest())
     else:
-        log.info("Collection has %d points — skipping initial ingest.", count)
+        log.info(
+            "Collections have %d DB points, %d doc points — skipping initial ingest.",
+            db_count, doc_count,
+        )
 
     # Start periodic DB sync in background
     asyncio.create_task(_periodic_db_sync())
@@ -103,8 +107,12 @@ async def health():
             ollama_ok = r.status_code == 200
     except Exception:
         pass
+    db_count = 0
+    doc_count = 0
     try:
-        qdrant_ok = collection_count() >= 0
+        db_count = collection_count(settings.qdrant_collection_db)
+        doc_count = collection_count(settings.qdrant_collection_docs)
+        qdrant_ok = True
     except Exception:
         pass
 
@@ -112,7 +120,9 @@ async def health():
         "status": "ok",
         "ollama": ollama_ok,
         "qdrant": qdrant_ok,
-        "collection_points": collection_count(),
+        "db_collection_points": db_count,
+        "doc_collection_points": doc_count,
+        "total_points": db_count + doc_count,
         "llm_model": settings.llm_model,
         "embed_model": settings.embed_model,
     }
@@ -149,9 +159,9 @@ async def chat_completions(request: Request):
         (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
     )
 
-    # Retrieve relevant context from Qdrant
+    # Retrieve relevant context — DB collection first, docs collection second
     try:
-        context_chunks = await search(last_user, top_k=20)
+        context_chunks = await search_combined(last_user, top_k_db=10, top_k_docs=10)
         if context_chunks:
             sources = [f"{c.get('source','?')}:{c.get('table', c.get('filename','?'))}" for c in context_chunks]
             log.info("Retrieved %d chunks: %s", len(context_chunks), sources)
@@ -184,29 +194,24 @@ async def trigger_ingest():
 
 @app.get("/admin/stats")
 async def stats():
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    from app.retrieval import get_qdrant
 
-    client = ensure_collection()
-    total = collection_count()
-
-    source_counts = {}
-    for source in ("db", "doc"):
-        try:
-            result = client.count(
-                collection_name=settings.qdrant_collection,
-                count_filter=Filter(
-                    must=[FieldCondition(key="source", match=MatchValue(value=source))]
-                ),
-                exact=True,
-            )
-            source_counts[source] = result.count
-        except Exception:
-            source_counts[source] = "unknown"
+    client = get_qdrant()
+    db_count = collection_count(settings.qdrant_collection_db)
+    doc_count = collection_count(settings.qdrant_collection_docs)
 
     return {
-        "collection": settings.qdrant_collection,
-        "total_points": total,
-        "by_source": source_counts,
+        "fintech_rag_db": {
+            "collection": settings.qdrant_collection_db,
+            "total_points": db_count,
+            "description": "Live database records (refreshed hourly)",
+        },
+        "fintech_rag_docs": {
+            "collection": settings.qdrant_collection_docs,
+            "total_points": doc_count,
+            "description": "Uploaded document chunks (financial & property PDFs)",
+        },
+        "total_points": db_count + doc_count,
         "llm_model": settings.llm_model,
         "embed_model": settings.embed_model,
         "db_sync_interval_seconds": settings.db_sync_interval_seconds,

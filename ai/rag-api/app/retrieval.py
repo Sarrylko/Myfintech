@@ -1,8 +1,8 @@
 """
 Embedding and Qdrant vector store operations.
+Supports separate collections for DB records vs document chunks.
 """
 import logging
-import uuid
 from typing import Any
 
 import httpx
@@ -30,21 +30,28 @@ def get_qdrant() -> QdrantClient:
     return _qdrant
 
 
-def ensure_collection():
+def ensure_collection(name: str) -> QdrantClient:
+    """Ensure a named collection exists; create it if not."""
     client = get_qdrant()
     existing = [c.name for c in client.get_collections().collections]
-    if settings.qdrant_collection not in existing:
+    if name not in existing:
         client.create_collection(
-            collection_name=settings.qdrant_collection,
+            collection_name=name,
             vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
         )
-        log.info("Created Qdrant collection '%s'", settings.qdrant_collection)
+        log.info("Created Qdrant collection '%s'", name)
     return client
 
 
-def collection_count() -> int:
+def ensure_collections():
+    """Ensure both DB and docs collections exist."""
+    ensure_collection(settings.qdrant_collection_db)
+    ensure_collection(settings.qdrant_collection_docs)
+
+
+def collection_count(name: str) -> int:
     try:
-        info = get_qdrant().get_collection(settings.qdrant_collection)
+        info = get_qdrant().get_collection(name)
         return info.points_count or 0
     except Exception:
         return 0
@@ -61,12 +68,13 @@ async def embed_text(text: str) -> list[float]:
         return resp.json()["embedding"]
 
 
-async def upsert_points(points: list[dict[str, Any]]):
+async def upsert_points(points: list[dict[str, Any]], collection: str):
     """
-    Embed each point's 'text' field and upsert to Qdrant.
+    Embed each point's 'text' field and upsert to the specified collection.
     Each item: {"id": str, "text": str, "payload": dict}
     """
-    client = ensure_collection()
+    ensure_collection(collection)
+    client = get_qdrant()
 
     for i in range(0, len(points), BATCH_SIZE):
         batch = points[i : i + BATCH_SIZE]
@@ -86,20 +94,33 @@ async def upsert_points(points: list[dict[str, Any]]):
 
         if structs:
             client.upsert(
-                collection_name=settings.qdrant_collection,
+                collection_name=collection,
                 points=structs,
             )
-        log.debug("Upserted batch %d/%d", i // BATCH_SIZE + 1, (len(points) + BATCH_SIZE - 1) // BATCH_SIZE)
+        log.debug("Upserted batch %d/%d to %s", i // BATCH_SIZE + 1, (len(points) + BATCH_SIZE - 1) // BATCH_SIZE, collection)
 
 
-async def search(question: str, top_k: int = 10) -> list[dict]:
-    """Return top-k relevant chunks for a question."""
-    client = ensure_collection()
+async def search(question: str, top_k: int = 10, collection: str = "") -> list[dict]:
+    """Return top-k relevant chunks from a specific collection."""
+    if not collection:
+        collection = settings.qdrant_collection_db
+    ensure_collection(collection)
+    client = get_qdrant()
     vec = await embed_text(question)
     hits = client.search(
-        collection_name=settings.qdrant_collection,
+        collection_name=collection,
         query_vector=vec,
         limit=top_k,
         with_payload=True,
     )
     return [h.payload for h in hits]
+
+
+async def search_combined(question: str, top_k_db: int = 10, top_k_docs: int = 10) -> list[dict]:
+    """
+    Tiered retrieval: DB collection first (live data), then docs collection (historical).
+    DB chunks are prepended so the LLM sees authoritative data first.
+    """
+    db_chunks = await search(question, top_k=top_k_db, collection=settings.qdrant_collection_db)
+    doc_chunks = await search(question, top_k=top_k_docs, collection=settings.qdrant_collection_docs)
+    return db_chunks + doc_chunks
