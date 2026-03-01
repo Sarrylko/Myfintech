@@ -88,6 +88,7 @@ services:
       EMBED_MODEL: ${RAG_EMBED_MODEL:-nomic-embed-text}
       QDRANT_COLLECTION: ${RAG_COLLECTION:-fintech_rag}
       DB_SYNC_INTERVAL_SECONDS: ${RAG_DB_SYNC_INTERVAL:-3600}
+      RAG_API_KEY: ${RAG_API_KEY:-}
     volumes:
       # Same upload path as the main stack — read-only access to all uploaded files
       - ${UPLOADS_HOST_PATH:-C:/MyFintechUploads}:/data/finance:ro

@@ -7,23 +7,36 @@ Endpoints:
   POST /v1/chat/completions   (streaming + non-streaming)
   POST /admin/ingest          (trigger full re-ingest)
   GET  /admin/stats           (Qdrant collection stats)
+  POST /admin/learn           (save a ChatGPT Q&A to the knowledge base)
+  GET  /admin/learned         (list saved Q&A pairs for a household)
 """
 import asyncio
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import settings
 from app.ingest.db import run_db_ingest
 from app.ingest.docs import run_doc_ingest
-from app.retrieval import collection_count, ensure_collections, search_combined
+from app.retrieval import collection_count, ensure_collections, search_combined, upsert_points
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 log = logging.getLogger(__name__)
+
+
+# ── API key guard ─────────────────────────────────────────────────────────────
+
+async def verify_api_key(x_rag_api_key: str | None = Header(None, alias="X-RAG-Api-Key")):
+    """Require X-RAG-Api-Key header when RAG_API_KEY env var is set."""
+    if settings.rag_api_key and x_rag_api_key != settings.rag_api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing RAG API key")
+
 
 # ── Background sync task ─────────────────────────────────────────────────────
 
@@ -109,9 +122,11 @@ async def health():
         pass
     db_count = 0
     doc_count = 0
+    learned_count = 0
     try:
         db_count = collection_count(settings.qdrant_collection_db)
         doc_count = collection_count(settings.qdrant_collection_docs)
+        learned_count = collection_count(settings.qdrant_collection_learned)
         qdrant_ok = True
     except Exception:
         pass
@@ -122,7 +137,8 @@ async def health():
         "qdrant": qdrant_ok,
         "db_collection_points": db_count,
         "doc_collection_points": doc_count,
-        "total_points": db_count + doc_count,
+        "learned_collection_points": learned_count,
+        "total_points": db_count + doc_count + learned_count,
         "llm_model": settings.llm_model,
         "embed_model": settings.embed_model,
     }
@@ -145,11 +161,12 @@ async def list_models():
     }
 
 
-@app.post("/v1/chat/completions")
+@app.post("/v1/chat/completions", dependencies=[Depends(verify_api_key)])
 async def chat_completions(request: Request):
     body = await request.json()
     messages = body.get("messages", [])
     stream = body.get("stream", False)
+    household_id: str | None = body.get("household_id")
 
     if not messages:
         raise HTTPException(status_code=400, detail="messages is required")
@@ -159,12 +176,12 @@ async def chat_completions(request: Request):
         (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
     )
 
-    # Retrieve relevant context — DB collection first, docs collection second
+    # Retrieve relevant context — learned first, then DB, then docs
     try:
-        context_chunks = await search_combined(last_user, top_k_db=10, top_k_docs=10)
+        context_chunks = await search_combined(last_user, top_k_db=10, top_k_docs=10, household_id=household_id)
         if context_chunks:
             sources = [f"{c.get('source','?')}:{c.get('table', c.get('filename','?'))}" for c in context_chunks]
-            log.info("Retrieved %d chunks: %s", len(context_chunks), sources)
+            log.info("Retrieved %d chunks for household %s: %s", len(context_chunks), household_id, sources)
     except Exception as e:
         log.error("Retrieval failed: %s", e)
         context_chunks = []
@@ -199,6 +216,7 @@ async def stats():
     client = get_qdrant()
     db_count = collection_count(settings.qdrant_collection_db)
     doc_count = collection_count(settings.qdrant_collection_docs)
+    learned_count = collection_count(settings.qdrant_collection_learned)
 
     return {
         "fintech_rag_db": {
@@ -211,8 +229,77 @@ async def stats():
             "total_points": doc_count,
             "description": "Uploaded document chunks (financial & property PDFs)",
         },
-        "total_points": db_count + doc_count,
+        "fintech_rag_learned": {
+            "collection": settings.qdrant_collection_learned,
+            "total_points": learned_count,
+            "description": "Saved ChatGPT Q&A pairs (highest retrieval priority)",
+        },
+        "total_points": db_count + doc_count + learned_count,
         "llm_model": settings.llm_model,
         "embed_model": settings.embed_model,
         "db_sync_interval_seconds": settings.db_sync_interval_seconds,
+    }
+
+
+@app.post("/admin/learn", dependencies=[Depends(verify_api_key)])
+async def save_learned(request: Request):
+    """Save a ChatGPT Q&A pair to the knowledge base for a household."""
+    body = await request.json()
+    question = (body.get("question") or "").strip()
+    answer = (body.get("answer") or "").strip()
+    household_id = (body.get("household_id") or "").strip()
+
+    if not question or not answer:
+        raise HTTPException(status_code=400, detail="question and answer are required")
+
+    # Deterministic ID so re-saving the same question replaces the previous answer
+    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"learned:{household_id}:{question[:200]}"))
+
+    await upsert_points(
+        [{
+            "id": point_id,
+            "text": question,
+            "payload": {
+                "source": "learned",
+                "question": question,
+                "answer": answer,
+                "household_id": household_id,
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }],
+        settings.qdrant_collection_learned,
+    )
+    log.info("Saved learned Q&A for household %s: %s", household_id, question[:80])
+    return {"status": "saved", "id": point_id}
+
+
+@app.get("/admin/learned", dependencies=[Depends(verify_api_key)])
+async def list_learned(household_id: str | None = None):
+    """List saved Q&A pairs, optionally filtered by household."""
+    from app.retrieval import get_qdrant
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+    client = get_qdrant()
+    scroll_filter = None
+    if household_id:
+        scroll_filter = Filter(
+            must=[FieldCondition(key="household_id", match=MatchValue(value=household_id))]
+        )
+
+    results, _ = client.scroll(
+        collection_name=settings.qdrant_collection_learned,
+        scroll_filter=scroll_filter,
+        limit=100,
+        with_payload=True,
+    )
+    return {
+        "items": [
+            {
+                "id": str(r.id),
+                "question": r.payload.get("question"),
+                "answer": r.payload.get("answer"),
+                "saved_at": r.payload.get("saved_at"),
+            }
+            for r in results
+        ]
     }

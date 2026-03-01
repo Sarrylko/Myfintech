@@ -214,4 +214,5 @@ const navItems = [
   { href: "/taxes", label: "Tax Center", icon: "📊" },
   { href: "/recurring", label: "Recurring", icon: "🔁" },
   { href: "/rules", label: "Rules", icon: "⚡" },
+  { href: "/ai", label: "AI Assistant", icon: "🤖" },
 ];

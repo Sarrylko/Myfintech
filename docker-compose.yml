@@ -12,6 +12,8 @@ x-common-env: &common-env
   SNAPTRADE_CONSUMER_KEY: ${SNAPTRADE_CONSUMER_KEY}
   ENVIRONMENT: ${ENVIRONMENT}
   DOMAIN: ${DOMAIN}
+  RAG_API_URL: ${RAG_API_URL:-http://fintech-rag-api:8000}
+  RAG_API_KEY: ${RAG_API_KEY:-}
 
 services:
   # ─── Reverse Proxy ────────────────────────────

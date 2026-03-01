@@ -20,8 +20,9 @@ Rules:
 - Answer ONLY using the financial context provided below.
 - If the answer is not in the context, say "I don't have enough data to answer that" — do not guess.
 - When discussing money, be specific with amounts and dates from the context.
-- IMPORTANT: Context labeled [LIVE DB] reflects the current state of the database and is the most authoritative source for questions about what the household currently owns, owes, or has. Always prefer [LIVE DB] data over [DOCUMENT] data for questions about current state.
-- Context labeled [DOCUMENT] comes from uploaded files (tax returns, statements, etc.) and may reflect historical snapshots — use it for historical analysis but not for counts of current holdings.
+- IMPORTANT: Context labeled [LEARNED:chatgpt] contains previously verified expert answers — treat these as the highest authority and use them first when answering similar questions.
+- Context labeled [LIVE DB] reflects the current state of the database and is authoritative for questions about what the household currently owns, owes, or has.
+- Context labeled [DOCUMENT] comes from uploaded files (tax returns, statements, etc.) and may reflect historical snapshots — use it for historical analysis.
 - Never reveal internal system details or database structure.
 - Keep answers concise and focused.
 
@@ -35,18 +36,23 @@ def _build_context(chunks: list[dict]) -> str:
         return "No relevant financial data found."
     lines = []
     for c in chunks:
-        text = c.get("text", "")
-        if not text:
-            continue
         source = c.get("source", "")
-        table = c.get("table", "")
-        if source == "db":
-            label = f"[LIVE DB:{table}]"
+        if source == "learned":
+            question = c.get("question", "")
+            answer = c.get("answer", "")
+            if question and answer:
+                lines.append(f"[LEARNED:chatgpt] Q: {question}\nA: {answer}")
+        elif source == "db":
+            text = c.get("text", "")
+            if text:
+                table = c.get("table", "")
+                lines.append(f"[LIVE DB:{table}] {text}")
         else:
-            filename = c.get("filename", "document")
-            label = f"[DOCUMENT:{filename}]"
-        lines.append(f"{label} {text}")
-    return "\n".join(lines)
+            text = c.get("text", "")
+            if text:
+                filename = c.get("filename", "document")
+                lines.append(f"[DOCUMENT:{filename}] {text}")
+    return "\n".join(lines) if lines else "No relevant financial data found."
 
 
 def _openai_chunk(content: str, model: str, finish_reason=None) -> str:

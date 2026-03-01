@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     whatsapp_bot_url: str = "http://whatsapp-bot:3000"
     whatsapp_enabled: bool = True
 
+    # ─── AI / RAG Assistant ───────────────────────
+    rag_api_url: str = ""   # e.g. http://fintech-rag-api:8000
+    rag_api_key: str = ""   # must match RAG_API_KEY in docker-compose.ai.yml
+
     # Look for .env in current dir (Docker) or parent dir (local dev from api/)
     model_config = {"env_file": [".env", "../.env"], "extra": "ignore"}
 

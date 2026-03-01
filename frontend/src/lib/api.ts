@@ -1833,3 +1833,43 @@ export async function deleteBusinessDocument(entityId: string, docId: string): P
     method: "DELETE",
   });
 }
+
+// ─── AI Assistant ──────────────────────────────────────────────────────────────
+
+export interface AiChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface LearnedAnswer {
+  id: string;
+  question: string;
+  answer: string;
+  saved_at: string;
+}
+
+/**
+ * Open a streaming SSE connection to the AI chat endpoint.
+ * Returns the raw Response so the caller can read the body as a stream.
+ */
+export async function streamAiChat(messages: AiChatMessage[]): Promise<Response> {
+  const res = await fetch(`${API_BASE}/api/v1/ai/chat`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages }),
+  });
+  if (!res.ok) throw new Error(`AI chat error: ${res.status}`);
+  return res;
+}
+
+export async function saveLearnedAnswer(question: string, answer: string): Promise<void> {
+  await apiFetch<void>("/api/v1/ai/learn", {
+    method: "POST",
+    body: JSON.stringify({ question, answer }),
+  });
+}
+
+export async function getLearnedAnswers(): Promise<{ items: LearnedAnswer[] }> {
+  return apiFetch<{ items: LearnedAnswer[] }>("/api/v1/ai/learned");
+}

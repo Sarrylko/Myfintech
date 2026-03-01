@@ -9,6 +9,9 @@ import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
     PointStruct,
     VectorParams,
 )
@@ -44,9 +47,10 @@ def ensure_collection(name: str) -> QdrantClient:
 
 
 def ensure_collections():
-    """Ensure both DB and docs collections exist."""
+    """Ensure DB, docs, and learned collections exist."""
     ensure_collection(settings.qdrant_collection_db)
     ensure_collection(settings.qdrant_collection_docs)
+    ensure_collection(settings.qdrant_collection_learned)
 
 
 def collection_count(name: str) -> int:
@@ -100,27 +104,48 @@ async def upsert_points(points: list[dict[str, Any]], collection: str):
         log.debug("Upserted batch %d/%d to %s", i // BATCH_SIZE + 1, (len(points) + BATCH_SIZE - 1) // BATCH_SIZE, collection)
 
 
-async def search(question: str, top_k: int = 10, collection: str = "") -> list[dict]:
-    """Return top-k relevant chunks from a specific collection."""
+async def search(
+    question: str,
+    top_k: int = 10,
+    collection: str = "",
+    household_id: str | None = None,
+) -> list[dict]:
+    """Return top-k relevant chunks from a specific collection, filtered by household."""
     if not collection:
         collection = settings.qdrant_collection_db
     ensure_collection(collection)
     client = get_qdrant()
     vec = await embed_text(question)
+
+    query_filter: Filter | None = None
+    if household_id:
+        query_filter = Filter(
+            must=[FieldCondition(key="household_id", match=MatchValue(value=household_id))]
+        )
+
     hits = client.search(
         collection_name=collection,
         query_vector=vec,
         limit=top_k,
         with_payload=True,
+        query_filter=query_filter,
     )
     return [h.payload for h in hits]
 
 
-async def search_combined(question: str, top_k_db: int = 10, top_k_docs: int = 10) -> list[dict]:
+async def search_combined(
+    question: str,
+    top_k_db: int = 10,
+    top_k_docs: int = 10,
+    household_id: str | None = None,
+) -> list[dict]:
     """
-    Tiered retrieval: DB collection first (live data), then docs collection (historical).
-    DB chunks are prepended so the LLM sees authoritative data first.
+    Tiered retrieval (highest to lowest priority):
+      1. Learned Q&A (explicitly verified ChatGPT answers)
+      2. Live DB records (current financial state)
+      3. Uploaded documents (historical snapshots)
     """
-    db_chunks = await search(question, top_k=top_k_db, collection=settings.qdrant_collection_db)
-    doc_chunks = await search(question, top_k=top_k_docs, collection=settings.qdrant_collection_docs)
-    return db_chunks + doc_chunks
+    learned = await search(question, top_k=5, collection=settings.qdrant_collection_learned, household_id=household_id)
+    db_chunks = await search(question, top_k=top_k_db, collection=settings.qdrant_collection_db, household_id=household_id)
+    doc_chunks = await search(question, top_k=top_k_docs, collection=settings.qdrant_collection_docs, household_id=household_id)
+    return learned + db_chunks + doc_chunks
