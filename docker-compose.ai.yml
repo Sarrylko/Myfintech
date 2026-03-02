@@ -114,7 +114,7 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       # Wire OpenWebUI to the RAG API so financial context is always applied
       OPENAI_API_BASE_URL: http://rag-api:8000/v1
-      OPENAI_API_KEY: "fintech-local"
+      OPENAI_API_KEY: ${RAG_API_KEY:-fintech-local}
       WEBUI_NAME: "MyFintech AI"
       DEFAULT_MODELS: fintech-assistant
     volumes:

@@ -133,6 +133,76 @@ async def search(
     return [h.payload for h in hits]
 
 
+# Keywords that indicate an investment/performance metric query
+_INVESTMENT_KEYWORDS = {
+    "irr", "internal rate of return", "cap rate", "capitalization rate",
+    "cash-on-cash", "cash on cash", "noi", "net operating income",
+    "roi", "return on investment", "yield", "rental yield",
+    "cash flow", "cash flows", "performance", "appreciation",
+    "equity", "down payment", "investment return",
+}
+
+# Tables whose chunks should always be included when investment keywords are detected
+_GUARANTEED_TABLES = {"property_performance", "summary"}
+
+# Keywords that indicate an insurance-related query
+_INSURANCE_KEYWORDS = {
+    "insurance", "policy", "policies", "premium", "coverage", "deductible",
+    "life insurance", "term life", "whole life", "universal life",
+    "home insurance", "homeowners", "auto insurance", "car insurance",
+    "umbrella", "renters", "health insurance", "dental", "vision",
+    "disability", "long-term care", "long term care", "beneficiary", "beneficiaries",
+    "renewal", "insurer", "face value", "insured",
+}
+
+# Tables whose chunks should always be included when insurance keywords are detected
+_INSURANCE_TABLES = {"insurance_summary", "insurance_policies"}
+
+
+def _is_investment_query(question: str) -> bool:
+    q = question.lower()
+    return any(kw in q for kw in _INVESTMENT_KEYWORDS)
+
+
+def _is_insurance_query(question: str) -> bool:
+    q = question.lower()
+    return any(kw in q for kw in _INSURANCE_KEYWORDS)
+
+
+async def _fetch_guaranteed_chunks(
+    household_id: str | None,
+    tables: set[str],
+) -> list[dict]:
+    """Scroll Qdrant and return all chunks matching the given table tags (no semantic search)."""
+    client = get_qdrant()
+    hh_must = (
+        [FieldCondition(key="household_id", match=MatchValue(value=household_id))]
+        if household_id
+        else []
+    )
+
+    results = []
+    for table in tables:
+        table_filter = Filter(
+            must=[
+                FieldCondition(key="table", match=MatchValue(value=table)),
+                *hh_must,
+            ]
+        )
+        try:
+            points, _ = client.scroll(
+                collection_name=settings.qdrant_collection_db,
+                scroll_filter=table_filter,
+                limit=20,
+                with_payload=True,
+                with_vectors=False,
+            )
+            results.extend(p.payload for p in points)
+        except Exception as e:
+            log.warning("Guaranteed fetch failed for table '%s': %s", table, e)
+    return results
+
+
 async def search_combined(
     question: str,
     top_k_db: int = 10,
@@ -143,9 +213,29 @@ async def search_combined(
     Tiered retrieval (highest to lowest priority):
       1. Learned Q&A (explicitly verified ChatGPT answers)
       2. Live DB records (current financial state)
+         - Investment/performance queries: guaranteed property_performance + summary chunks
+           are always prepended before semantic results to prevent transaction flooding
+         - Insurance queries: guaranteed insurance_summary + insurance_policies chunks
+           are always prepended before semantic results
       3. Uploaded documents (historical snapshots)
     """
     learned = await search(question, top_k=5, collection=settings.qdrant_collection_learned, household_id=household_id)
     db_chunks = await search(question, top_k=top_k_db, collection=settings.qdrant_collection_db, household_id=household_id)
     doc_chunks = await search(question, top_k=top_k_docs, collection=settings.qdrant_collection_docs, household_id=household_id)
+
+    # For investment metric queries, prepend guaranteed performance chunks so they
+    # appear in context even when transaction records dominate semantic search results.
+    if _is_investment_query(question):
+        guaranteed = await _fetch_guaranteed_chunks(household_id, _GUARANTEED_TABLES)
+        seen_texts = {c.get("text", "")[:100] for c in db_chunks}
+        extra = [c for c in guaranteed if c.get("text", "")[:100] not in seen_texts]
+        db_chunks = extra + db_chunks
+
+    # For insurance queries, prepend insurance_summary + insurance_policies chunks.
+    if _is_insurance_query(question):
+        ins_guaranteed = await _fetch_guaranteed_chunks(household_id, _INSURANCE_TABLES)
+        seen_texts = {c.get("text", "")[:100] for c in db_chunks}
+        ins_extra = [c for c in ins_guaranteed if c.get("text", "")[:100] not in seen_texts]
+        db_chunks = ins_extra + db_chunks
+
     return learned + db_chunks + doc_chunks

@@ -1873,3 +1873,154 @@ export async function saveLearnedAnswer(question: string, answer: string): Promi
 export async function getLearnedAnswers(): Promise<{ items: LearnedAnswer[] }> {
   return apiFetch<{ items: LearnedAnswer[] }>("/api/v1/ai/learned");
 }
+
+// ─── Vehicles ─────────────────────────────────────────────────────────────────
+
+export interface Vehicle {
+  id: string;
+  household_id: string;
+  make: string;
+  model: string;
+  year: number | null;
+  vin: string | null;
+  nickname: string | null;
+  color: string | null;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface VehicleCreate {
+  make: string;
+  model: string;
+  year?: number;
+  vin?: string;
+  nickname?: string;
+  color?: string;
+  is_active?: boolean;
+  notes?: string;
+}
+
+export async function listVehicles(): Promise<Vehicle[]> {
+  return apiFetch<Vehicle[]>("/api/v1/vehicles/");
+}
+export async function createVehicle(data: VehicleCreate): Promise<Vehicle> {
+  return apiFetch<Vehicle>("/api/v1/vehicles/", { method: "POST", body: JSON.stringify(data) });
+}
+export async function updateVehicle(id: string, data: Partial<VehicleCreate>): Promise<Vehicle> {
+  return apiFetch<Vehicle>(`/api/v1/vehicles/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+}
+export async function deleteVehicle(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/vehicles/${id}`, { method: "DELETE" });
+}
+
+// ─── Insurance ────────────────────────────────────────────────────────────────
+
+export type PolicyType =
+  | "life_term" | "life_whole" | "life_universal"
+  | "home" | "renters" | "auto" | "umbrella"
+  | "health" | "dental" | "vision"
+  | "disability" | "long_term_care" | "business" | "other";
+
+export type PremiumFrequency = "monthly" | "quarterly" | "semi_annual" | "annual" | "one_time";
+
+export interface InsuranceBeneficiary {
+  id: string;
+  policy_id: string;
+  name: string;
+  relationship: string | null;
+  beneficiary_type: "primary" | "contingent";
+  percentage: string; // Decimal returned as string
+  created_at: string;
+}
+
+export interface InsurancePolicy {
+  id: string;
+  household_id: string;
+  policy_type: PolicyType;
+  provider: string;
+  policy_number: string | null;
+  premium_amount: string | null;
+  premium_frequency: PremiumFrequency;
+  coverage_amount: string | null;
+  deductible: string | null;
+  start_date: string | null;
+  renewal_date: string | null;
+  auto_renew: boolean;
+  is_active: boolean;
+  property_id: string | null;
+  vehicle_id: string | null;
+  insured_user_id: string | null;
+  entity_id: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface InsurancePolicyDetail extends InsurancePolicy {
+  beneficiaries: InsuranceBeneficiary[];
+  property_address: string | null;
+  vehicle_label: string | null;
+  insured_user_name: string | null;
+  entity_name: string | null;
+}
+
+export interface InsurancePolicyCreate {
+  policy_type: PolicyType;
+  provider: string;
+  policy_number?: string;
+  premium_amount?: number;
+  premium_frequency?: PremiumFrequency;
+  coverage_amount?: number;
+  deductible?: number;
+  start_date?: string;
+  renewal_date?: string;
+  auto_renew?: boolean;
+  is_active?: boolean;
+  property_id?: string;
+  vehicle_id?: string;
+  insured_user_id?: string;
+  entity_id?: string;
+  notes?: string;
+}
+
+export async function listPolicies(params?: { policy_type?: PolicyType; is_active?: boolean }): Promise<InsurancePolicy[]> {
+  const qs = new URLSearchParams();
+  if (params?.policy_type) qs.set("policy_type", params.policy_type);
+  if (params?.is_active !== undefined) qs.set("is_active", String(params.is_active));
+  const query = qs.toString() ? `?${qs}` : "";
+  return apiFetch<InsurancePolicy[]>(`/api/v1/insurance/${query}`);
+}
+export async function getPolicyDetail(id: string): Promise<InsurancePolicyDetail> {
+  return apiFetch<InsurancePolicyDetail>(`/api/v1/insurance/${id}`);
+}
+export async function createPolicy(data: InsurancePolicyCreate): Promise<InsurancePolicy> {
+  return apiFetch<InsurancePolicy>("/api/v1/insurance/", { method: "POST", body: JSON.stringify(data) });
+}
+export async function updatePolicy(id: string, data: Partial<InsurancePolicyCreate>): Promise<InsurancePolicy> {
+  return apiFetch<InsurancePolicy>(`/api/v1/insurance/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+}
+export async function deletePolicy(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/insurance/${id}`, { method: "DELETE" });
+}
+export async function addBeneficiary(
+  policyId: string,
+  data: { name: string; relationship?: string; beneficiary_type?: string; percentage: number }
+): Promise<InsuranceBeneficiary> {
+  return apiFetch<InsuranceBeneficiary>(`/api/v1/insurance/${policyId}/beneficiaries`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+export async function updateBeneficiary(
+  policyId: string,
+  benId: string,
+  data: Partial<{ name: string; relationship: string; beneficiary_type: string; percentage: number }>
+): Promise<InsuranceBeneficiary> {
+  return apiFetch<InsuranceBeneficiary>(`/api/v1/insurance/${policyId}/beneficiaries/${benId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+export async function deleteBeneficiary(policyId: string, benId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/insurance/${policyId}/beneficiaries/${benId}`, { method: "DELETE" });
+}

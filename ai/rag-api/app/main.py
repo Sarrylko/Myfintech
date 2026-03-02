@@ -32,10 +32,30 @@ log = logging.getLogger(__name__)
 
 # ── API key guard ─────────────────────────────────────────────────────────────
 
-async def verify_api_key(x_rag_api_key: str | None = Header(None, alias="X-RAG-Api-Key")):
-    """Require X-RAG-Api-Key header when RAG_API_KEY env var is set."""
-    if settings.rag_api_key and x_rag_api_key != settings.rag_api_key:
-        raise HTTPException(status_code=401, detail="Invalid or missing RAG API key")
+async def verify_api_key(
+    request: Request,
+    x_rag_api_key: str | None = Header(None, alias="X-RAG-Api-Key"),
+    authorization: str | None = Header(None),
+):
+    """
+    Accept the API key via either:
+      - X-RAG-Api-Key: {key}          (used by the main FastAPI proxy)
+      - Authorization: Bearer {key}   (used by OpenWebUI)
+    If RAG_API_KEY is not set, all requests are allowed (dev mode).
+    """
+    if not settings.rag_api_key:
+        return  # auth disabled
+
+    bearer_token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        bearer_token = authorization[7:]
+
+    if x_rag_api_key == settings.rag_api_key:
+        return
+    if bearer_token == settings.rag_api_key:
+        return
+
+    raise HTTPException(status_code=401, detail="Invalid or missing RAG API key")
 
 
 # ── Background sync task ─────────────────────────────────────────────────────
