@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, memo, useCallback } from "react";
+import { useEffect, useState, memo, useCallback, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import {
   listProperties,
@@ -30,6 +30,10 @@ import {
   listPropertyCostStatuses,
   upsertPropertyCostStatus,
   listBusinessEntities,
+  listPolicies,
+  createPolicy,
+  updatePolicy,
+  deletePolicy,
   Account,
   Property,
   Loan,
@@ -42,6 +46,10 @@ import {
   PropertyDocument,
   PropertyCostStatus,
   BusinessEntityResponse,
+  InsurancePolicy,
+  InsurancePolicyCreate,
+  PolicyType,
+  PremiumFrequency,
 } from "@/lib/api";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -113,6 +121,7 @@ function totalMonthlyRecurringCosts(costs: PropertyCost[]): number {
 function toMonthly(amount: number, frequency: string): number {
   if (frequency === "monthly") return amount;
   if (frequency === "quarterly") return amount / 3;
+  if (frequency === "semi_annual") return amount / 6;
   if (frequency === "annual") return amount / 12;
   return 0; // one_time not counted in monthly
 }
@@ -296,6 +305,7 @@ export default function PropertiesPage() {
   const [documents, setDocuments] = useState<Record<string, PropertyDocument[]>>({});
   const [costStatuses, setCostStatuses] = useState<Record<string, PropertyCostStatus[]>>({});
   const [togglingStatus, setTogglingStatus] = useState<string | null>(null); // "propId-category"
+  const [propInsurance, setPropInsurance] = useState<Record<string, InsurancePolicy[]>>({});
 
   useEffect(() => {
     load();
@@ -360,12 +370,20 @@ export default function PropertiesPage() {
     }
     setActiveTab((prev) => ({ ...prev, [propertyId]: tab }));
     setEditingDetails(null); // close details panel when opening a tab
-    if (tab === "costs" && costs[propertyId] === undefined) {
-      try {
-        const data = await listPropertyCosts(propertyId);
-        setCosts((prev) => ({ ...prev, [propertyId]: data }));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load costs");
+    if (tab === "costs") {
+      if (costs[propertyId] === undefined) {
+        try {
+          const data = await listPropertyCosts(propertyId);
+          setCosts((prev) => ({ ...prev, [propertyId]: data }));
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to load costs");
+        }
+      }
+      if (propInsurance[propertyId] === undefined) {
+        try {
+          const data = await listPolicies({ property_id: propertyId });
+          setPropInsurance((prev) => ({ ...prev, [propertyId]: data }));
+        } catch { /* silently skip — insurance rows just won't show */ }
       }
     }
     if (tab === "maintenance" && expenses[propertyId] === undefined) {
@@ -390,6 +408,14 @@ export default function PropertiesPage() {
         setDocuments((prev) => ({ ...prev, [propertyId]: data }));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load documents");
+      }
+    }
+    if (tab === "insurance" && propInsurance[propertyId] === undefined) {
+      try {
+        const data = await listPolicies({ property_id: propertyId });
+        setPropInsurance((prev) => ({ ...prev, [propertyId]: data }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load insurance policies");
       }
     }
   }
@@ -988,6 +1014,9 @@ export default function PropertiesPage() {
                   <TabBtn active={curTab === "documents"} onClick={() => toggleTab(p.id, "documents")}>
                     Documents {documents[p.id] && documents[p.id].length > 0 && `(${documents[p.id].length})`}
                   </TabBtn>
+                  <TabBtn active={curTab === "insurance"} onClick={() => toggleTab(p.id, "insurance")}>
+                    Insurance {propInsurance[p.id]?.length ? `(${propInsurance[p.id].length})` : ""}
+                  </TabBtn>
                 </div>
 
                 {/* ── Loans tab ── */}
@@ -1004,6 +1033,8 @@ export default function PropertiesPage() {
                   <CostsTab
                     propertyId={p.id}
                     costs={costs[p.id] ?? []}
+                    loans={propLoans}
+                    insurance={propInsurance[p.id] ?? []}
                     onUpdate={(updated) => setCosts((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
@@ -1033,6 +1064,15 @@ export default function PropertiesPage() {
                     propertyId={p.id}
                     docs={documents[p.id] ?? []}
                     onUpdate={(updated) => setDocuments((prev) => ({ ...prev, [p.id]: updated }))}
+                  />
+                )}
+
+                {/* ── Insurance tab ── */}
+                {curTab === "insurance" && (
+                  <PropertyInsuranceTab
+                    propertyId={p.id}
+                    policies={propInsurance[p.id] ?? []}
+                    onUpdate={(updated) => setPropInsurance((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
               </div>
@@ -1345,10 +1385,12 @@ const BLANK_COST: PropertyCostCreate = {
 };
 
 function CostsTab({
-  propertyId, costs, onUpdate,
+  propertyId, costs, loans, insurance, onUpdate,
 }: {
   propertyId: string;
   costs: PropertyCost[];
+  loans: Loan[];
+  insurance: InsurancePolicy[];
   onUpdate: (updated: PropertyCost[]) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
@@ -1431,9 +1473,18 @@ function CostsTab({
   }
 
   const activeCosts = costs.filter((c) => c.is_active);
-  const monthlyTotal = activeCosts
-    .filter((c) => !c.is_escrowed)
-    .reduce((sum, c) => sum + toMonthly(Number(c.amount), c.frequency), 0);
+  const hasEscrow = loans.some((l) => l.escrow_included);
+  const activeInsurance = hasEscrow
+    ? []
+    : insurance.filter((i) => i.is_active && i.premium_amount != null);
+  const insMonthly = activeInsurance.reduce(
+    (s, i) => s + toMonthly(Number(i.premium_amount), i.premium_frequency), 0
+  );
+  const monthlyTotal =
+    activeCosts
+      .filter((c) => !c.is_escrowed)
+      .reduce((sum, c) => sum + toMonthly(Number(c.amount), c.frequency), 0)
+    + insMonthly;
 
   function CostFormFields({
     form, setForm,
@@ -1529,6 +1580,38 @@ function CostsTab({
         ))}
       </div>
 
+      {activeInsurance.length > 0 && (
+        <div className="mt-3 space-y-1">
+          <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">From Insurance Policies</p>
+          {activeInsurance.map((ins) => (
+            <div key={ins.id}
+              className="flex items-center justify-between gap-4 rounded-lg px-4 py-2.5 bg-yellow-50 border border-yellow-100">
+              <div className="flex items-center gap-3 flex-1">
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">
+                  insurance
+                </span>
+                <div>
+                  <span className="text-sm text-gray-700">
+                    {ins.provider}{ins.policy_type ? ` — ${ins.policy_type.replace(/_/g, " ")}` : ""}
+                  </span>
+                  {ins.renewal_date && (
+                    <p className="text-xs text-gray-400 mt-0.5">renews {ins.renewal_date}</p>
+                  )}
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-sm font-semibold text-gray-900">
+                  {fmtDec(toMonthly(Number(ins.premium_amount), ins.premium_frequency))}/mo
+                </p>
+                <p className="text-xs text-gray-400">
+                  {fmtDec(ins.premium_amount!)} {ins.premium_frequency}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {showAdd ? (
         <div className="mt-3 bg-gray-50 rounded-lg p-4 border border-gray-200">
           <CostFormFields form={addForm} setForm={setAddForm} />
@@ -1547,7 +1630,7 @@ function CostsTab({
         </button>
       )}
 
-      {activeCosts.length > 0 && (
+      {(activeCosts.length > 0 || activeInsurance.length > 0) && (
         <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between text-sm">
           <span className="text-gray-500">
             Monthly equivalent (active, non-escrowed)
@@ -1555,6 +1638,9 @@ function CostsTab({
               <span className="ml-1 text-xs text-blue-500" title="Escrowed costs (insurance, property tax) are excluded — already in your mortgage payment">
                 · escrowed costs excluded
               </span>
+            )}
+            {activeInsurance.length > 0 && (
+              <span className="ml-1 text-xs text-yellow-600">· includes insurance premiums</span>
             )}
           </span>
           <span className="font-semibold text-gray-900">{fmtDec(monthlyTotal)}/mo</span>
@@ -2262,6 +2348,512 @@ function DocumentsTab({
               </div>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Property Insurance Tab ────────────────────────────────────────────────────
+
+const POLICY_TYPE_LABEL: Record<string, string> = {
+  life_term: "Term Life", life_whole: "Whole Life", life_universal: "Universal Life",
+  home: "Home", renters: "Renters", auto: "Auto", umbrella: "Umbrella",
+  health: "Health", dental: "Dental", vision: "Vision",
+  disability: "Disability", long_term_care: "Long-Term Care",
+  business: "Business", other: "Other",
+};
+
+const INS_FREQ_LABEL: Record<string, string> = {
+  monthly: "/mo", quarterly: "/qtr", semi_annual: "/6mo", annual: "/yr", one_time: " once",
+};
+
+const BLANK_INS_FORM = {
+  policy_type: "home" as PolicyType,
+  provider: "",
+  policy_number: "",
+  premium_amount: "",
+  premium_frequency: "monthly" as PremiumFrequency,
+  coverage_amount: "",
+  deductible: "",
+  start_date: "",
+  renewal_date: "",
+  auto_renew: false,
+  notes: "",
+};
+
+function renewalDayColor(dateStr: string | null): string {
+  if (!dateStr) return "text-gray-400";
+  const days = Math.floor((new Date(dateStr).getTime() - Date.now()) / 86400000);
+  if (days < 30) return "text-red-600 font-semibold";
+  if (days < 60) return "text-amber-600 font-semibold";
+  return "text-gray-700";
+}
+
+function PropertyInsuranceTab({
+  propertyId,
+  policies,
+  onUpdate,
+}: {
+  propertyId: string;
+  policies: InsurancePolicy[];
+  onUpdate: (updated: InsurancePolicy[]) => void;
+}) {
+  const [showAddEdit, setShowAddEdit] = useState(false);
+  const [editingPolicy, setEditingPolicy] = useState<InsurancePolicy | null>(null);
+  const [form, setForm] = useState({ ...BLANK_INS_FORM });
+  const [showLink, setShowLink] = useState(false);
+  const [linkable, setLinkable] = useState<InsurancePolicy[]>([]);
+  const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function fmtPremium(p: InsurancePolicy) {
+    if (!p.premium_amount) return "—";
+    return `$${Number(p.premium_amount).toLocaleString()}${INS_FREQ_LABEL[p.premium_frequency] ?? ""}`;
+  }
+
+  function openAdd() {
+    setEditingPolicy(null);
+    setForm({ ...BLANK_INS_FORM });
+    setErr(null);
+    setShowAddEdit(true);
+  }
+
+  function openEdit(p: InsurancePolicy) {
+    setEditingPolicy(p);
+    setForm({
+      policy_type: p.policy_type,
+      provider: p.provider,
+      policy_number: p.policy_number ?? "",
+      premium_amount: p.premium_amount ?? "",
+      premium_frequency: p.premium_frequency,
+      coverage_amount: p.coverage_amount ?? "",
+      deductible: p.deductible ?? "",
+      start_date: p.start_date ?? "",
+      renewal_date: p.renewal_date ?? "",
+      auto_renew: p.auto_renew,
+      notes: p.notes ?? "",
+    });
+    setErr(null);
+    setShowAddEdit(true);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setErr(null);
+    try {
+      const payload: InsurancePolicyCreate = {
+        policy_type: form.policy_type,
+        provider: form.provider,
+        policy_number: form.policy_number || undefined,
+        premium_amount: form.premium_amount ? Number(form.premium_amount) : undefined,
+        premium_frequency: form.premium_frequency,
+        coverage_amount: form.coverage_amount ? Number(form.coverage_amount) : undefined,
+        deductible: form.deductible ? Number(form.deductible) : undefined,
+        start_date: form.start_date || undefined,
+        renewal_date: form.renewal_date || undefined,
+        auto_renew: form.auto_renew,
+        notes: form.notes || undefined,
+        property_id: propertyId,
+      };
+      if (editingPolicy) {
+        await updatePolicy(editingPolicy.id, payload);
+      } else {
+        await createPolicy(payload);
+      }
+      const refreshed = await listPolicies({ property_id: propertyId });
+      onUpdate(refreshed);
+      setShowAddEdit(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleUnlink(policyId: string) {
+    if (!confirm("Unlink this policy from the property? It will remain in the Insurance section.")) return;
+    try {
+      await updatePolicy(policyId, { property_id: undefined });
+      onUpdate(policies.filter((p) => p.id !== policyId));
+    } catch {
+      // silently ignore
+    }
+  }
+
+  async function handleDelete(policyId: string) {
+    if (!confirm("Permanently delete this insurance policy?")) return;
+    try {
+      await deletePolicy(policyId);
+      onUpdate(policies.filter((p) => p.id !== policyId));
+    } catch {
+      // silently ignore
+    }
+  }
+
+  async function openLink() {
+    try {
+      const all = await listPolicies({ is_active: true });
+      setLinkable(all.filter((p) => p.property_id === null));
+    } catch {
+      setLinkable([]);
+    }
+    setSelectedLinkId(null);
+    setShowLink(true);
+  }
+
+  async function handleLink() {
+    if (!selectedLinkId) return;
+    setSubmitting(true);
+    try {
+      await updatePolicy(selectedLinkId, { property_id: propertyId });
+      const refreshed = await listPolicies({ property_id: propertyId });
+      onUpdate(refreshed);
+      setShowLink(false);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-gray-700">Insurance Policies</h3>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={openLink}
+            className="text-xs px-3 py-1.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 transition"
+          >
+            Link Existing
+          </button>
+          <button
+            type="button"
+            onClick={openAdd}
+            className="text-xs px-3 py-1.5 rounded bg-primary-600 text-white hover:bg-primary-700 transition"
+          >
+            + Add Policy
+          </button>
+        </div>
+      </div>
+
+      {/* Empty state */}
+      {policies.length === 0 && (
+        <p className="text-sm text-gray-400 italic py-4 text-center">
+          No insurance policies linked to this property.
+        </p>
+      )}
+
+      {/* Table */}
+      {policies.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-gray-100">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+              <tr>
+                <th className="px-3 py-2 text-left">Type</th>
+                <th className="px-3 py-2 text-left">Provider</th>
+                <th className="px-3 py-2 text-right">Premium</th>
+                <th className="px-3 py-2 text-right">Coverage</th>
+                <th className="px-3 py-2 text-right">Deductible</th>
+                <th className="px-3 py-2 text-left">Renews</th>
+                <th className="px-3 py-2 text-center">Status</th>
+                <th className="px-3 py-2 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {policies.map((pol) => (
+                <Fragment key={pol.id}>
+                  <tr
+                    className="bg-white hover:bg-gray-50 cursor-pointer transition"
+                    onClick={() => setExpandedId(expandedId === pol.id ? null : pol.id)}
+                  >
+                    <td className="px-3 py-2.5">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">
+                        {POLICY_TYPE_LABEL[pol.policy_type] ?? pol.policy_type}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 font-medium text-gray-800">{pol.provider}</td>
+                    <td className="px-3 py-2.5 text-right text-gray-700">{fmtPremium(pol)}</td>
+                    <td className="px-3 py-2.5 text-right text-gray-700">
+                      {pol.coverage_amount ? `$${Number(pol.coverage_amount).toLocaleString()}` : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-gray-700">
+                      {pol.deductible ? `$${Number(pol.deductible).toLocaleString()}` : "—"}
+                    </td>
+                    <td className={`px-3 py-2.5 ${renewalDayColor(pol.renewal_date)}`}>
+                      {pol.renewal_date ? new Date(pol.renewal_date).toLocaleDateString() : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${pol.is_active ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                        {pol.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => openEdit(pol)}
+                        className="text-xs text-primary-600 hover:text-primary-800 font-medium px-2 py-1 rounded hover:bg-primary-50 transition"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUnlink(pol.id)}
+                        className="text-xs text-amber-600 hover:text-amber-800 font-medium px-2 py-1 rounded hover:bg-amber-50 transition ml-1"
+                      >
+                        Unlink
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(pol.id)}
+                        className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50 transition ml-1"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                  {expandedId === pol.id && (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-3 bg-blue-50/30 text-xs text-gray-600">
+                        <div className="flex flex-wrap gap-x-6 gap-y-1">
+                          {pol.policy_number && <span><strong>Policy #:</strong> {pol.policy_number}</span>}
+                          {pol.start_date && <span><strong>Start:</strong> {new Date(pol.start_date).toLocaleDateString()}</span>}
+                          <span><strong>Auto-Renew:</strong> {pol.auto_renew ? "Yes" : "No"}</span>
+                          {pol.notes && <span><strong>Notes:</strong> {pol.notes}</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Add/Edit Modal */}
+      {showAddEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-base font-semibold text-gray-900 mb-4">
+              {editingPolicy ? "Edit Insurance Policy" : "Add Insurance Policy"}
+            </h2>
+            {err && <p className="text-sm text-red-600 mb-3">{err}</p>}
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Policy Type *</label>
+                  <select
+                    required
+                    aria-label="Policy Type"
+                    value={form.policy_type}
+                    onChange={(e) => setForm((f) => ({ ...f, policy_type: e.target.value as PolicyType }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  >
+                    {Object.entries(POLICY_TYPE_LABEL).map(([v, l]) => (
+                      <option key={v} value={v}>{l}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Provider *</label>
+                  <input
+                    required
+                    value={form.provider}
+                    onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))}
+                    placeholder="e.g. State Farm"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Policy Number</label>
+                <input
+                  placeholder="e.g. ABC-123456"
+                  value={form.policy_number}
+                  onChange={(e) => setForm((f) => ({ ...f, policy_number: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Premium Amount</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    value={form.premium_amount}
+                    onChange={(e) => setForm((f) => ({ ...f, premium_amount: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Frequency</label>
+                  <select
+                    aria-label="Premium Frequency"
+                    value={form.premium_frequency}
+                    onChange={(e) => setForm((f) => ({ ...f, premium_frequency: e.target.value as PremiumFrequency }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  >
+                    <option value="monthly">Monthly</option>
+                    <option value="quarterly">Quarterly</option>
+                    <option value="semi_annual">Semi-Annual</option>
+                    <option value="annual">Annual</option>
+                    <option value="one_time">One-Time</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Coverage Limit</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    value={form.coverage_amount}
+                    onChange={(e) => setForm((f) => ({ ...f, coverage_amount: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Deductible</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    value={form.deductible}
+                    onChange={(e) => setForm((f) => ({ ...f, deductible: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    aria-label="Start Date"
+                    value={form.start_date}
+                    onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Renewal Date</label>
+                  <input
+                    type="date"
+                    aria-label="Renewal Date"
+                    value={form.renewal_date}
+                    onChange={(e) => setForm((f) => ({ ...f, renewal_date: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="ins_auto_renew"
+                  checked={form.auto_renew}
+                  onChange={(e) => setForm((f) => ({ ...f, auto_renew: e.target.checked }))}
+                  className="rounded border-gray-300 text-primary-600"
+                />
+                <label htmlFor="ins_auto_renew" className="text-sm text-gray-700">Auto-Renew</label>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Optional notes about this policy"
+                  value={form.notes}
+                  onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddEdit(false)}
+                  className="px-4 py-2 text-sm text-gray-600 rounded-lg border border-gray-300 hover:bg-gray-50 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-4 py-2 text-sm text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition disabled:opacity-50"
+                >
+                  {submitting ? "Saving…" : editingPolicy ? "Save Changes" : "Add Policy"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Link Existing Modal */}
+      {showLink && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+            <h2 className="text-base font-semibold text-gray-900 mb-1">Link Existing Policy</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Select an unlinked household policy to attach to this property.
+            </p>
+            {linkable.length === 0 ? (
+              <p className="text-sm text-gray-400 italic py-2">No unlinked policies available.</p>
+            ) : (
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {linkable.map((p) => (
+                  <label
+                    key={p.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                      selectedLinkId === p.id
+                        ? "border-primary-500 bg-primary-50"
+                        : "border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="link_policy"
+                      value={p.id}
+                      checked={selectedLinkId === p.id}
+                      onChange={() => setSelectedLinkId(p.id)}
+                      className="text-primary-600"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">
+                        {POLICY_TYPE_LABEL[p.policy_type] ?? p.policy_type} — {p.provider}
+                      </p>
+                      <p className="text-xs text-gray-500">{fmtPremium(p)}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                type="button"
+                onClick={() => setShowLink(false)}
+                className="px-4 py-2 text-sm text-gray-600 rounded-lg border border-gray-300 hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleLink}
+                disabled={!selectedLinkId || submitting}
+                className="px-4 py-2 text-sm text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition disabled:opacity-50"
+              >
+                {submitting ? "Linking…" : "Link Policy"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

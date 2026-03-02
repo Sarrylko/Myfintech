@@ -120,6 +120,7 @@ async def _build_detail(
 async def list_policies(
     policy_type: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
+    property_id: Optional[uuid.UUID] = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -128,6 +129,8 @@ async def list_policies(
         q = q.where(InsurancePolicy.policy_type == policy_type)
     if is_active is not None:
         q = q.where(InsurancePolicy.is_active == is_active)
+    if property_id is not None:
+        q = q.where(InsurancePolicy.property_id == property_id)
     q = q.order_by(InsurancePolicy.policy_type, InsurancePolicy.provider)
     result = await db.execute(q)
     return result.scalars().all()

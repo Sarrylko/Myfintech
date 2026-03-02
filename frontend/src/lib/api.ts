@@ -1983,10 +1983,11 @@ export interface InsurancePolicyCreate {
   notes?: string;
 }
 
-export async function listPolicies(params?: { policy_type?: PolicyType; is_active?: boolean }): Promise<InsurancePolicy[]> {
+export async function listPolicies(params?: { policy_type?: PolicyType; is_active?: boolean; property_id?: string }): Promise<InsurancePolicy[]> {
   const qs = new URLSearchParams();
   if (params?.policy_type) qs.set("policy_type", params.policy_type);
   if (params?.is_active !== undefined) qs.set("is_active", String(params.is_active));
+  if (params?.property_id) qs.set("property_id", params.property_id);
   const query = qs.toString() ? `?${qs}` : "";
   return apiFetch<InsurancePolicy[]>(`/api/v1/insurance/${query}`);
 }
