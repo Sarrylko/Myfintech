@@ -78,9 +78,33 @@ app.post("/send", async (req, res) => {
   }
 
   try {
-    // Strip non-digits and append WhatsApp chat ID suffix
-    const chatId = to.replace(/\D/g, "") + "@c.us";
-    await client.sendMessage(chatId, message);
+    const phone = to.replace(/\D/g, "");
+
+    // Try resolving via getNumberId first (handles LID accounts)
+    let chatId;
+    try {
+      const numberId = await client.getNumberId(phone);
+      chatId = numberId ? numberId._serialized : `${phone}@c.us`;
+    } catch {
+      chatId = `${phone}@c.us`;
+    }
+
+    try {
+      await client.sendMessage(chatId, message);
+    } catch (sendErr) {
+      // LID error: scan open chats for a matching number
+      if (sendErr.message && sendErr.message.includes("LID")) {
+        const chats = await client.getChats();
+        const match = chats.find(
+          (c) => c.id.user === phone || c.id._serialized.startsWith(phone)
+        );
+        if (!match) throw sendErr;
+        await client.sendMessage(match.id._serialized, message);
+      } else {
+        throw sendErr;
+      }
+    }
+
     res.json({ ok: true });
   } catch (err) {
     console.error("Send error:", err.message);

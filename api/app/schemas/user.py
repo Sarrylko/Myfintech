@@ -98,3 +98,11 @@ class HouseholdMemberUpdate(BaseModel):
     email: EmailStr | None = None
     role: str | None = None
     phone: str | None = None  # WhatsApp number for notifications (e.g. +12223334444)
+
+
+class NotificationPreferences(BaseModel):
+    daily_summary: bool = True
+    budget_alerts: bool = True
+    bill_reminders: bool = True
+    monthly_report: bool = True
+    transaction_alerts: bool = True

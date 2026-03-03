@@ -9,17 +9,20 @@ Scheduled tasks (via celery beat):
   send_daily_summary      — 08:00 UTC daily
   check_budget_alerts     — 09:00 UTC daily
   check_bill_reminders    — 09:05 UTC daily
+  send_monthly_report     — 08:30 UTC on the 1st of each month
 
 On-demand task:
   notify_new_transactions(household_id, count)  — called after sync
 """
 
+import calendar
 import logging
 import uuid
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import create_engine, func, or_, select
+from sqlalchemy import create_engine, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -39,15 +42,21 @@ _engine = create_engine(settings.database_url_sync, pool_pre_ping=True)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _phones_for_household(db: Session, household_id: uuid.UUID) -> list[str]:
-    """Return all non-null phone numbers for members of a household."""
-    rows = db.execute(
-        select(User.phone).where(
-            User.household_id == household_id,
-            User.phone.isnot(None),
-            User.is_active == True,  # noqa: E712
-        )
-    ).scalars().all()
+def _phones_for_household(
+    db: Session,
+    household_id: uuid.UUID,
+    notif_field: str | None = None,
+) -> list[str]:
+    """Return phone numbers for active household members who have the given
+    notification type enabled (or all phones if notif_field is None)."""
+    conditions = [
+        User.household_id == household_id,
+        User.phone.isnot(None),
+        User.is_active == True,  # noqa: E712
+    ]
+    if notif_field:
+        conditions.append(getattr(User, notif_field) == True)  # noqa: E712
+    rows = db.execute(select(User.phone).where(*conditions)).scalars().all()
     return [p for p in rows if p]
 
 
@@ -76,7 +85,7 @@ def send_daily_summary():
         household_ids = db.execute(select(Household.id)).scalars().all()
 
         for hid in household_ids:
-            phones = _phones_for_household(db, hid)
+            phones = _phones_for_household(db, hid, "notif_daily_summary")
             if not phones:
                 continue
 
@@ -158,7 +167,7 @@ def check_budget_alerts():
         household_ids = db.execute(select(Household.id)).scalars().all()
 
         for hid in household_ids:
-            phones = _phones_for_household(db, hid)
+            phones = _phones_for_household(db, hid, "notif_budget_alerts")
             if not phones:
                 continue
 
@@ -246,7 +255,7 @@ def check_bill_reminders():
         household_ids = db.execute(select(Household.id)).scalars().all()
 
         for hid in household_ids:
-            phones = _phones_for_household(db, hid)
+            phones = _phones_for_household(db, hid, "notif_bill_reminders")
             if not phones:
                 continue
 
@@ -299,7 +308,286 @@ def notify_new_transactions(household_id: str, count: int):
         return
 
     with Session(_engine) as db:
-        phones = _phones_for_household(db, uuid.UUID(household_id))
+        phones = _phones_for_household(db, uuid.UUID(household_id), "notif_transaction_alerts")
         if phones:
             msg = f"💳 {count} new transaction{'s' if count != 1 else ''} synced to MyFinTech"
             send_whatsapp_bulk(phones, msg)
+
+
+# ── Monthly report ─────────────────────────────────────────────────────────────
+
+@celery_app.task(name="app.services.notifications.send_monthly_report")
+def send_monthly_report():
+    """08:30 UTC on the 1st of each month — Rocket Money-style report for the prior month."""
+    today = datetime.now(timezone.utc)
+
+    # --- Previous month date range ---
+    prev_year  = today.year if today.month > 1 else today.year - 1
+    prev_month = today.month - 1 if today.month > 1 else 12
+    month_start = date(prev_year, prev_month, 1)
+    month_end   = date(today.year, today.month, 1)   # exclusive
+
+    # --- 6-month history window for averages ---
+    hist_month = prev_month - 6
+    hist_year  = prev_year
+    if hist_month <= 0:
+        hist_month += 12
+        hist_year  -= 1
+    history_start = date(hist_year, hist_month, 1)
+
+    month_name = calendar.month_name[prev_month]
+
+    with Session(_engine) as db:
+        households = db.execute(select(Household)).scalars().all()
+        for hh in households:
+            try:
+                _send_monthly_report_for_household(
+                    db, hh.id, month_name, prev_year, prev_month,
+                    month_start, month_end, history_start,
+                )
+            except Exception:
+                logger.exception("Monthly report failed for household %s", hh.id)
+
+
+def _send_monthly_report_for_household(
+    db: Session,
+    hh_id: uuid.UUID,
+    month_name: str,
+    prev_year: int,
+    prev_month: int,
+    month_start: date,
+    month_end: date,
+    history_start: date,
+) -> None:
+    phones = _phones_for_household(db, hh_id, "notif_monthly_report")
+    if not phones:
+        return
+
+    # ── 1. Total spend (prev month, expense categories only) ──────────────────
+    total_spend: Decimal = db.execute(
+        select(func.sum(Transaction.amount))
+        .join(Category, Transaction.custom_category_id == Category.id)
+        .where(
+            Transaction.household_id == hh_id,
+            Transaction.date >= month_start,
+            Transaction.date < month_end,
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,      # noqa: E712
+            Transaction.amount > 0,
+            Category.is_income == False,       # noqa: E712
+        )
+    ).scalar() or Decimal(0)
+
+    # ── 2. Income (prev month) ────────────────────────────────────────────────
+    total_income: Decimal = db.execute(
+        select(func.sum(Transaction.amount))
+        .join(Category, Transaction.custom_category_id == Category.id)
+        .where(
+            Transaction.household_id == hh_id,
+            Transaction.date >= month_start,
+            Transaction.date < month_end,
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,      # noqa: E712
+            Transaction.amount > 0,
+            Category.is_income == True,        # noqa: E712
+        )
+    ).scalar() or Decimal(0)
+
+    # ── 3. Average monthly spend (6-month history, grouped by month) ──────────
+    hist_rows = db.execute(
+        select(
+            func.extract("year",  Transaction.date).label("yr"),
+            func.extract("month", Transaction.date).label("mo"),
+            func.sum(Transaction.amount).label("total"),
+        )
+        .join(Category, Transaction.custom_category_id == Category.id)
+        .where(
+            Transaction.household_id == hh_id,
+            Transaction.date >= history_start,
+            Transaction.date < month_start,
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,      # noqa: E712
+            Transaction.amount > 0,
+            Category.is_income == False,       # noqa: E712
+        )
+        .group_by("yr", "mo")
+    ).all()
+    avg_monthly: Decimal = (
+        sum((r.total for r in hist_rows), Decimal(0)) / len(hist_rows)
+        if hist_rows else Decimal(0)
+    )
+
+    # ── 4. Top 3 categories by spend ─────────────────────────────────────────
+    top_cats = db.execute(
+        select(Category.name, func.sum(Transaction.amount).label("total"))
+        .join(Transaction, Transaction.custom_category_id == Category.id)
+        .where(
+            Transaction.household_id == hh_id,
+            Transaction.date >= month_start,
+            Transaction.date < month_end,
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,      # noqa: E712
+            Transaction.amount > 0,
+            Category.is_income == False,       # noqa: E712
+        )
+        .group_by(Category.name)
+        .order_by(desc("total"))
+        .limit(3)
+    ).all()
+
+    # ── 5. Biggest category changes vs 6-month average ────────────────────────
+    hist_cat_rows = db.execute(
+        select(
+            Category.name,
+            func.extract("year",  Transaction.date).label("yr"),
+            func.extract("month", Transaction.date).label("mo"),
+            func.sum(Transaction.amount).label("total"),
+        )
+        .join(Transaction, Transaction.custom_category_id == Category.id)
+        .where(
+            Transaction.household_id == hh_id,
+            Transaction.date >= history_start,
+            Transaction.date < month_start,
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,      # noqa: E712
+            Transaction.amount > 0,
+            Category.is_income == False,       # noqa: E712
+        )
+        .group_by(Category.name, "yr", "mo")
+    ).all()
+
+    cat_months: dict[str, list[Decimal]] = defaultdict(list)
+    for r in hist_cat_rows:
+        cat_months[r.name].append(r.total)
+    cat_avg = {n: sum(v, Decimal(0)) / len(v) for n, v in cat_months.items()}
+
+    all_prev_cats = db.execute(
+        select(Category.name, func.sum(Transaction.amount).label("total"))
+        .join(Transaction, Transaction.custom_category_id == Category.id)
+        .where(
+            Transaction.household_id == hh_id,
+            Transaction.date >= month_start,
+            Transaction.date < month_end,
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,      # noqa: E712
+            Transaction.amount > 0,
+            Category.is_income == False,       # noqa: E712
+        )
+        .group_by(Category.name)
+    ).all()
+
+    changes = []
+    for row in all_prev_cats:
+        diff = row.total - cat_avg.get(row.name, Decimal(0))
+        changes.append((row.name, row.total, cat_avg.get(row.name, Decimal(0)), diff))
+    changes.sort(key=lambda x: abs(x[3]), reverse=True)
+    biggest = changes[:3]
+
+    # ── 6. Subscriptions (merchants repeating from prior 2 months) ────────────
+    prev_merchants = db.execute(
+        select(Transaction.merchant_name, func.sum(Transaction.amount).label("total"))
+        .where(
+            Transaction.household_id == hh_id,
+            Transaction.date >= month_start,
+            Transaction.date < month_end,
+            Transaction.merchant_name.isnot(None),
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,      # noqa: E712
+            Transaction.amount > 0,
+        )
+        .group_by(Transaction.merchant_name)
+    ).all()
+
+    two_mo_start = month_start - timedelta(days=62)
+    prior_set = set(db.execute(
+        select(Transaction.merchant_name.distinct())
+        .where(
+            Transaction.household_id == hh_id,
+            Transaction.date >= two_mo_start,
+            Transaction.date < month_start,
+            Transaction.merchant_name.isnot(None),
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,      # noqa: E712
+        )
+    ).scalars().all())
+
+    subs = [(r.merchant_name, r.total) for r in prev_merchants if r.merchant_name in prior_set]
+    sub_count = len(subs)
+    sub_total: Decimal = sum((t for _, t in subs), Decimal(0))
+
+    # ── 7. Budget performance (monthly budgets for prev month) ────────────────
+    budgets = db.execute(
+        select(Budget).where(
+            Budget.household_id == hh_id,
+            Budget.year == prev_year,
+            Budget.month == prev_month,
+            Budget.budget_type == "monthly",
+        )
+    ).scalars().all()
+
+    budget_lines = []
+    for b in budgets[:4]:
+        spent: Decimal = db.execute(
+            select(func.sum(Transaction.amount)).where(
+                Transaction.household_id == hh_id,
+                Transaction.custom_category_id == b.category_id,
+                Transaction.date >= month_start,
+                Transaction.date < month_end,
+                Transaction.is_ignored == False,  # noqa: E712
+                Transaction.pending == False,      # noqa: E712
+                Transaction.amount > 0,
+            )
+        ).scalar() or Decimal(0)
+        icon = "⚠️" if spent > b.amount else "✅"
+        budget_lines.append(f"  {icon} {b.category.name}: {_fmt_currency(spent)}/{_fmt_currency(b.amount)}")
+
+    # ── Build message ─────────────────────────────────────────────────────────
+    lines = [f"*📊 {month_name} Financial Report*\n"]
+
+    # Spend vs avg
+    spend_line = f"*{_fmt_currency(total_spend)}*"
+    if avg_monthly > 0:
+        pct = int(abs(total_spend - avg_monthly) / avg_monthly * 100)
+        arrow = "↑" if total_spend > avg_monthly else "↓"
+        spend_line += f"  {arrow}{pct}% vs avg"
+        lines.append(f"*💰 Total Spend*\n{spend_line}\n{_fmt_currency(avg_monthly)}/mo avg")
+    else:
+        lines.append(f"*💰 Total Spend*\n{spend_line}")
+
+    # Income vs spend
+    if total_income > 0:
+        delta = total_income - total_spend
+        sign = "Surplus: +" if delta >= 0 else "Deficit: -"
+        lines.append(
+            f"\n*📈 Income vs. Spend*\n"
+            f"Income: {_fmt_currency(total_income)} | Spend: {_fmt_currency(total_spend)}\n"
+            f"{sign}{_fmt_currency(abs(delta))}"
+        )
+
+    # Subscriptions
+    if sub_count > 0:
+        lines.append(f"\n*🔄 Subscriptions*\n{_fmt_currency(sub_total)} across {sub_count} recurring merchant{'s' if sub_count != 1 else ''}")
+
+    # Top categories
+    if top_cats:
+        cat_lines = []
+        for name, amt in top_cats:
+            pct = int(amt / total_spend * 100) if total_spend > 0 else 0
+            cat_lines.append(f"  • {name}: {_fmt_currency(amt)} ({pct}%)")
+        lines.append("\n*📊 Top Categories*\n" + "\n".join(cat_lines))
+
+    # Biggest changes (only show if history exists)
+    if biggest and avg_monthly > 0:
+        change_lines = []
+        for name, amt, avg, diff in biggest:
+            direction = "more" if diff > 0 else "less"
+            change_lines.append(f"  • {name}: {_fmt_currency(abs(diff))} {direction} than avg")
+        lines.append("\n*📉 Biggest Changes*\n" + "\n".join(change_lines))
+
+    # Budget performance
+    if budget_lines:
+        lines.append("\n*📋 Budget Performance*\n" + "\n".join(budget_lines))
+
+    lines.append("\n_View details in your MyFinTech app._")
+
+    send_whatsapp_bulk(phones, "\n".join(lines))

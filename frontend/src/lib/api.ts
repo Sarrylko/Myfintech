@@ -123,6 +123,31 @@ export async function changePassword(
   });
 }
 
+// ─── Notification Preferences ────────────────────────────────────────────────
+
+export interface NotificationPreferences {
+  daily_summary: boolean;
+  budget_alerts: boolean;
+  bill_reminders: boolean;
+  monthly_report: boolean;
+  transaction_alerts: boolean;
+}
+
+export async function getNotifPrefs(): Promise<NotificationPreferences> {
+  return apiFetch<NotificationPreferences>(
+    "/api/v1/users/me/notification-preferences"
+  );
+}
+
+export async function updateNotifPrefs(
+  data: NotificationPreferences
+): Promise<NotificationPreferences> {
+  return apiFetch<NotificationPreferences>(
+    "/api/v1/users/me/notification-preferences",
+    { method: "PATCH", body: JSON.stringify(data) }
+  );
+}
+
 // ─── Household Members ───────────────────────────────────────────────────────
 
 export interface HouseholdMemberCreate {

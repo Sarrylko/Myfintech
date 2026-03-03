@@ -20,6 +20,9 @@ import {
   getInvestmentSettings,
   updateInvestmentSettings,
   InvestmentRefreshSettings,
+  NotificationPreferences,
+  getNotifPrefs,
+  updateNotifPrefs,
 } from "@/lib/api";
 
 export type SettingsTab =
@@ -27,7 +30,8 @@ export type SettingsTab =
   | "security"
   | "household"
   | "categories"
-  | "preferences";
+  | "preferences"
+  | "notifications";
 
 interface Props {
   open: boolean;
@@ -43,6 +47,7 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: "household", label: "Household" },
   { id: "categories", label: "Categories" },
   { id: "preferences", label: "Preferences" },
+  { id: "notifications", label: "Notifications" },
 ];
 
 // ── Shared input component ───────────────────────────────────────────────────
@@ -1021,6 +1026,251 @@ function PreferencesTab() {
   );
 }
 
+// ── Notifications Tab ─────────────────────────────────────────────────────────
+
+type NotifKey = keyof NotificationPreferences;
+
+interface NotifCard {
+  key: NotifKey;
+  icon: string;
+  title: string;
+  description: string;
+  schedule: string;
+  iconBg: string;
+}
+
+const NOTIF_CARDS: NotifCard[] = [
+  {
+    key: "daily_summary",
+    icon: "🌅",
+    title: "Daily Digest",
+    description: "Net worth changes, top spending categories, and unpaid bills delivered every morning.",
+    schedule: "Daily · 8:00 AM UTC",
+    iconBg: "bg-sky-50 dark:bg-sky-900/20",
+  },
+  {
+    key: "budget_alerts",
+    icon: "📊",
+    title: "Budget Alerts",
+    description: "Get notified when spending reaches or exceeds your budget thresholds.",
+    schedule: "Daily · 9:00 AM UTC",
+    iconBg: "bg-amber-50 dark:bg-amber-900/20",
+  },
+  {
+    key: "bill_reminders",
+    icon: "🧾",
+    title: "Bill Reminders",
+    description: "Reminders for unpaid property taxes, HOA fees, and insurance premiums.",
+    schedule: "Daily · 9:05 AM UTC",
+    iconBg: "bg-orange-50 dark:bg-orange-900/20",
+  },
+  {
+    key: "monthly_report",
+    icon: "📈",
+    title: "Monthly Report",
+    description: "Full financial summary on the 1st: spend vs income, subscriptions, top categories, and budget performance.",
+    schedule: "1st of month · 8:30 AM UTC",
+    iconBg: "bg-violet-50 dark:bg-violet-900/20",
+  },
+  {
+    key: "transaction_alerts",
+    icon: "💳",
+    title: "Transaction Alerts",
+    description: "Instant notification when new transactions are synced to your accounts.",
+    schedule: "After each sync",
+    iconBg: "bg-emerald-50 dark:bg-emerald-900/20",
+  },
+];
+
+const DEFAULT_PREFS: NotificationPreferences = {
+  daily_summary: true,
+  budget_alerts: true,
+  bill_reminders: true,
+  monthly_report: true,
+  transaction_alerts: true,
+};
+
+function NotificationsTab({
+  profile,
+  onSwitchTab,
+}: {
+  profile: UserResponse | null;
+  onSwitchTab: (tab: SettingsTab) => void;
+}) {
+  const [prefs, setPrefs] = useState<NotificationPreferences>(DEFAULT_PREFS);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState<NotifKey | null>(null);
+  const [saved, setSaved] = useState<NotifKey | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getNotifPrefs()
+      .then((p) => { setPrefs(p); setLoaded(true); })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  async function handleToggle(key: NotifKey) {
+    const newVal = !prefs[key];
+    const prev = { ...prefs };
+    setPrefs((p) => ({ ...p, [key]: newVal }));
+    setSaving(key);
+    setError(null);
+    try {
+      await updateNotifPrefs({ ...prefs, [key]: newVal });
+      setSaved(key);
+      setTimeout(() => setSaved(null), 2000);
+    } catch {
+      setPrefs(prev);
+      setError("Failed to save — please try again.");
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  const hasPhone = !!profile?.phone;
+
+  return (
+    <div className="space-y-5">
+      {/* WhatsApp delivery banner */}
+      <div className="flex items-center gap-3 p-3.5 rounded-xl border border-green-200 dark:border-green-800/50 bg-green-50 dark:bg-green-900/10">
+        {/* WhatsApp logo */}
+        <div className="shrink-0 w-9 h-9 rounded-lg bg-green-500 flex items-center justify-center">
+          <svg viewBox="0 0 24 24" className="w-5 h-5 fill-white">
+            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+          </svg>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-green-900 dark:text-green-200">
+            WhatsApp Delivery
+          </p>
+          <p className="text-xs text-green-700 dark:text-green-400 truncate">
+            {hasPhone ? profile!.phone : "No phone number configured"}
+          </p>
+        </div>
+        <span
+          className={`shrink-0 text-xs px-2.5 py-1 rounded-full font-semibold ${
+            hasPhone
+              ? "bg-green-500 text-white"
+              : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+          }`}
+        >
+          {hasPhone ? "Active" : "Not set"}
+        </span>
+        <button
+          type="button"
+          onClick={() => onSwitchTab("profile")}
+          className="shrink-0 text-xs font-medium text-green-700 dark:text-green-400 underline underline-offset-2 hover:text-green-900 dark:hover:text-green-300 transition-colors"
+        >
+          {hasPhone ? "Edit" : "Add phone"}
+        </button>
+      </div>
+
+      {/* Section label */}
+      <div>
+        <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-3">
+          Notification Channels
+        </p>
+
+        {/* Cards */}
+        {!loaded ? (
+          <div className="space-y-3">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                className="h-[76px] rounded-xl bg-gray-100 dark:bg-gray-800 animate-pulse"
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {NOTIF_CARDS.map((card) => {
+              const enabled = prefs[card.key];
+              const isSaving = saving === card.key;
+              const justSaved = saved === card.key;
+              return (
+                <div
+                  key={card.key}
+                  className={`flex items-start gap-3.5 p-4 rounded-xl border transition-colors duration-150 ${
+                    enabled
+                      ? "border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 hover:bg-gray-50/60 dark:hover:bg-gray-800/40"
+                      : "border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/30 opacity-60 hover:opacity-75"
+                  }`}
+                >
+                  {/* Icon */}
+                  <div
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 ${card.iconBg}`}
+                  >
+                    {card.icon}
+                  </div>
+
+                  {/* Text */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                      <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                        {card.title}
+                      </span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 font-mono leading-tight">
+                        {card.schedule}
+                      </span>
+                      {justSaved && (
+                        <span className="text-xs font-medium text-primary-600 dark:text-primary-400">
+                          ✓ Saved
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                      {card.description}
+                    </p>
+                  </div>
+
+                  {/* Toggle */}
+                  <label
+                    className={`shrink-0 mt-0.5 ${isSaving ? "opacity-50 pointer-events-none" : "cursor-pointer"}`}
+                    aria-label={`${card.title} notifications ${enabled ? "on" : "off"}`}
+                  >
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={() => handleToggle(card.key)}
+                        className="sr-only peer"
+                        disabled={isSaving}
+                      />
+                      <div className="w-11 h-6 bg-gray-200 dark:bg-gray-700 rounded-full peer peer-checked:bg-primary-600 transition-colors duration-200" />
+                      <div className="absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-5" />
+                    </div>
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <Alert type="err">{error}</Alert>
+      )}
+
+      {!hasPhone && loaded && (
+        <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/10 px-4 py-3 flex items-start gap-2.5">
+          <span className="text-amber-500 text-base shrink-0 mt-px">⚠</span>
+          <p className="text-xs text-amber-800 dark:text-amber-300">
+            Add a WhatsApp phone number in{" "}
+            <button
+              type="button"
+              onClick={() => onSwitchTab("profile")}
+              className="underline underline-offset-2 font-medium hover:text-amber-900 dark:hover:text-amber-200 transition-colors"
+            >
+              Profile
+            </button>{" "}
+            to start receiving notifications.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main SettingsPanel component ─────────────────────────────────────────────
 export default function SettingsPanel({
   open,
@@ -1122,6 +1372,9 @@ export default function SettingsPanel({
           {activeTab === "household" && <HouseholdTab profile={profile} />}
           {activeTab === "categories" && <CategoriesTab />}
           {activeTab === "preferences" && <PreferencesTab />}
+          {activeTab === "notifications" && (
+            <NotificationsTab profile={profile} onSwitchTab={setActiveTab} />
+          )}
         </div>
       </div>
     </>

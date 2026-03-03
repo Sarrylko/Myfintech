@@ -12,6 +12,7 @@ from app.models.user import User
 from app.schemas.user import (
     HouseholdMemberCreate,
     HouseholdMemberUpdate,
+    NotificationPreferences,
     UserPasswordChange,
     UserProfileUpdate,
     UserResponse,
@@ -74,6 +75,42 @@ async def change_password(
     user.hashed_password = hash_password(payload.new_password)
     user.updated_at = datetime.now(timezone.utc)
     await db.commit()
+
+
+# ─── Notification preferences ─────────────────────────────────────────────────
+
+@router.get("/me/notification-preferences", response_model=NotificationPreferences)
+async def get_notification_prefs(user: User = Depends(get_current_user)):
+    return NotificationPreferences(
+        daily_summary=user.notif_daily_summary,
+        budget_alerts=user.notif_budget_alerts,
+        bill_reminders=user.notif_bill_reminders,
+        monthly_report=user.notif_monthly_report,
+        transaction_alerts=user.notif_transaction_alerts,
+    )
+
+
+@router.patch("/me/notification-preferences", response_model=NotificationPreferences)
+async def update_notification_prefs(
+    payload: NotificationPreferences,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user.notif_daily_summary = payload.daily_summary
+    user.notif_budget_alerts = payload.budget_alerts
+    user.notif_bill_reminders = payload.bill_reminders
+    user.notif_monthly_report = payload.monthly_report
+    user.notif_transaction_alerts = payload.transaction_alerts
+    user.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(user)
+    return NotificationPreferences(
+        daily_summary=user.notif_daily_summary,
+        budget_alerts=user.notif_budget_alerts,
+        bill_reminders=user.notif_bill_reminders,
+        monthly_report=user.notif_monthly_report,
+        transaction_alerts=user.notif_transaction_alerts,
+    )
 
 
 # ─── Household member management ──────────────────────────────────────────────

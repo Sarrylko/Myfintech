@@ -45,6 +45,11 @@ class User(Base):
     city: Mapped[str | None] = mapped_column(String(100))
     state: Mapped[str | None] = mapped_column(String(50))
     zip_code: Mapped[str | None] = mapped_column(String(20))
+    notif_daily_summary: Mapped[bool] = mapped_column(Boolean, default=True)
+    notif_budget_alerts: Mapped[bool] = mapped_column(Boolean, default=True)
+    notif_bill_reminders: Mapped[bool] = mapped_column(Boolean, default=True)
+    notif_monthly_report: Mapped[bool] = mapped_column(Boolean, default=True)
+    notif_transaction_alerts: Mapped[bool] = mapped_column(Boolean, default=True)
     household_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("households.id")
     )

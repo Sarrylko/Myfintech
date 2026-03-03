@@ -51,6 +51,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.services.notifications.check_bill_reminders",
         "schedule": crontab(hour=9, minute=5),
     },
+    "send-monthly-report": {
+        "task": "app.services.notifications.send_monthly_report",
+        "schedule": crontab(hour=8, minute=30, day_of_month=1),  # 1st of month 08:30 UTC
+    },
 }
 
 # Explicitly include task modules so the worker registers them on startup.
