@@ -2183,3 +2183,109 @@ export async function updateBeneficiary(
 export async function deleteBeneficiary(policyId: string, benId: string): Promise<void> {
   return apiFetch<void>(`/api/v1/insurance/${policyId}/beneficiaries/${benId}`, { method: "DELETE" });
 }
+
+// ─── Retirement Planning ────────────────────────────────────────────────────
+
+export interface RetirementProfile {
+  id: string;
+  household_id: string;
+  birth_year: number;
+  retirement_age: number;
+  life_expectancy_age: number;
+  desired_annual_income: string;
+  social_security_estimate: string | null;
+  expected_return_rate: string;
+  inflation_rate: string;
+  annual_contribution: string;
+  include_spouse: boolean;
+  spouse_birth_year: number | null;
+  spouse_retirement_age: number | null;
+  spouse_social_security_estimate: string | null;
+  spouse_annual_contribution: string | null;
+  yearly_income: string | null;
+  spouse_yearly_income: string | null;
+  monthly_essential_expenses: string | null;
+  monthly_non_essential_expenses: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface YearlyProjection {
+  year: number;
+  age: number;
+  projected: number;
+  required: number;
+}
+
+export interface ScenarioProjection {
+  year: number;
+  age: number;
+  optimistic: number;
+  base: number;
+  pessimistic: number;
+  required: number;
+}
+
+export interface IncomeSource {
+  label: string;
+  annual_amount: number;
+  source_type: string;
+}
+
+export interface RetirementProjection {
+  profile: RetirementProfile;
+  current_age: number;
+  years_to_retirement: number;
+  current_retirement_assets: number;
+  total_net_worth: number;
+  retirement_wealth_target: number;
+  projected_wealth_at_retirement: number;
+  pessimistic_wealth_at_retirement: number;
+  optimistic_wealth_at_retirement: number;
+  gap: number;
+  required_additional_annual_saving: number;
+  monthly_saving_needed: number;
+  on_track_pct: number;
+  probability_of_success: number;
+  tax_deferred_balance: number;
+  taxable_investment_balance: number;
+  tax_exempt_balance: number;
+  total_monthly_expenses: number;
+  income_sources: IncomeSource[];
+  yearly_projections: YearlyProjection[];
+  scenario_projections: ScenarioProjection[];
+  insights: string[];
+}
+
+export async function getRetirementProfile(): Promise<RetirementProfile | { has_profile: false }> {
+  return apiFetch<RetirementProfile | { has_profile: false }>("/api/v1/retirement/profile");
+}
+
+export async function upsertRetirementProfile(data: {
+  birth_year: number;
+  retirement_age: number;
+  life_expectancy_age: number;
+  desired_annual_income: number;
+  social_security_estimate?: number | null;
+  expected_return_rate: number;
+  inflation_rate: number;
+  annual_contribution: number;
+  include_spouse?: boolean;
+  spouse_birth_year?: number | null;
+  spouse_retirement_age?: number | null;
+  spouse_social_security_estimate?: number | null;
+  spouse_annual_contribution?: number | null;
+  yearly_income?: number | null;
+  spouse_yearly_income?: number | null;
+  monthly_essential_expenses?: number | null;
+  monthly_non_essential_expenses?: number | null;
+}): Promise<RetirementProfile> {
+  return apiFetch<RetirementProfile>("/api/v1/retirement/profile", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getRetirementProjection(): Promise<RetirementProjection> {
+  return apiFetch<RetirementProjection>("/api/v1/retirement/projection");
+}
