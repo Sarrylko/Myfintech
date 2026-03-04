@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   LineChart,
@@ -568,48 +568,65 @@ export default function Dashboard() {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [snapshots, setSnapshots] = useState<NetWorthSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const fetchSnapshots = async (token: string) => {
+  const fetchSnapshots = async () => {
     const res = await listNetWorthSnapshots(365 * 3).catch(() => []);
     setSnapshots(res);
   };
 
-  useEffect(() => {
+  const fetchAll = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
 
-    async function fetchAll() {
-      const month = today.getMonth() + 1;
-      const year = today.getFullYear();
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year = now.getFullYear();
 
-      const [accRes, budRes, ltRes, txRes, propRes] = await Promise.allSettled([
-        listAccounts(),
-        listBudgets(month, year),
-        listLongTermBudgets(year),
-        listAllTransactions(10),
-        listProperties(),
-      ]);
+    const [accRes, budRes, ltRes, txRes, propRes] = await Promise.allSettled([
+      listAccounts(),
+      listBudgets(month, year),
+      listLongTermBudgets(year),
+      listAllTransactions(10),
+      listProperties(),
+    ]);
 
-      if (accRes.status === "fulfilled") setAccounts(accRes.value);
-      if (budRes.status === "fulfilled") setMonthlyBudgets(budRes.value);
-      if (ltRes.status === "fulfilled") setLongTermBudgets(ltRes.value);
-      if (txRes.status === "fulfilled") setTransactions(txRes.value);
+    if (accRes.status === "fulfilled") setAccounts(accRes.value);
+    if (budRes.status === "fulfilled") setMonthlyBudgets(budRes.value);
+    if (ltRes.status === "fulfilled") setLongTermBudgets(ltRes.value);
+    if (txRes.status === "fulfilled") setTransactions(txRes.value);
 
-      if (propRes.status === "fulfilled") {
-        const props = propRes.value;
-        setProperties(props);
-        const loanResults = await Promise.allSettled(props.map((p) => listLoans(p.id)));
-        setLoans(loanResults.flatMap((r) => r.status === "fulfilled" ? r.value : []));
-      }
-
-      await fetchSnapshots();
-      setLoading(false);
+    if (propRes.status === "fulfilled") {
+      const props = propRes.value;
+      setProperties(props);
+      const loanResults = await Promise.allSettled(props.map((p) => listLoans(p.id)));
+      setLoans(loanResults.flatMap((r) => r.status === "fulfilled" ? r.value : []));
     }
 
-    fetchAll();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    await fetchSnapshots();
+    setLastUpdated(new Date());
+    if (!silent) setLoading(false);
+    else setRefreshing(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Initial load
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Auto-refresh when the tab regains focus (e.g. user returns from accounts/budgets page)
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") fetchAll(true);
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [fetchAll]);
 
   const handleTakeSnapshot = async () => {
     await takeNetWorthSnapshot();
     await fetchSnapshots();
+    setLastUpdated(new Date());
   };
 
   // ── Net worth calculation ──────────────────────────────────────────────────
@@ -686,6 +703,27 @@ export default function Dashboard() {
           <p className="text-sm text-gray-400 mt-0.5">
             {today.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
           </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {lastUpdated && (
+            <span className="text-xs text-gray-400">
+              Updated {lastUpdated.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => fetchAll(true)}
+            disabled={refreshing}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition disabled:opacity-50"
+          >
+            <svg
+              className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
         </div>
       </div>
 

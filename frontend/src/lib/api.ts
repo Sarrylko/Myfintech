@@ -8,7 +8,8 @@ export async function apiFetch<T>(
   const { headers: customHeaders, ...rest } = options;
 
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    // Omit Content-Type for FormData — browser sets it with the correct multipart boundary
+    ...(rest.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
     ...((customHeaders as Record<string, string>) || {}),
   };
 
@@ -1049,6 +1050,111 @@ export async function updateHolding(holdingId: string, data: HoldingUpdate): Pro
 
 export async function deleteHolding(holdingId: string): Promise<void> {
   return apiFetch<void>(`/api/v1/accounts/holdings/${holdingId}`, { method: "DELETE" });
+}
+
+// ─── Investment Transactions ─────────────────────────────────────────────────
+
+export interface InvestmentTransaction {
+  id: string;
+  account_id: string;
+  ticker_symbol: string | null;
+  name: string;
+  type: string;          // buy | sell | dividend | split | transfer_in | transfer_out | other
+  date: string;          // ISO timestamp
+  quantity: string | null;   // Decimal as string
+  price: string | null;
+  amount: string;
+  fees: string | null;
+  notes: string | null;
+  currency_code: string;
+  created_at: string;
+}
+
+export interface InvestmentTransactionCreate {
+  ticker_symbol: string;
+  name: string;
+  type: string;
+  date: string;          // ISO timestamp string
+  quantity?: string | null;
+  price?: string | null;
+  amount: string;
+  fees?: string | null;
+  notes?: string | null;
+  currency_code?: string;
+}
+
+export type InvestmentTransactionUpdate = Partial<InvestmentTransactionCreate>;
+
+export interface TickerRollup {
+  ticker_symbol: string;
+  name: string;
+  net_shares: string;
+  avg_cost_per_share: string | null;
+  total_cost_basis: string | null;
+  total_fees: string;
+  realized_gain: string;
+  transaction_count: number;
+  last_transaction_date: string;
+  transactions: InvestmentTransaction[];
+}
+
+export interface AccountTransactionSummary {
+  account_id: string;
+  positions: TickerRollup[];
+}
+
+export interface CSVImportResult {
+  imported: number;
+  errors: string[];
+}
+
+export async function listInvestmentTransactionRollup(
+  accountId: string
+): Promise<AccountTransactionSummary> {
+  return apiFetch<AccountTransactionSummary>(
+    `/api/v1/accounts/${accountId}/investment-transactions`,
+    {}
+  );
+}
+
+export async function createInvestmentTransaction(
+  accountId: string,
+  data: InvestmentTransactionCreate
+): Promise<InvestmentTransaction> {
+  return apiFetch<InvestmentTransaction>(
+    `/api/v1/accounts/${accountId}/investment-transactions`,
+    { method: "POST", body: JSON.stringify(data) }
+  );
+}
+
+export async function updateInvestmentTransaction(
+  id: string,
+  data: InvestmentTransactionUpdate
+): Promise<InvestmentTransaction> {
+  return apiFetch<InvestmentTransaction>(
+    `/api/v1/investment-transactions/${id}`,
+    { method: "PATCH", body: JSON.stringify(data) }
+  );
+}
+
+export async function deleteInvestmentTransaction(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/investment-transactions/${id}`, { method: "DELETE" });
+}
+
+export async function importInvestmentTransactionsCSV(
+  accountId: string,
+  file: File
+): Promise<CSVImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch<CSVImportResult>(
+    `/api/v1/accounts/${accountId}/investment-transactions/import-csv`,
+    { method: "POST", body: form }
+  );
+}
+
+export function downloadInvestmentCSVTemplate(): void {
+  window.open("/api/v1/investment-transactions/csv-template", "_blank");
 }
 
 // ─── Categorization Rules ───────────────────────────────────────────────────

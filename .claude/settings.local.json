@@ -41,7 +41,8 @@
       "Bash(docker stop fintech-rag-api fintech-qdrant fintech-ollama fintech-openwebui)",
       "Bash(docker rm fintech-rag-api fintech-qdrant fintech-ollama fintech-openwebui)",
       "Bash(docker rm fintech-ollama-init)",
-      "Bash(xargs grep -l \"car\\\\|vehicle\\\\|auto\")"
+      "Bash(xargs grep -l \"car\\\\|vehicle\\\\|auto\")",
+      "Bash(xargs grep -l \"investment\\\\|holding\\\\|position\\\\|brokerage\\\\|ticker\")"
     ]
   }
 }

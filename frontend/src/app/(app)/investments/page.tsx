@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   listAccounts,
   listHouseholdMembers,
@@ -12,6 +12,12 @@ import {
   getRefreshStatus,
   getMarketStatus,
   refreshInvestmentPrices,
+  listInvestmentTransactionRollup,
+  createInvestmentTransaction,
+  updateInvestmentTransaction,
+  deleteInvestmentTransaction,
+  importInvestmentTransactionsCSV,
+  downloadInvestmentCSVTemplate,
   Account,
   Holding,
   HoldingCreate,
@@ -19,6 +25,12 @@ import {
   UserResponse,
   RefreshStatus,
   MarketStatus,
+  InvestmentTransaction,
+  InvestmentTransactionCreate,
+  InvestmentTransactionUpdate,
+  TickerRollup,
+  AccountTransactionSummary,
+  CSVImportResult,
 } from "@/lib/api";
 
 // ─── Subtype classification ───────────────────────────────────────────────────
@@ -397,6 +409,647 @@ function HoldingsTable({
   );
 }
 
+// ─── Transaction type badge colors ───────────────────────────────────────────
+
+const TYPE_BADGE: Record<string, string> = {
+  buy: "bg-green-100 text-green-700",
+  sell: "bg-red-100 text-red-700",
+  dividend: "bg-blue-100 text-blue-700",
+  split: "bg-purple-100 text-purple-700",
+  transfer_in: "bg-teal-100 text-teal-700",
+  transfer_out: "bg-orange-100 text-orange-700",
+  other: "bg-gray-100 text-gray-600",
+};
+
+const TXN_TYPE_OPTIONS = [
+  { value: "buy", label: "Buy" },
+  { value: "sell", label: "Sell" },
+  { value: "dividend", label: "Dividend" },
+  { value: "split", label: "Stock Split" },
+  { value: "transfer_in", label: "Transfer In" },
+  { value: "transfer_out", label: "Transfer Out" },
+  { value: "other", label: "Other" },
+];
+
+// ─── Add / Edit Transaction Modal ────────────────────────────────────────────
+
+function AddTransactionModal({
+  accountId,
+  initial,
+  onClose,
+  onSaved,
+}: {
+  accountId: string;
+  initial: InvestmentTransaction | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    ticker_symbol: initial?.ticker_symbol ?? "",
+    name: initial?.name ?? "",
+    type: initial?.type ?? "buy",
+    date: initial?.date ? initial.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    quantity: initial?.quantity ?? "",
+    price: initial?.price ?? "",
+    amount: initial?.amount ?? "",
+    fees: initial?.fees ?? "",
+    notes: initial?.notes ?? "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [lookingUp, setLookingUp] = useState(false);
+  const tickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Auto-compute amount from qty * price
+  useEffect(() => {
+    const qty = parseFloat(form.quantity || "0");
+    const price = parseFloat(form.price || "0");
+    if (qty > 0 && price > 0) {
+      setForm((p) => ({ ...p, amount: (qty * price).toFixed(2) }));
+    }
+  }, [form.quantity, form.price]);
+
+  function scheduleLookup(ticker: string) {
+    if (tickerTimer.current) clearTimeout(tickerTimer.current);
+    if (!ticker) return;
+    tickerTimer.current = setTimeout(async () => {
+      setLookingUp(true);
+      try {
+        const info = await getTickerInfo(ticker);
+        if (info.found && info.name) {
+          setForm((p) => ({ ...p, name: info.name! }));
+        }
+      } catch {
+        // ignore lookup errors
+      } finally {
+        setLookingUp(false);
+      }
+    }, 600);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.ticker_symbol) { setError("Ticker symbol is required"); return; }
+    if (!form.amount || Number(form.amount) <= 0) { setError("Amount must be greater than 0"); return; }
+    setSaving(true); setError("");
+    try {
+      const payload: InvestmentTransactionCreate = {
+        ticker_symbol: form.ticker_symbol.toUpperCase(),
+        name: form.name || form.ticker_symbol.toUpperCase(),
+        type: form.type,
+        date: new Date(form.date + "T00:00:00").toISOString(),
+        quantity: form.quantity || null,
+        price: form.price || null,
+        amount: form.amount,
+        fees: form.fees || null,
+        notes: form.notes || null,
+      };
+      if (initial) {
+        await updateInvestmentTransaction(initial.id, payload as InvestmentTransactionUpdate);
+      } else {
+        await createInvestmentTransaction(accountId, payload);
+      }
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const showQty = !["dividend", "other"].includes(form.type);
+  const inp = "border border-gray-300 rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500";
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-900">{initial ? "Edit Transaction" : "Add Transaction"}</h3>
+          <button type="button" aria-label="Close" onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="px-5 py-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Ticker Symbol *</label>
+              <input
+                className={inp}
+                placeholder="AAPL"
+                value={form.ticker_symbol}
+                onChange={(e) => {
+                  const val = e.target.value.toUpperCase();
+                  setForm((p) => ({ ...p, ticker_symbol: val }));
+                  scheduleLookup(val);
+                }}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Security Name</label>
+              <input
+                className={inp}
+                placeholder={lookingUp ? "Looking up…" : "Auto-filled from ticker"}
+                value={form.name}
+                onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="txn-type" className="block text-xs font-medium text-gray-600 mb-1">Transaction Type *</label>
+              <select id="txn-type" className={inp} value={form.type} onChange={(e) => setForm((p) => ({ ...p, type: e.target.value }))}>
+                {TXN_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="txn-date" className="block text-xs font-medium text-gray-600 mb-1">Date</label>
+              <input id="txn-date" aria-label="Transaction date" className={inp} type="date" value={form.date} onChange={(e) => setForm((p) => ({ ...p, date: e.target.value }))} />
+            </div>
+          </div>
+
+          {showQty && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Quantity (Shares)</label>
+                <input className={`${inp} text-right`} type="number" step="any" min="0" placeholder="10" value={form.quantity} onChange={(e) => setForm((p) => ({ ...p, quantity: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Price per Share ($)</label>
+                <input className={`${inp} text-right`} type="number" step="any" min="0" placeholder="150.00" value={form.price} onChange={(e) => setForm((p) => ({ ...p, price: e.target.value }))} />
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Total Amount ($) *</label>
+              <input className={`${inp} text-right`} type="number" step="any" min="0" placeholder="1500.00" value={form.amount} onChange={(e) => setForm((p) => ({ ...p, amount: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Fees / Commission ($)</label>
+              <input className={`${inp} text-right`} type="number" step="any" min="0" placeholder="0.00" value={form.fees} onChange={(e) => setForm((p) => ({ ...p, fees: e.target.value }))} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+            <textarea className={inp} rows={2} placeholder="Optional notes" value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
+          </div>
+
+          {error && <p className="text-xs text-red-600">{error}</p>}
+
+          <div className="flex gap-2 pt-1">
+            <button type="submit" disabled={saving} className="flex-1 bg-blue-600 text-white text-sm font-medium py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50">
+              {saving ? "Saving…" : initial ? "Save Changes" : "Add Transaction"}
+            </button>
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 text-sm text-gray-700 rounded-lg hover:bg-gray-50">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── CSV Import Modal ─────────────────────────────────────────────────────────
+
+const CSV_PREVIEW_COLS = ["ticker_symbol", "type", "date", "quantity", "price", "amount", "fees"];
+
+function CSVImportModal({
+  accountId,
+  onClose,
+  onImported,
+}: {
+  accountId: string;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const [step, setStep] = useState<"upload" | "preview">("upload");
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<Record<string, string>[]>([]);
+  const [previewErrors, setPreviewErrors] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState<CSVImportResult | null>(null);
+  const [parseError, setParseError] = useState("");
+
+  function parseCSVPreview(f: File) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const lines = text.split("\n").filter((l) => l.trim());
+      if (lines.length < 2) { setParseError("CSV appears empty"); return; }
+      const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+      const required = ["ticker_symbol", "type", "date", "amount"];
+      const missing = required.filter((r) => !headers.includes(r));
+      if (missing.length > 0) { setParseError(`Missing required columns: ${missing.join(", ")}`); return; }
+      const errors: string[] = [];
+      const rows: Record<string, string>[] = [];
+      for (let i = 1; i < Math.min(lines.length, 6); i++) {
+        const vals = lines[i].split(",");
+        const row: Record<string, string> = {};
+        headers.forEach((h, idx) => { row[h] = (vals[idx] ?? "").trim(); });
+        rows.push(row);
+        if (!row.ticker_symbol) errors.push(`Row ${i + 1}: missing ticker_symbol`);
+        if (!row.amount) errors.push(`Row ${i + 1}: missing amount`);
+      }
+      setPreview(rows);
+      setPreviewErrors(errors);
+      setStep("preview");
+    };
+    reader.readAsText(f);
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setParseError("");
+    parseCSVPreview(f);
+  }
+
+  async function handleImport() {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const res = await importInvestmentTransactionsCSV(accountId, file);
+      setResult(res);
+      if (res.imported > 0) onImported();
+    } catch (e) {
+      setParseError(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-900">Import Transactions from CSV</h3>
+          <button type="button" aria-label="Close" onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          {result ? (
+            <div>
+              <div className={`rounded-lg p-4 ${result.imported > 0 ? "bg-green-50 border border-green-200" : "bg-amber-50 border border-amber-200"}`}>
+                <p className={`font-medium text-sm ${result.imported > 0 ? "text-green-800" : "text-amber-800"}`}>
+                  {result.imported > 0 ? `Successfully imported ${result.imported} transaction${result.imported !== 1 ? "s" : ""}` : "No transactions imported"}
+                </p>
+              </div>
+              {result.errors.length > 0 && (
+                <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3">
+                  <p className="text-xs font-medium text-red-700 mb-1">{result.errors.length} row{result.errors.length !== 1 ? "s" : ""} had errors:</p>
+                  <ul className="text-xs text-red-600 space-y-0.5 max-h-32 overflow-y-auto">
+                    {result.errors.map((err, i) => <li key={i}>• {err}</li>)}
+                  </ul>
+                </div>
+              )}
+              <button type="button" onClick={onClose} className="mt-4 w-full bg-gray-900 text-white text-sm font-medium py-2 rounded-lg hover:bg-gray-800">Close</button>
+            </div>
+          ) : step === "upload" ? (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">Download the template to see the required format, then upload your filled CSV.</p>
+              <button
+                type="button"
+                onClick={() => downloadInvestmentCSVTemplate()}
+                className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 font-medium"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Download Template
+              </button>
+              <div className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-blue-300 transition">
+                <input type="file" accept=".csv" onChange={handleFileChange} className="hidden" id="csv-upload" />
+                <label htmlFor="csv-upload" className="cursor-pointer">
+                  <svg className="w-8 h-8 text-gray-400 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                  <p className="text-sm font-medium text-gray-700">Click to select CSV file</p>
+                  <p className="text-xs text-gray-400 mt-1">or drag and drop</p>
+                </label>
+              </div>
+              {parseError && <p className="text-xs text-red-600">{parseError}</p>}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-700">Preview (first 5 rows of {file?.name})</p>
+                <button type="button" onClick={() => { setStep("upload"); setPreview([]); setPreviewErrors([]); }} className="text-xs text-blue-600 hover:text-blue-800">Change file</button>
+              </div>
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-gray-50 text-gray-500 uppercase tracking-wide">
+                      {CSV_PREVIEW_COLS.map((c) => <th key={c} className="px-3 py-2 text-left font-medium">{c.replace("_", " ")}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.map((row, i) => (
+                      <tr key={i} className="border-t border-gray-100">
+                        {CSV_PREVIEW_COLS.map((c) => <td key={c} className="px-3 py-1.5 text-gray-700">{c === "date" && !row[c] ? <span className="text-gray-400 italic">today</span> : (row[c] || "—")}</td>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {previewErrors.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <p className="text-xs font-medium text-amber-700 mb-1">Validation warnings (these rows will be skipped):</p>
+                  <ul className="text-xs text-amber-600 space-y-0.5">
+                    {previewErrors.map((err, i) => <li key={i}>• {err}</li>)}
+                  </ul>
+                </div>
+              )}
+              {parseError && <p className="text-xs text-red-600">{parseError}</p>}
+              <div className="flex gap-2">
+                <button type="button" onClick={handleImport} disabled={importing} className="flex-1 bg-blue-600 text-white text-sm font-medium py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                  {importing ? "Importing…" : "Import Transactions"}
+                </button>
+                <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 text-sm text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Transaction Activity View ────────────────────────────────────────────────
+
+function TransactionActivityView({
+  accountId,
+  holdings,
+  onSyncedToPositions,
+}: {
+  accountId: string;
+  holdings: Holding[];
+  onSyncedToPositions?: () => void;
+}) {
+  const [summary, setSummary] = useState<AccountTransactionSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set());
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingTxn, setEditingTxn] = useState<InvestmentTransaction | null>(null);
+  const [showCSVModal, setShowCSVModal] = useState(false);
+  const [priceMap, setPriceMap] = useState<Record<string, number | null>>({});
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState("");
+
+  const fetchRollup = useCallback(() => {
+    setLoading(true);
+    listInvestmentTransactionRollup(accountId)
+      .then(setSummary)
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load transactions"))
+      .finally(() => setLoading(false));
+  }, [accountId]);
+
+  useEffect(() => { fetchRollup(); }, [fetchRollup]);
+
+  // Build ticker → current_value map from synced holdings
+  const holdingsValueMap: Record<string, number> = {};
+  for (const h of holdings) {
+    if (h.ticker_symbol && h.current_value) {
+      holdingsValueMap[h.ticker_symbol.toUpperCase()] = Number(h.current_value);
+    }
+  }
+
+  // Fetch live prices for tickers not already in holdings
+  useEffect(() => {
+    if (!summary || summary.positions.length === 0) return;
+    const tickers = summary.positions
+      .map((p) => p.ticker_symbol)
+      .filter((t) => holdingsValueMap[t] === undefined);
+    if (tickers.length === 0) return;
+    Promise.all(
+      tickers.map((ticker) =>
+        getTickerInfo(ticker)
+          .then((info) => ({ ticker, price: info.last_price }))
+          .catch(() => ({ ticker, price: null }))
+      )
+    ).then((results) => {
+      const map: Record<string, number | null> = {};
+      for (const { ticker, price } of results) map[ticker] = price;
+      setPriceMap(map);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary]);
+
+  async function handleSyncToPositions() {
+    if (!summary) return;
+    const toSync = summary.positions.filter((p) => Number(p.net_shares) > 0);
+    if (toSync.length === 0) return;
+    setSyncing(true);
+    try {
+      await Promise.all(
+        toSync.map((pos) => {
+          const netShares = Number(pos.net_shares);
+          const livePrice = priceMap[pos.ticker_symbol] ?? null;
+          const currentValue = livePrice !== null ? (livePrice * netShares).toFixed(2) : null;
+          return createHolding(accountId, {
+            ticker_symbol: pos.ticker_symbol,
+            name: pos.name,
+            quantity: String(pos.net_shares),
+            cost_basis: pos.total_cost_basis ? String(pos.total_cost_basis) : null,
+            current_value: currentValue,
+          });
+        })
+      );
+      onSyncedToPositions?.();
+    } catch (e) {
+      setSyncError(e instanceof Error ? e.message : "Sync failed — check console");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function handleDeleteTxn(txnId: string) {
+    if (!window.confirm("Delete this transaction?")) return;
+    try {
+      await deleteInvestmentTransaction(txnId);
+      fetchRollup();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Delete failed");
+    }
+  }
+
+  function toggleTicker(ticker: string) {
+    setExpandedTickers((prev) => {
+      const next = new Set(prev);
+      if (next.has(ticker)) next.delete(ticker); else next.add(ticker);
+      return next;
+    });
+  }
+
+  if (loading) return <div className="px-5 py-6 text-center text-sm text-gray-400">Loading activity…</div>;
+  if (error) return <div className="px-5 py-4 text-sm text-red-600">{error}</div>;
+
+  const positions = summary?.positions ?? [];
+
+  return (
+    <div>
+      <div className="px-4 py-2.5 flex items-center justify-between border-b border-gray-100">
+        <p className="text-xs text-gray-500">{positions.length} position{positions.length !== 1 ? "s" : ""} with transaction history</p>
+        <div className="flex gap-2">
+          {positions.length > 0 && onSyncedToPositions && (
+            <button
+              type="button"
+              onClick={handleSyncToPositions}
+              disabled={syncing}
+              className="inline-flex items-center gap-1 text-xs text-emerald-700 hover:text-emerald-900 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 rounded-lg px-2.5 py-1.5 transition disabled:opacity-50"
+              title="Create holdings in Positions tab from your transaction rollup"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              {syncing ? "Syncing…" : "Sync to Positions"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowCSVModal(true)}
+            className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 border border-gray-200 rounded-lg px-2.5 py-1.5 hover:bg-gray-50 transition"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+            Import CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => { setEditingTxn(null); setShowAddModal(true); }}
+            className="inline-flex items-center gap-1 text-xs bg-blue-600 text-white rounded-lg px-2.5 py-1.5 hover:bg-blue-700 transition"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+            Add Transaction
+          </button>
+        </div>
+      </div>
+
+      {syncError && (
+        <div className="mx-4 mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          Sync failed: {syncError}
+        </div>
+      )}
+
+      {positions.length === 0 ? (
+        <div className="px-5 py-8 text-center">
+          <p className="text-sm font-medium text-gray-500 mb-1">No transactions yet</p>
+          <p className="text-xs text-gray-400">Add your first transaction or import from CSV</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                <th className="w-8 px-3 py-2" aria-label="Expand" />
+                <th className="px-3 py-2 text-left font-medium">Ticker</th>
+                <th className="px-3 py-2 text-left font-medium">Name</th>
+                <th className="px-3 py-2 text-right font-medium">Shares</th>
+                <th className="px-3 py-2 text-right font-medium">Avg Cost</th>
+                <th className="px-3 py-2 text-right font-medium">Cost Basis</th>
+                <th className="px-3 py-2 text-right font-medium">Current Val</th>
+                <th className="px-3 py-2 text-right font-medium">Unrealized G/L</th>
+                <th className="px-3 py-2 text-right font-medium">Txns</th>
+                <th className="px-3 py-2 text-right font-medium">Last Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {positions.map((pos) => {
+                const holdingVal = holdingsValueMap[pos.ticker_symbol] ?? null;
+                const livePrice = priceMap[pos.ticker_symbol] ?? null;
+                const netShares = Number(pos.net_shares);
+                const currentVal = holdingVal ?? (livePrice !== null && netShares > 0 ? livePrice * netShares : null);
+                const costBasis = pos.total_cost_basis ? Number(pos.total_cost_basis) : null;
+                const unrealized = currentVal !== null && costBasis !== null ? currentVal - costBasis : null;
+                const unrealizedPct = costBasis && costBasis > 0 && unrealized !== null ? (unrealized / costBasis) * 100 : null;
+                const isExpanded = expandedTickers.has(pos.ticker_symbol);
+                return (
+                  <React.Fragment key={pos.ticker_symbol}>
+                    <tr
+                      className="border-t border-gray-100 hover:bg-gray-50 cursor-pointer"
+                      onClick={() => toggleTicker(pos.ticker_symbol)}
+                    >
+                      <td className="px-3 py-2.5 text-center text-gray-400">
+                        <svg className={`w-3.5 h-3.5 transition-transform inline ${isExpanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                      </td>
+                      <td className="px-3 py-2.5 font-mono font-semibold text-blue-600">
+                        <a href={`https://finance.yahoo.com/quote/${pos.ticker_symbol}`} target="_blank" rel="noopener noreferrer" className="hover:underline" onClick={(e) => e.stopPropagation()}>
+                          {pos.ticker_symbol}
+                        </a>
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-700 max-w-[140px] truncate">{pos.name}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{fmtQty(pos.net_shares)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{pos.avg_cost_per_share ? fmt(pos.avg_cost_per_share, 2) : "—"}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{costBasis !== null ? fmt(costBasis, 2) : "—"}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-gray-900">{currentVal !== null ? fmt(currentVal, 2) : "—"}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        {unrealized !== null ? (
+                          <span className={unrealized >= 0 ? "text-green-600" : "text-red-600"}>
+                            {unrealized >= 0 ? "+" : ""}{fmt(unrealized, 2)}
+                            {unrealizedPct !== null && (
+                              <span className="ml-1 text-xs opacity-75">({unrealizedPct >= 0 ? "+" : ""}{unrealizedPct.toFixed(1)}%)</span>
+                            )}
+                          </span>
+                        ) : <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="px-3 py-2.5 text-right text-gray-500 tabular-nums">{pos.transaction_count}</td>
+                      <td className="px-3 py-2.5 text-right text-gray-400 text-xs">
+                        {new Date(pos.last_transaction_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })}
+                      </td>
+                    </tr>
+                    {isExpanded && pos.transactions.map((txn) => (
+                      <tr key={txn.id} className="border-t border-gray-50 bg-gray-50/60 text-xs">
+                        <td className="px-3 py-1.5" />
+                        <td className="px-3 py-1.5" colSpan={2}>
+                          <span className={`inline-block px-1.5 py-0.5 rounded-full text-xs font-medium ${TYPE_BADGE[txn.type] ?? "bg-gray-100 text-gray-600"}`}>
+                            {txn.type.replace("_", " ").toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 text-right text-gray-600 tabular-nums">{txn.quantity ? fmtQty(txn.quantity) : "—"}</td>
+                        <td className="px-3 py-1.5 text-right text-gray-500 tabular-nums">{txn.price ? fmt(txn.price, 2) : "—"}</td>
+                        <td className="px-3 py-1.5 text-right font-medium text-gray-700 tabular-nums">{fmt(txn.amount, 2)}</td>
+                        <td className="px-3 py-1.5 text-right text-gray-400 tabular-nums">{txn.fees ? fmt(txn.fees, 2) : "—"}</td>
+                        <td className="px-3 py-1.5 text-right text-gray-400 truncate max-w-[120px]" colSpan={2}>{txn.notes || "—"}</td>
+                        <td className="px-3 py-1.5 text-right">
+                          <div className="flex items-center gap-1 justify-end">
+                            <span className="text-gray-400 mr-1">{new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })}</span>
+                            <button type="button" aria-label="Edit transaction" onClick={(e) => { e.stopPropagation(); setEditingTxn(txn); setShowAddModal(true); }} className="p-0.5 text-gray-400 hover:text-blue-600 rounded">
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-2.828 0L9 15v-2z" /></svg>
+                            </button>
+                            <button type="button" aria-label="Delete transaction" onClick={(e) => { e.stopPropagation(); handleDeleteTxn(txn.id); }} className="p-0.5 text-gray-400 hover:text-red-600 rounded">
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showAddModal && (
+        <AddTransactionModal
+          accountId={accountId}
+          initial={editingTxn}
+          onClose={() => { setShowAddModal(false); setEditingTxn(null); }}
+          onSaved={fetchRollup}
+        />
+      )}
+      {showCSVModal && (
+        <CSVImportModal
+          accountId={accountId}
+          onClose={() => setShowCSVModal(false)}
+          onImported={fetchRollup}
+        />
+      )}
+    </div>
+  );
+}
+
 // ─── Account Row ─────────────────────────────────────────────────────────────
 
 function AccountRow({
@@ -410,9 +1063,11 @@ function AccountRow({
   holdingsLoading: boolean;
   onHoldingChanged: (accountId: string) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<"positions" | "activity">("positions");
   return (
     <div className="border-b border-gray-50 last:border-0">
       <button
+        type="button"
         className="w-full flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition text-left"
         onClick={onToggle}
       >
@@ -452,13 +1107,41 @@ function AccountRow({
 
       {expanded && (
         <div className="border-t border-gray-100 bg-gray-50/50">
-          <HoldingsTable
-            holdings={holdings}
-            loading={holdingsLoading}
-            isManual={account.is_manual}
-            accountId={account.id}
-            onChanged={() => onHoldingChanged(account.id)}
-          />
+          {/* Positions / Activity tab toggle */}
+          <div className="px-4 pt-2.5 pb-0 flex gap-1 border-b border-gray-100">
+            <button
+              type="button"
+              className={`px-3 py-1.5 text-xs font-medium rounded-t-lg transition ${activeTab === "positions" ? "bg-white border border-b-white border-gray-200 text-blue-600 -mb-px" : "text-gray-500 hover:text-gray-700"}`}
+              onClick={() => setActiveTab("positions")}
+            >
+              Positions
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-1.5 text-xs font-medium rounded-t-lg transition ${activeTab === "activity" ? "bg-white border border-b-white border-gray-200 text-blue-600 -mb-px" : "text-gray-500 hover:text-gray-700"}`}
+              onClick={() => setActiveTab("activity")}
+            >
+              Activity
+            </button>
+          </div>
+          {activeTab === "positions" ? (
+            <HoldingsTable
+              holdings={holdings}
+              loading={holdingsLoading}
+              isManual={account.is_manual}
+              accountId={account.id}
+              onChanged={() => onHoldingChanged(account.id)}
+            />
+          ) : (
+            <TransactionActivityView
+              accountId={account.id}
+              holdings={holdings}
+              onSyncedToPositions={() => {
+                onHoldingChanged(account.id);
+                setActiveTab("positions");
+              }}
+            />
+          )}
         </div>
       )}
     </div>
@@ -711,6 +1394,7 @@ export default function InvestmentsPage() {
 
         {/* Refresh Now button */}
         <button
+          type="button"
           onClick={handleRefreshNow}
           disabled={refreshing}
           className="inline-flex items-center gap-1.5 bg-blue-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"

@@ -57,6 +57,8 @@ class InvestmentTransaction(Base):
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
     price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
     date: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    fees: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    currency_code: Mapped[str] = mapped_column(String(3), default="USD")
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
