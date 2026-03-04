@@ -31,6 +31,7 @@ from app.models.budget import Budget
 from app.models.networth import NetWorthSnapshot
 from app.models.property import Property
 from app.models.property_cost_status import PropertyCostStatus
+from app.models.snaptrade import SnapTradeConnection  # noqa: F401 — ensures Account mapper resolves this relationship
 from app.models.user import Household, User
 from app.services.whatsapp import send_whatsapp_bulk
 from app.worker import celery_app

@@ -5,6 +5,9 @@ const config: Config = {
   darkMode: "class",
   theme: {
     extend: {
+      fontFamily: {
+        sans: ["var(--font-jakarta)", "ui-sans-serif", "system-ui", "sans-serif"],
+      },
       colors: {
         primary: {
           50: "#f0fdf4",
@@ -17,6 +20,12 @@ const config: Config = {
           700: "#15803d",
           800: "#166534",
           900: "#14532d",
+        },
+        sidebar: {
+          DEFAULT: "#111827",
+          hover: "#1f2937",
+          active: "#1f2937",
+          border: "#1f2937",
         },
       },
     },

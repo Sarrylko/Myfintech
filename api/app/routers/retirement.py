@@ -34,7 +34,7 @@ TAX_DEFERRED_SUBTYPES = {
     "sep ira", "simple ira", "pension", "profit sharing plan", "retirement",
 }
 TAX_EXEMPT_SUBTYPES = {
-    "roth 401k", "roth ira", "non-taxable brokerage account",
+    "roth", "roth 401k", "roth ira", "non-taxable brokerage account",
 }
 RETIREMENT_SUBTYPES = TAX_DEFERRED_SUBTYPES | TAX_EXEMPT_SUBTYPES
 

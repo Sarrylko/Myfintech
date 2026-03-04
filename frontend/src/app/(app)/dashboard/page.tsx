@@ -14,6 +14,7 @@ import {
   CartesianGrid,
   ResponsiveContainer,
 } from "recharts";
+import { RefreshCw } from "lucide-react";
 import {
   listAccounts,
   listBudgets,
@@ -30,6 +31,8 @@ import {
   Loan,
   NetWorthSnapshot,
 } from "@/lib/api";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Card } from "@/components/ui/Card";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -117,14 +120,14 @@ function NetWorthCard({
   icon: React.ReactNode;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+    <Card>
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-gray-400">{icon}</span>
-        <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{label}</p>
+        <span className="text-gray-400 dark:text-gray-500">{icon}</span>
+        <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">{label}</p>
       </div>
-      <p className={`text-2xl font-bold ${color}`}>{fmt(value)}</p>
+      <p className={`text-2xl font-bold ${color} dark:text-white`}>{fmt(value)}</p>
       {subtext && <p className="text-xs text-gray-400 mt-1">{subtext}</p>}
-    </div>
+    </Card>
   );
 }
 
@@ -492,11 +495,11 @@ function FinancialHistorySection({
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-6">
+    <Card className="mb-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div>
-          <h3 className="font-semibold text-gray-900">Financial History</h3>
+          <h3 className="font-semibold text-gray-900 dark:text-white">Financial History</h3>
           <p className="text-xs text-gray-400">Daily snapshots of your key metrics</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -592,7 +595,7 @@ function FinancialHistorySection({
           </LineChart>
         </ResponsiveContainer>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -634,12 +637,12 @@ function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
   };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col h-full">
+    <Card className="flex flex-col h-full">
       {/* Header row */}
       <div className="flex items-start justify-between mb-1">
         <div>
           <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Current Spend</p>
-          <p className="text-3xl font-semibold text-gray-900 tabular-nums">
+          <p className="text-3xl font-semibold text-gray-900 dark:text-white tabular-nums">
             {fmtCurrency(thisMonthSpend)}
           </p>
           {thisMonthSpend === 0 && (
@@ -729,7 +732,7 @@ function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
           <span className="text-xs text-gray-500">{lastMonthName}</span>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -808,10 +811,10 @@ function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
   ];
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col h-full">
+    <Card padding="none" className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-gray-50">
-        <h3 className="font-semibold text-gray-900">Accounts</h3>
+      <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-gray-100 dark:border-slate-700">
+        <h3 className="font-semibold text-gray-900 dark:text-white">Accounts</h3>
         <div className="flex items-center gap-2 text-xs text-gray-400">
           {lastUpdated && <span>{timeAgo(lastUpdated)}</span>}
           {lastUpdated && <span className="text-gray-200">|</span>}
@@ -880,7 +883,7 @@ function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
           </div>
         ))}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -1023,35 +1026,28 @@ export default function Dashboard() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
-          <p className="text-sm text-gray-400 mt-0.5">
-            {today.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {lastUpdated && (
-            <span className="text-xs text-gray-400">
-              Updated {lastUpdated.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => fetchAll(true)}
-            disabled={refreshing}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition disabled:opacity-50"
-          >
-            <svg
-              className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
-              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+      <PageHeader
+        title="Dashboard"
+        subtitle={today.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+        action={
+          <div className="flex items-center gap-3">
+            {lastUpdated && (
+              <span className="text-xs text-gray-400 hidden sm:block">
+                Updated {lastUpdated.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => fetchAll(true)}
+              disabled={refreshing}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800 transition disabled:opacity-50"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </button>
-        </div>
-      </div>
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+        }
+      />
 
       {/* Hero row — Current Spend + Accounts */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-6">
@@ -1114,57 +1110,57 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
         {/* Monthly Budget Status */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+        <Card>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h3 className="font-semibold text-gray-900">{monthName} Budgets</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-white">{monthName} Budgets</h3>
               <p className="text-xs text-gray-400">Monthly spending progress</p>
             </div>
-            <Link href="/budgets" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+            <Link href="/budgets" className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium">
               View all →
             </Link>
           </div>
           <MonthlyBudgetSection budgets={monthlyBudgets} />
-        </div>
+        </Card>
 
         {/* Long-term Budgets */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+        <Card>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h3 className="font-semibold text-gray-900">Long-term Budgets</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-white">Long-term Budgets</h3>
               <p className="text-xs text-gray-400">Annual, quarterly & custom</p>
             </div>
-            <Link href="/budgets" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+            <Link href="/budgets" className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium">
               View all →
             </Link>
           </div>
           <LongTermBudgetSection budgets={longTermBudgets} />
-        </div>
+        </Card>
 
         {/* Recent Transactions */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+        <Card>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h3 className="font-semibold text-gray-900">Recent Transactions</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-white">Recent Transactions</h3>
               <p className="text-xs text-gray-400">Latest activity</p>
             </div>
-            <Link href="/transactions" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+            <Link href="/transactions" className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium">
               View all →
             </Link>
           </div>
           <RecentTransactionsSection transactions={transactions} />
-        </div>
+        </Card>
 
         {/* Liabilities */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+        <Card>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h3 className="font-semibold text-gray-900">Liabilities</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-white">Liabilities</h3>
               <p className="text-xs text-gray-400">Credit cards & mortgages</p>
             </div>
             <div className="text-right">
               <p className="text-sm font-bold text-red-600">{fmt(totalLiabilities)}</p>
-              <Link href="/accounts" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+              <Link href="/accounts" className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium">
                 Manage →
               </Link>
             </div>
@@ -1174,11 +1170,11 @@ export default function Dashboard() {
             loans={loans}
             properties={properties}
           />
-        </div>
+        </Card>
 
         {/* Quick Links — full width */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 lg:col-span-2">
-          <h3 className="font-semibold text-gray-900 mb-4">Quick Links</h3>
+        <Card className="lg:col-span-2">
+          <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Quick Links</h3>
           <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
             {[
               { href: "/accounts", label: "Accounts", desc: `${visibleAccounts.length} connected`, emoji: "🏦" },
@@ -1201,7 +1197,7 @@ export default function Dashboard() {
               </Link>
             ))}
           </div>
-        </div>
+        </Card>
 
       </div>
     </div>
