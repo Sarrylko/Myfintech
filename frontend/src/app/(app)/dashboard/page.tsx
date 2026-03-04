@@ -5,6 +5,8 @@ import Link from "next/link";
 import {
   LineChart,
   Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   Tooltip,
@@ -59,6 +61,44 @@ function formatBudgetPeriodShort(b: BudgetWithActual): string {
     return `${fmtDate(b.start_date)} – ${fmtDate(b.end_date)}`;
   }
   return `${MONTH_NAMES[(b.month ?? 1) - 1]} ${b.year}`;
+}
+
+// ─── Spend timeline helper ────────────────────────────────────────────────────
+
+function buildSpendTimeline(transactions: Transaction[]) {
+  const now = new Date();
+  const thisYear = now.getFullYear(), thisMonth = now.getMonth();
+  const lastMonthDate = new Date(thisYear, thisMonth - 1, 1);
+  const lastYear = lastMonthDate.getFullYear(), lastMonth = lastMonthDate.getMonth();
+  const daysInThis = new Date(thisYear, thisMonth + 1, 0).getDate();
+  const daysInLast = new Date(lastYear, lastMonth + 1, 0).getDate();
+
+  const thisMap: Record<number, number> = {};
+  const lastMap: Record<number, number> = {};
+
+  for (const t of transactions) {
+    const amt = parseFloat(t.amount);
+    if (amt <= 0 || t.is_ignored || t.pending) continue;
+    const d = new Date(t.date);
+    if (d.getFullYear() === thisYear && d.getMonth() === thisMonth)
+      thisMap[d.getDate()] = (thisMap[d.getDate()] || 0) + amt;
+    if (d.getFullYear() === lastYear && d.getMonth() === lastMonth)
+      lastMap[d.getDate()] = (lastMap[d.getDate()] || 0) + amt;
+  }
+
+  const maxDays = Math.max(daysInThis, daysInLast);
+  const todayDay = now.getDate();
+  let cumThis = 0, cumLast = 0;
+  return Array.from({ length: maxDays }, (_, i) => {
+    const day = i + 1;
+    cumThis += thisMap[day] || 0;
+    cumLast += lastMap[day] || 0;
+    return {
+      day,
+      thisMonth: day <= todayDay ? parseFloat(cumThis.toFixed(2)) : null,
+      lastMonth: day <= daysInLast ? parseFloat(cumLast.toFixed(2)) : null,
+    };
+  });
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -558,6 +598,292 @@ function FinancialHistorySection({
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
+// ─── Current Spend Chart ──────────────────────────────────────────────────────
+
+function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
+  const now = new Date();
+  const data = buildSpendTimeline(transactions);
+  const thisMonthSpend = data[data.length - 1]?.thisMonth ?? 0;
+  const lastMonthByToday = data[now.getDate() - 1]?.lastMonth ?? 0;
+  const diff = thisMonthSpend - lastMonthByToday;
+  const monthName = now.toLocaleString("en-US", { month: "long" });
+  const lastMonthName = new Date(now.getFullYear(), now.getMonth() - 1, 1).toLocaleString("en-US", { month: "long" });
+
+  const fmtCurrency = (v: number) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Math.abs(v));
+
+  const CustomTooltip = ({ active, payload, label }: {
+    active?: boolean; payload?: { value: number | null; name: string; color: string }[]; label?: number;
+  }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="bg-white border border-gray-100 rounded-lg shadow-lg px-3 py-2 text-xs">
+        <p className="text-gray-500 mb-1">Day {label}</p>
+        {payload.map((p) => p.value != null && (
+          <p key={p.name} className={`font-medium ${p.name === "thisMonth" ? "text-blue-500" : "text-slate-400"}`}>
+            {p.name === "thisMonth" ? monthName : lastMonthName}: {fmtCurrency(p.value)}
+          </p>
+        ))}
+        {payload[0]?.value != null && payload[1]?.value != null && (
+          <p className="text-gray-400 mt-1 border-t border-gray-100 pt-1">
+            Δ {fmtCurrency(payload[0].value - payload[1].value)}
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col h-full">
+      {/* Header row */}
+      <div className="flex items-start justify-between mb-1">
+        <div>
+          <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Current Spend</p>
+          <p className="text-3xl font-semibold text-gray-900 tabular-nums">
+            {fmtCurrency(thisMonthSpend)}
+          </p>
+          {thisMonthSpend === 0 && (
+            <p className="text-xs text-gray-400 mt-1">No transactions recorded for {monthName} yet</p>
+          )}
+        </div>
+        {thisMonthSpend > 0 && diff !== 0 && lastMonthByToday > 0 && (
+          <div className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-full ${
+            diff > 0 ? "bg-amber-50 text-amber-700" : "bg-green-50 text-green-700"
+          }`}>
+            <span>{diff > 0 ? "▲" : "▼"}</span>
+            <span>{fmtCurrency(Math.abs(diff))} {diff > 0 ? "more" : "less"} than {lastMonthName}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Chart */}
+      <div className="relative flex-1 min-h-0 mt-4 h-40">
+        {thisMonthSpend === 0 && (
+          <div className="absolute inset-0 flex items-end justify-center pb-8 pointer-events-none z-10">
+            <p className="text-xs text-gray-300 bg-white/90 px-2 py-1 rounded">
+              Sync accounts to see {monthName} spend
+            </p>
+          </div>
+        )}
+        {data.every((d) => !d.thisMonth && !d.lastMonth) ? (
+          <div className="flex items-center justify-center h-full text-xs text-gray-400">
+            No transaction data for this period
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="gradThis" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15} />
+                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="gradLast" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.08} />
+                  <stop offset="95%" stopColor="#94a3b8" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <XAxis
+                dataKey="day"
+                tick={{ fontSize: 10, fill: "#9ca3af" }}
+                tickLine={false}
+                axisLine={false}
+                ticks={[1, 8, 16, 24]}
+                tickFormatter={(d) => `${d}`}
+              />
+              <YAxis hide domain={["auto", "auto"]} />
+              <Tooltip content={<CustomTooltip />} cursor={{ stroke: "#e5e7eb", strokeWidth: 1 }} />
+              <Area
+                type="monotone"
+                dataKey="lastMonth"
+                stroke="#94a3b8"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                fill="url(#gradLast)"
+                dot={false}
+                connectNulls
+                name="lastMonth"
+              />
+              <Area
+                type="monotone"
+                dataKey="thisMonth"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                fill="url(#gradThis)"
+                dot={false}
+                connectNulls
+                name="thisMonth"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Legend */}
+      <div className="flex items-center gap-4 mt-3 pt-3 border-t border-gray-50">
+        <div className="flex items-center gap-1.5">
+          <div className="w-5 h-0.5 bg-blue-500 rounded" />
+          <span className="text-xs text-gray-500">{monthName}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <svg width="20" height="2" className="overflow-visible"><line x1="0" y1="1" x2="20" y2="1" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="4 3" /></svg>
+          <span className="text-xs text-gray-500">{lastMonthName}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Accounts Panel ───────────────────────────────────────────────────────────
+
+function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
+  accounts: Account[];
+  onSync: () => void;
+  syncing: boolean;
+  lastUpdated: Date | null;
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggle = (key: string) => setExpanded((p) => ({ ...p, [key]: !p[key] }));
+
+  const vis = accounts.filter((a) => !a.is_hidden);
+  const sum = (arr: Account[]) => arr.reduce((s, a) => s + parseFloat(String(a.current_balance ?? 0)), 0);
+
+  const checkingAccs = vis.filter((a) => a.type === "depository" && a.subtype !== "savings");
+  const savingsAccs  = vis.filter((a) => a.type === "depository" && a.subtype === "savings");
+  const creditAccs   = vis.filter((a) => a.type === "credit");
+  const investAccs   = vis.filter((a) => ["investment", "brokerage"].includes(a.type));
+
+  const checkingTotal = sum(checkingAccs);
+  const savingsTotal  = sum(savingsAccs);
+  const creditTotal   = sum(creditAccs);
+  const investTotal   = sum(investAccs);
+  const netCash       = checkingTotal + savingsTotal - creditTotal;
+
+  const fmtBal = (v: number, abs = false) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(abs ? Math.abs(v) : v);
+
+  function timeAgo(d: Date) {
+    const mins = Math.round((Date.now() - d.getTime()) / 60000);
+    if (mins < 2) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs} hr${hrs !== 1 ? "s" : ""} ago`;
+    return `${Math.round(hrs / 24)} days ago`;
+  }
+
+  const ACCOUNT_ICONS: Record<string, React.ReactNode> = {
+    checking: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+      </svg>
+    ),
+    credit: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+      </svg>
+    ),
+    savings: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+      </svg>
+    ),
+    invest: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+      </svg>
+    ),
+    netcash: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+  };
+
+  type RowDef = { key: string; label: string; total: number; accs: Account[]; iconKey: string; valueColor?: string; isNetCash?: boolean };
+  const rows: RowDef[] = [
+    { key: "checking", label: "Checking",     total: checkingTotal, accs: checkingAccs, iconKey: "checking" },
+    { key: "credit",   label: "Card Balance", total: creditTotal,   accs: creditAccs,   iconKey: "credit",  valueColor: creditTotal > 0 ? "text-red-600" : "text-gray-900" },
+    { key: "netcash",  label: "Net Cash",      total: netCash,       accs: [],           iconKey: "netcash", valueColor: netCash >= 0 ? "text-green-600" : "text-red-600", isNetCash: true },
+    { key: "savings",  label: "Savings",       total: savingsTotal,  accs: savingsAccs,  iconKey: "savings" },
+    { key: "invest",   label: "Investments",   total: investTotal,   accs: investAccs,   iconKey: "invest" },
+  ];
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-gray-50">
+        <h3 className="font-semibold text-gray-900">Accounts</h3>
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          {lastUpdated && <span>{timeAgo(lastUpdated)}</span>}
+          {lastUpdated && <span className="text-gray-200">|</span>}
+          <button
+            type="button"
+            onClick={onSync}
+            disabled={syncing}
+            className="text-blue-600 hover:text-blue-700 font-medium disabled:opacity-40 transition"
+          >
+            {syncing ? "Syncing…" : "Sync now"}
+          </button>
+        </div>
+      </div>
+
+      {/* Rows */}
+      <div className="flex-1 divide-y divide-gray-50">
+        {rows.map((row) => (
+          <div key={row.key}>
+            <button
+              type="button"
+              onClick={() => !row.isNetCash && row.accs.length > 0 && toggle(row.key)}
+              className={`w-full flex items-center gap-3 px-5 py-3 text-left transition ${
+                !row.isNetCash && row.accs.length > 0 ? "hover:bg-gray-50/60 cursor-pointer" : "cursor-default"
+              }`}
+            >
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                row.key === "netcash" ? "bg-green-50 text-green-600" :
+                row.key === "credit"  ? "bg-red-50 text-red-500" :
+                row.key === "invest"  ? "bg-blue-50 text-blue-600" :
+                "bg-gray-100 text-gray-500"
+              }`}>
+                {ACCOUNT_ICONS[row.iconKey]}
+              </div>
+              <span className="flex-1 text-sm text-gray-700 font-medium">{row.label}</span>
+              <span className={`text-sm font-semibold tabular-nums ${row.valueColor ?? "text-gray-900"}`}>
+                {fmtBal(row.total)}
+              </span>
+              {!row.isNetCash && row.accs.length > 0 ? (
+                <svg className={`w-4 h-4 text-gray-300 transition-transform shrink-0 ${expanded[row.key] ? "rotate-180" : ""}`}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              ) : row.isNetCash ? (
+                <span className="w-4 h-4 text-xs text-gray-300 shrink-0 flex items-center justify-center" title="Checking + Savings − Cards">ⓘ</span>
+              ) : (
+                <span className="w-4 shrink-0" />
+              )}
+            </button>
+
+            {/* Expanded individual accounts */}
+            {expanded[row.key] && row.accs.length > 0 && (
+              <div className="bg-gray-50/50 border-t border-gray-50">
+                {row.accs.map((a) => (
+                  <div key={a.id} className="flex items-center gap-3 px-5 py-2 pl-16">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-700 truncate">{a.name}</p>
+                      {a.mask && <p className="text-xs text-gray-400">••• {a.mask}</p>}
+                    </div>
+                    <span className="text-xs font-semibold tabular-nums text-gray-700">
+                      {fmtBal(parseFloat(String(a.current_balance ?? 0)))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const today = new Date();
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -588,7 +914,7 @@ export default function Dashboard() {
       listAccounts(),
       listBudgets(month, year),
       listLongTermBudgets(year),
-      listAllTransactions(10),
+      listAllTransactions(500),
       listProperties(),
     ]);
 
@@ -724,6 +1050,21 @@ export default function Dashboard() {
             </svg>
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
+        </div>
+      </div>
+
+      {/* Hero row — Current Spend + Accounts */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-6">
+        <div className="lg:col-span-3">
+          <CurrentSpendChart transactions={transactions} />
+        </div>
+        <div className="lg:col-span-2">
+          <AccountsPanel
+            accounts={accounts}
+            onSync={() => fetchAll(true)}
+            syncing={refreshing}
+            lastUpdated={lastUpdated}
+          />
         </div>
       </div>
 
