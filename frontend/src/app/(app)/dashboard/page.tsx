@@ -1177,7 +1177,7 @@ export default function Dashboard() {
           <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Quick Links</h3>
           <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { href: "/accounts", label: "Accounts", desc: `${visibleAccounts.length} connected`, emoji: "🏦" },
+              { href: "/settings?tab=accounts", label: "Accounts", desc: `${visibleAccounts.length} connected`, emoji: "🏦" },
               { href: "/budgets", label: "Budgets", desc: `${monthlyBudgets.length} this month`, emoji: "📊" },
               { href: "/transactions", label: "Transactions", desc: "View & categorize", emoji: "💳" },
               { href: "/investments", label: "Investments", desc: "Portfolio tracker", emoji: "📈" },

@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   Zap,
   Bot,
+  Settings2,
   Menu,
   X,
   Sun,
@@ -49,7 +50,6 @@ const navSections: NavSection[] = [
   {
     label: "Assets",
     items: [
-      { href: "/accounts", label: "Accounts", icon: Landmark },
       { href: "/investments", label: "Investments", icon: TrendingUp },
       { href: "/properties", label: "Real Estate", icon: Building2 },
       { href: "/rentals", label: "Rentals", icon: KeyRound },
@@ -76,8 +76,9 @@ const navSections: NavSection[] = [
   },
 ];
 
-// Flat list for currentPage lookup
-const allNavItems = navSections.flatMap((s) => s.items);
+// Flat list for currentPage lookup (includes Settings for header title)
+const settingsNavItem = { href: "/settings", label: "Settings", icon: Settings2 };
+const allNavItems = [...navSections.flatMap((s) => s.items), settingsNavItem];
 
 function NavLink({
   item,
@@ -171,6 +172,7 @@ function SidebarContents({
 
       {/* Footer */}
       <div className="px-5 pb-5 border-t border-white/5 pt-4 space-y-1">
+        <NavLink item={settingsNavItem} pathname={pathname} onClick={onClose} />
         <button
           type="button"
           onClick={toggleTheme}

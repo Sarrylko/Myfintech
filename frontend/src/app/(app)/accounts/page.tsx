@@ -88,7 +88,7 @@ const DEFAULT_MANUAL: ManualAccountCreate = {
   currency_code: "USD",
 };
 
-export default function AccountsPage() {
+export function AccountsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const snapSyncedRef = useRef(false);
@@ -1154,4 +1154,8 @@ function AccountRow({ acct, members, onEdit, onDelete }: { acct: Account; member
       </div>
     </div>
   );
+}
+
+export default function AccountsPage() {
+  return <AccountsContent />;
 }

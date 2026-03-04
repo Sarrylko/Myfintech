@@ -745,6 +745,17 @@ export default function RetirementPage() {
                   <span className="text-slate-400">Years to retirement</span>
                   <span className="text-slate-200 font-medium">{p.years_to_retirement} years</span>
                 </div>
+                <div className="border-t border-slate-600/50 pt-2 mt-1">
+                  <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1.5">Assumptions</p>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Mortgages & home loans</span>
+                    <span className="text-emerald-400 font-medium">Paid off ✓</span>
+                  </div>
+                  <div className="flex justify-between items-center mt-1">
+                    <span className="text-slate-400">Children&apos;s college</span>
+                    <span className="text-emerald-400 font-medium">Fully funded ✓</span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1099,6 +1110,7 @@ export default function RetirementPage() {
         {/* ── Footer ───────────────────────────────────────────────────── */}
         <p className="text-center text-slate-600 text-xs pb-4">
           Projections use the 4% safe withdrawal rule. Scenarios: optimistic (+3%), base, pessimistic (−2%). Not financial advice.
+          Key assumptions: all mortgages and children&apos;s education costs are assumed to be fully paid by retirement.
           Net worth: {fmt(p.total_net_worth, true)}
         </p>
       </div>

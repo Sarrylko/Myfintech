@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { AccountsContent } from "@/app/(app)/accounts/page";
 import {
   UserResponse,
   UserProfileUpdate,
@@ -31,7 +32,8 @@ export type SettingsTab =
   | "household"
   | "categories"
   | "preferences"
-  | "notifications";
+  | "notifications"
+  | "accounts";
 
 interface Props {
   open: boolean;
@@ -39,6 +41,7 @@ interface Props {
   initialTab?: SettingsTab;
   profile: UserResponse | null;
   onProfileUpdate: (p: UserResponse) => void;
+  asPage?: boolean;
 }
 
 const TABS: { id: SettingsTab; label: string }[] = [
@@ -48,6 +51,11 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: "categories", label: "Categories" },
   { id: "preferences", label: "Preferences" },
   { id: "notifications", label: "Notifications" },
+];
+
+const PAGE_TABS: { id: SettingsTab; label: string }[] = [
+  ...TABS,
+  { id: "accounts", label: "Connected Accounts" },
 ];
 
 // ── Shared input component ───────────────────────────────────────────────────
@@ -1278,6 +1286,7 @@ export default function SettingsPanel({
   initialTab = "profile",
   profile,
   onProfileUpdate,
+  asPage = false,
 }: Props) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
 
@@ -1297,6 +1306,49 @@ export default function SettingsPanel({
       document.body.style.overflow = "";
     };
   }, [open]);
+
+  // ── Page (full-width, no modal overlay) ──────────────────────────────────
+  if (asPage) {
+    return (
+      <div className="flex flex-col">
+        {/* Tab nav */}
+        <div className="flex border-b border-gray-100 dark:border-gray-800 overflow-x-auto mb-6">
+          {PAGE_TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setActiveTab(t.id)}
+              className={`px-4 py-3 text-sm font-medium whitespace-nowrap transition border-b-2 ${
+                activeTab === t.id
+                  ? "border-primary-600 text-primary-600 dark:text-primary-400 dark:border-primary-400"
+                  : "border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {/* Tab content */}
+        <div>
+          {activeTab === "profile" && (
+            <ProfileTab profile={profile} onProfileUpdate={onProfileUpdate} />
+          )}
+          {activeTab === "security" && <SecurityTab />}
+          {activeTab === "household" && <HouseholdTab profile={profile} />}
+          {activeTab === "categories" && <CategoriesTab />}
+          {activeTab === "preferences" && <PreferencesTab />}
+          {activeTab === "notifications" && (
+            <NotificationsTab profile={profile} onSwitchTab={setActiveTab} />
+          )}
+          {activeTab === "accounts" && (
+            <Suspense fallback={<div className="text-sm text-gray-400 py-8 text-center">Loading accounts…</div>}>
+              <AccountsContent />
+            </Suspense>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
