@@ -249,6 +249,15 @@ export interface AccountUpdate {
   is_hidden?: boolean;
 }
 
+export interface TransactionSplit {
+  id: string;
+  transaction_id: string;
+  amount: string;
+  category: string;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface Transaction {
   id: string;
   account_id: string | null;
@@ -259,6 +268,8 @@ export interface Transaction {
   pending: boolean;
   plaid_category: string | null;
   is_ignored: boolean;
+  has_splits: boolean;
+  splits: TransactionSplit[];
   notes: string | null;
   created_at: string;
 }
@@ -361,6 +372,22 @@ export async function updateTransaction(
   return apiFetch(`/api/v1/accounts/transactions/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
+  });
+}
+
+export async function setTransactionSplits(
+  txnId: string,
+  splits: { amount: number; category: string; notes?: string }[]
+): Promise<TransactionSplit[]> {
+  return apiFetch(`/api/v1/accounts/transactions/${txnId}/splits`, {
+    method: "PUT",
+    body: JSON.stringify({ splits }),
+  });
+}
+
+export async function clearTransactionSplits(txnId: string): Promise<void> {
+  await apiFetch(`/api/v1/accounts/transactions/${txnId}/splits`, {
+    method: "DELETE",
   });
 }
 

@@ -7,6 +7,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql import func
 
 from app.core.database import Base
 
@@ -119,6 +120,7 @@ class Transaction(Base):
     is_manual_category: Mapped[bool] = mapped_column(Boolean, default=False)
 
     is_ignored: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_splits: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False)
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
@@ -126,6 +128,9 @@ class Transaction(Base):
 
     account: Mapped["Account | None"] = relationship(back_populates="transactions")
     category: Mapped["Category | None"] = relationship()
+    splits: Mapped[list["TransactionSplit"]] = relationship(
+        back_populates="transaction", cascade="all, delete-orphan", lazy="selectin"
+    )
 
 
 class Category(Base):
@@ -147,3 +152,26 @@ class Category(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
+
+
+class TransactionSplit(Base):
+    """A single line in a split transaction — each line has its own amount and category."""
+    __tablename__ = "transaction_splits"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    transaction_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("transactions.id", ondelete="CASCADE"), index=True
+    )
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), index=True
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    category: Mapped[str] = mapped_column(String(255))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    transaction: Mapped["Transaction"] = relationship(back_populates="splits")

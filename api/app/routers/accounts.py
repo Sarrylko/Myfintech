@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.account import Account, Transaction
+from app.models.account import Account, Transaction, TransactionSplit
 from app.models.property_details import Loan
 from app.models.rule import CategorizationRule
 from app.models.user import User
@@ -24,6 +24,7 @@ from app.schemas.account import (
     TransactionResponse,
     TransactionUpdate,
 )
+from app.schemas.transaction_split import TransactionSplitRequest, TransactionSplitResponse
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -431,6 +432,91 @@ async def update_transaction(
     await db.refresh(txn)
     await db.commit()
     return txn
+
+
+@router.put(
+    "/transactions/{transaction_id}/splits",
+    response_model=list[TransactionSplitResponse],
+    status_code=200,
+)
+async def set_transaction_splits(
+    transaction_id: uuid.UUID,
+    payload: TransactionSplitRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace all splits for a transaction. Splits must sum to the transaction amount (±$0.01)."""
+    result = await db.execute(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.household_id == user.household_id,
+        )
+    )
+    txn = result.scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    from decimal import Decimal
+    total = sum(s.amount for s in payload.splits)
+    if abs(total - abs(txn.amount)) > Decimal("0.01"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Split amounts ({total}) must equal transaction amount ({abs(txn.amount)})",
+        )
+
+    # Delete existing splits
+    existing = await db.execute(
+        select(TransactionSplit).where(TransactionSplit.transaction_id == transaction_id)
+    )
+    for sp in existing.scalars().all():
+        await db.delete(sp)
+
+    # Insert new splits
+    new_splits = []
+    for item in payload.splits:
+        sp = TransactionSplit(
+            transaction_id=transaction_id,
+            household_id=user.household_id,
+            amount=item.amount,
+            category=item.category,
+            notes=item.notes,
+        )
+        db.add(sp)
+        new_splits.append(sp)
+
+    txn.has_splits = True
+    await db.flush()
+    for sp in new_splits:
+        await db.refresh(sp)
+    await db.commit()
+    return new_splits
+
+
+@router.delete("/transactions/{transaction_id}/splits", status_code=204)
+async def clear_transaction_splits(
+    transaction_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove all splits from a transaction, reverting it to single-category."""
+    result = await db.execute(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.household_id == user.household_id,
+        )
+    )
+    txn = result.scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    existing = await db.execute(
+        select(TransactionSplit).where(TransactionSplit.transaction_id == transaction_id)
+    )
+    for sp in existing.scalars().all():
+        await db.delete(sp)
+
+    txn.has_splits = False
+    await db.commit()
 
 
 # ─── Holdings CRUD (manual accounts only) ────────────────────────────────────

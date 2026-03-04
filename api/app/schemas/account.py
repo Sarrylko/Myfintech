@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel
+from app.schemas.transaction_split import TransactionSplitResponse
 
 
 class AccountResponse(BaseModel):
@@ -64,6 +65,8 @@ class TransactionResponse(BaseModel):
     custom_category_id: uuid.UUID | None
     is_manual_category: bool
     is_ignored: bool
+    has_splits: bool = False
+    splits: list[TransactionSplitResponse] = []
     notes: str | None
     created_at: datetime
 

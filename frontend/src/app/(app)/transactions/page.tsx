@@ -11,9 +11,12 @@ import {
   listCustomCategories,
   importCsv,
   updateTransaction,
+  setTransactionSplits,
+  clearTransactionSplits,
   createRule,
   Account,
   Transaction,
+  TransactionSplit,
   CustomCategory,
 } from "@/lib/api";
 
@@ -141,6 +144,34 @@ function fmtAmt(amount: string): { display: string; isExpense: boolean } {
   return { display: n > 0 ? `-${abs}` : `+${abs}`, isExpense: n > 0 };
 }
 
+/** A single row in the split editor. */
+type SplitLine = { id: string; amount: string; categoryGroup: string; categoryItem: string; notes: string };
+
+function CategorySelect({ group, item, taxonomy, onGroupChange, onItemChange }: {
+  group: string; item: string;
+  taxonomy: { category: string; subcategories: string[] }[];
+  onGroupChange: (g: string) => void;
+  onItemChange: (i: string) => void;
+}) {
+  const subcategories = taxonomy.find((t) => t.category === group)?.subcategories ?? [];
+  return (
+    <div className="flex gap-1.5">
+      <select title="Category" value={group} onChange={(e) => onGroupChange(e.target.value)}
+        className="border border-gray-200 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary-500 bg-white flex-1 min-w-0">
+        <option value="">— Category —</option>
+        {taxonomy.map((t) => <option key={t.category} value={t.category}>{t.category}</option>)}
+      </select>
+      {group && (
+        <select title="Subcategory" value={item} onChange={(e) => onItemChange(e.target.value)}
+          className="border border-gray-200 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary-500 bg-white flex-1 min-w-0">
+          <option value="">— Sub —</option>
+          {subcategories.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
 function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
   txn: Transaction;
   accounts: Account[];
@@ -162,11 +193,64 @@ function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  // ── Split state ──────────────────────────────────────────────────────────────
+  const [splitActive, setSplitActive] = useState(txn.has_splits);
+  const initSplitLines = (): SplitLine[] => {
+    if (txn.has_splits && txn.splits.length >= 2) {
+      return txn.splits.map((s) => {
+        const p = parseCategory(s.category);
+        return { id: s.id, amount: parseFloat(s.amount).toFixed(2), categoryGroup: p.group, categoryItem: p.item, notes: s.notes ?? "" };
+      });
+    }
+    const abs = Math.abs(parseFloat(txn.amount));
+    const half = (abs / 2).toFixed(2);
+    const rest = (abs - parseFloat(half)).toFixed(2);
+    return [
+      { id: "new-1", amount: half, categoryGroup: parsed.group, categoryItem: parsed.item, notes: "" },
+      { id: "new-2", amount: rest, categoryGroup: "", categoryItem: "", notes: "" },
+    ];
+  };
+  const [splitLines, setSplitLines] = useState<SplitLine[]>(initSplitLines);
+
   const allTaxonomy = [...TAXONOMY, ...customTaxonomy];
   const subcategories = allTaxonomy.find((t) => t.category === form.categoryGroup)?.subcategories ?? [];
 
   function handleGroupChange(group: string) {
     setForm((p) => ({ ...p, categoryGroup: group, categoryItem: "" }));
+  }
+
+  // ── Split helpers ────────────────────────────────────────────────────────────
+  const txnAbs = Math.abs(parseFloat(form.amount) || 0);
+  const splitTotal = splitLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+  const splitRemaining = parseFloat((txnAbs - splitTotal).toFixed(2));
+
+  function updateSplitLine(id: string, field: keyof SplitLine, value: string) {
+    setSplitLines((prev) => prev.map((l) => l.id === id ? { ...l, [field]: value, ...(field === "categoryGroup" ? { categoryItem: "" } : {}) } : l));
+  }
+
+  function addSplitLine() {
+    const remaining = parseFloat((txnAbs - splitTotal).toFixed(2));
+    setSplitLines((prev) => [...prev, {
+      id: `new-${Date.now()}`,
+      amount: remaining > 0 ? remaining.toFixed(2) : "0.00",
+      categoryGroup: "", categoryItem: "", notes: "",
+    }]);
+  }
+
+  function removeSplitLine(id: string) {
+    setSplitLines((prev) => prev.filter((l) => l.id !== id));
+  }
+
+  async function handleCancelSplit() {
+    setSaving(true); setError("");
+    try {
+      if (txn.has_splits) await clearTransactionSplits(txn.id);
+      setSplitActive(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to remove splits");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -179,18 +263,43 @@ function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
       ? `${form.categoryGroup} > ${form.categoryItem}`
       : form.categoryGroup || undefined;
 
+    // Validate splits
+    if (splitActive) {
+      if (splitLines.length < 2) { setError("At least 2 split lines are required"); return; }
+      if (Math.abs(splitRemaining) > 0.01) {
+        setError(`Split amounts must total $${Math.abs(amtNum).toFixed(2)} (${splitRemaining > 0 ? `$${splitRemaining.toFixed(2)} remaining` : `$${Math.abs(splitRemaining).toFixed(2)} over`})`);
+        return;
+      }
+      for (const l of splitLines) {
+        if (!l.categoryGroup) { setError("All split lines must have a category"); return; }
+      }
+    }
+
     setSaving(true); setError("");
     try {
+      // Always save core transaction fields
       const updated = await updateTransaction(txn.id, {
         name: form.name || undefined,
         merchant_name: form.merchant_name || undefined,
         amount: amtNum,
         date: form.date ? new Date(form.date + "T00:00:00Z").toISOString() : undefined,
-        plaid_category,
+        plaid_category: splitActive ? undefined : plaid_category,
         notes: form.notes || undefined,
         pending: form.pending,
       });
-      onSave(updated, plaid_category, txn.plaid_category);
+
+      if (splitActive) {
+        // Save splits — PUT replaces all existing splits
+        await setTransactionSplits(txn.id, splitLines.map((l) => ({
+          amount: parseFloat(l.amount),
+          category: l.categoryGroup && l.categoryItem ? `${l.categoryGroup} > ${l.categoryItem}` : l.categoryGroup,
+          notes: l.notes || undefined,
+        })));
+        // Patch local state to reflect splits
+        onSave({ ...updated, has_splits: true, splits: [] }, undefined, txn.plaid_category);
+      } else {
+        onSave(updated, plaid_category, txn.plaid_category);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -202,7 +311,7 @@ function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-5 border-b border-gray-100 sticky top-0 bg-white">
           <h3 className="font-semibold text-lg">Edit Transaction</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
@@ -247,43 +356,132 @@ function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
               className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
           </div>
 
-          {/* Category two-level dropdowns */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-            <select
-              value={form.categoryGroup}
-              onChange={(e) => handleGroupChange(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
-            >
-              <option value="">— Select category —</option>
-              {TAXONOMY.map((t) => (
-                <option key={t.category} value={t.category}>{t.category}</option>
-              ))}
-              {customTaxonomy.length > 0 && (
-                <optgroup label="── Custom ──">
-                  {customTaxonomy.map((t) => (
+          {/* Category (only shown when split is NOT active) */}
+          {!splitActive && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <select
+                  value={form.categoryGroup}
+                  onChange={(e) => handleGroupChange(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                >
+                  <option value="">— Select category —</option>
+                  {TAXONOMY.map((t) => (
                     <option key={t.category} value={t.category}>{t.category}</option>
                   ))}
-                </optgroup>
-              )}
-            </select>
-          </div>
+                  {customTaxonomy.length > 0 && (
+                    <optgroup label="── Custom ──">
+                      {customTaxonomy.map((t) => (
+                        <option key={t.category} value={t.category}>{t.category}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
 
-          {form.categoryGroup && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Subcategory</label>
-              <select
-                value={form.categoryItem}
-                onChange={(e) => setForm((p) => ({ ...p, categoryItem: e.target.value }))}
-                className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
-              >
-                <option value="">— Select subcategory —</option>
-                {subcategories.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
+              {form.categoryGroup && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Subcategory</label>
+                  <select
+                    title="Subcategory"
+                    value={form.categoryItem}
+                    onChange={(e) => setForm((p) => ({ ...p, categoryItem: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                  >
+                    <option value="">— Select subcategory —</option>
+                    {subcategories.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </>
           )}
+
+          {/* ── Split Transaction section ──────────────────────────── */}
+          <div className={`rounded-lg border ${splitActive ? "border-indigo-200 bg-indigo-50/40" : "border-gray-200"}`}>
+            <button
+              type="button"
+              onClick={() => { if (!splitActive) setSplitActive(true); }}
+              className={`w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium rounded-lg transition ${
+                splitActive
+                  ? "text-indigo-700 cursor-default"
+                  : "text-gray-600 hover:text-indigo-700 hover:bg-indigo-50"
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <span>✂</span>
+                {splitActive ? `Split Transaction — Total $${Math.abs(parseFloat(form.amount) || 0).toFixed(2)}` : "Split this transaction…"}
+              </span>
+              {!splitActive && <span className="text-xs text-gray-400">Divide across categories</span>}
+            </button>
+
+            {splitActive && (
+              <div className="px-4 pb-4 space-y-2">
+                {/* Split rows */}
+                {splitLines.map((line, idx) => (
+                  <div key={line.id} className="flex gap-1.5 items-start">
+                    <div className="relative w-24 shrink-0">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
+                      <input
+                        type="number" step="0.01" min="0.01"
+                        title="Split amount"
+                        value={line.amount}
+                        onChange={(e) => updateSplitLine(line.id, "amount", e.target.value)}
+                        className="border border-gray-200 rounded px-2 pl-5 py-1.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-primary-500"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <CategorySelect
+                        group={line.categoryGroup}
+                        item={line.categoryItem}
+                        taxonomy={allTaxonomy}
+                        onGroupChange={(g) => updateSplitLine(line.id, "categoryGroup", g)}
+                        onItemChange={(i) => updateSplitLine(line.id, "categoryItem", i)}
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={line.notes}
+                      onChange={(e) => updateSplitLine(line.id, "notes", e.target.value)}
+                      placeholder="Note"
+                      className="border border-gray-200 rounded px-2 py-1.5 text-xs w-24 shrink-0 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeSplitLine(line.id)}
+                      disabled={splitLines.length <= 2}
+                      className="text-gray-300 hover:text-red-400 text-sm px-1 py-1 disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+                      title="Remove line"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+
+                {/* Footer row */}
+                <div className="flex items-center justify-between pt-1">
+                  <div className={`text-xs font-medium ${Math.abs(splitRemaining) <= 0.01 ? "text-green-600" : "text-red-500"}`}>
+                    {Math.abs(splitRemaining) <= 0.01
+                      ? "✓ Balanced"
+                      : splitRemaining > 0
+                        ? `$${splitRemaining.toFixed(2)} remaining`
+                        : `$${Math.abs(splitRemaining).toFixed(2)} over`}
+                  </div>
+                  <button type="button" onClick={addSplitLine}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-medium px-2 py-1 rounded hover:bg-indigo-50">
+                    + Add line
+                  </button>
+                </div>
+
+                <button type="button" onClick={handleCancelSplit} disabled={saving}
+                  className="text-xs text-gray-400 hover:text-red-500 mt-1 disabled:opacity-50">
+                  ✕ Cancel split
+                </button>
+              </div>
+            )}
+          </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
@@ -554,8 +752,18 @@ export default function TransactionsPage() {
     for (const t of filtered) {
       const amt = parseFloat(t.amount);
       if (amt <= 0 || t.pending) continue;
-      const cat = parseCategory(t.plaid_category).group || "Uncategorized";
-      spend[cat] = (spend[cat] || 0) + amt;
+      if (t.has_splits && t.splits.length > 0) {
+        // Distribute per split line
+        for (const s of t.splits) {
+          const sAmt = parseFloat(s.amount);
+          if (sAmt <= 0) continue;
+          const cat = parseCategory(s.category).group || "Uncategorized";
+          spend[cat] = (spend[cat] || 0) + sAmt;
+        }
+      } else {
+        const cat = parseCategory(t.plaid_category).group || "Uncategorized";
+        spend[cat] = (spend[cat] || 0) + amt;
+      }
     }
     return Object.entries(spend)
       .sort(([, a], [, b]) => b - a)
@@ -924,7 +1132,22 @@ export default function TransactionsPage() {
                     {txn.notes && <div className="text-xs text-gray-400 italic truncate">{txn.notes}</div>}
                   </td>
                   <td className="px-5 py-3 hidden md:table-cell">
-                    {txn.plaid_category ? (() => {
+                    {txn.has_splits && txn.splits.length > 0 ? (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium w-fit">✂ Split</span>
+                        {txn.splits.slice(0, 2).map((s) => {
+                          const p = parseCategory(s.category);
+                          return (
+                            <span key={s.id} className="text-xs text-gray-500 pl-1 truncate max-w-[160px]">
+                              {p.group || s.category} — ${parseFloat(s.amount).toFixed(2)}
+                            </span>
+                          );
+                        })}
+                        {txn.splits.length > 2 && (
+                          <span className="text-xs text-gray-400 pl-1">+{txn.splits.length - 2} more</span>
+                        )}
+                      </div>
+                    ) : txn.plaid_category ? (() => {
                       const parts = parseCategory(txn.plaid_category);
                       return (
                         <div className="flex flex-col gap-0.5">
