@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useCurrency } from "@/lib/currency";
 import {
   InsuranceBeneficiary,
   InsurancePolicy,
@@ -106,20 +107,6 @@ const GROUP_COLORS: Record<string, string> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function fmt(val: string | number | null | undefined): string {
-  if (val == null || val === "") return "—";
-  const n = typeof val === "string" ? parseFloat(val) : val;
-  if (isNaN(n)) return "—";
-  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-}
-
-function fmtFull(val: string | number | null | undefined): string {
-  if (val == null || val === "") return "—";
-  const n = typeof val === "string" ? parseFloat(val) : val;
-  if (isNaN(n)) return "—";
-  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
 function annualPremium(p: InsurancePolicy): number {
   if (!p.premium_amount) return 0;
   return parseFloat(p.premium_amount) * (FREQ_MULT[p.premium_frequency] ?? 1);
@@ -139,11 +126,6 @@ function renewalColor(dateStr: string | null): string {
   if (days <= 30) return "text-red-500 dark:text-red-400 font-medium";
   if (days <= 60) return "text-amber-600 dark:text-amber-400 font-medium";
   return "text-gray-600 dark:text-gray-400";
-}
-
-function fmtDate(d: string | null): string {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function vehicleLabel(v: Vehicle): string {
@@ -259,6 +241,17 @@ export default function InsurancePage() {
 
   // Collapsed groups
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  const { fmt: fmtRaw, fmtDate, locale } = useCurrency();
+  function fmt(val: string | number | null | undefined, decimals = 0): string {
+    if (val == null || val === "") return "—";
+    const n = typeof val === "string" ? parseFloat(val) : val;
+    if (isNaN(n)) return "—";
+    return fmtRaw(n, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  }
+  function fmtFull(val: string | number | null | undefined): string {
+    return fmt(val, 2);
+  }
 
   useEffect(() => {
     load();
@@ -527,7 +520,7 @@ export default function InsurancePage() {
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
                 Total annual premium:{" "}
                 <span className="font-semibold text-gray-800 dark:text-gray-200">
-                  ${totalAnnual.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}/year
+                  {fmt(totalAnnual)}/year
                 </span>
               </p>
             )}
@@ -614,7 +607,7 @@ export default function InsurancePage() {
                 <div className="flex items-center gap-3">
                   {groupTotal > 0 && (
                     <span className="text-xs text-gray-500">
-                      ${groupTotal.toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr
+                      {fmt(groupTotal)}/yr
                     </span>
                   )}
                   <span className="text-gray-400 text-xs">{isCollapsed ? "▶" : "▼"}</span>

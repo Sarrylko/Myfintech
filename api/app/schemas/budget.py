@@ -16,6 +16,7 @@ class BudgetType(str, enum.Enum):
 class BudgetCreate(BaseModel):
     category_id: uuid.UUID
     amount: Decimal = Field(gt=0, decimal_places=2)
+    currency_code: str = "USD"
     budget_type: BudgetType = BudgetType.monthly
     year: int = Field(ge=2000, le=2100)
     month: int | None = Field(default=None, ge=1, le=12)  # required only for monthly
@@ -47,6 +48,7 @@ class BudgetBulkCreate(BaseModel):
 
 class BudgetUpdate(BaseModel):
     amount: Decimal | None = Field(default=None, gt=0)
+    currency_code: str | None = None
     rollover_enabled: bool | None = None
     alert_threshold: int | None = Field(default=None, ge=0, le=100)
 
@@ -67,6 +69,7 @@ class BudgetResponse(BaseModel):
     category_id: uuid.UUID
     category: CategoryInBudget
     amount: Decimal
+    currency_code: str
     budget_type: str
     month: int | None
     year: int

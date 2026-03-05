@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useCurrency } from "@/lib/currency";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
@@ -13,16 +14,6 @@ import {
   type ScenarioProjection,
   type IncomeSource,
 } from "@/lib/api";
-
-// ─── Formatters ─────────────────────────────────────────────────────────────
-
-function fmt(n: number, compact = false): string {
-  if (compact) {
-    if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-    if (Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
-  }
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
-}
 
 // ─── Probability Gauge (donut) ───────────────────────────────────────────────
 
@@ -52,6 +43,8 @@ function ProbabilityGauge({ value }: { value: number }) {
 // ─── Custom chart tooltip ────────────────────────────────────────────────────
 
 function ScenarioTooltip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string | number }) {
+  const { fmt: fmtRaw, fmtCompact } = useCurrency();
+  function fmt(n: number, compact = false): string { return compact ? fmtCompact(n) : fmtRaw(n); }
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 shadow-xl text-sm">
@@ -73,6 +66,8 @@ const incomeIcons: Record<string, string> = { portfolio: "📈", social_security
 const incomeColors: Record<string, string> = { portfolio: "bg-blue-500", social_security: "bg-emerald-500", rental: "bg-violet-500", real_estate: "bg-amber-500" };
 
 function IncomeCard({ source, total }: { source: IncomeSource; total: number }) {
+  const { fmt: fmtRaw, fmtCompact } = useCurrency();
+  function fmt(n: number, compact = false): string { return compact ? fmtCompact(n) : fmtRaw(n); }
   const barPct = total > 0 ? Math.min(100, (source.annual_amount / total) * 100) : 0;
   return (
     <div className="bg-slate-800/60 rounded-xl p-4 border border-slate-700">
@@ -373,6 +368,8 @@ function ScenarioChart({ data, retirementYear }: { data: ScenarioProjection[]; r
 // ─── Goal Details panels ─────────────────────────────────────────────────────
 
 function TaxBar({ label, amount, total, color }: { label: string; amount: number; total: number; color: string }) {
+  const { fmt: fmtRaw, fmtCompact } = useCurrency();
+  function fmt(n: number, compact = false): string { return compact ? fmtCompact(n) : fmtRaw(n); }
   const pct = total > 0 ? Math.min(100, (amount / total) * 100) : 0;
   return (
     <div className="flex items-center gap-2 text-xs">
@@ -387,6 +384,9 @@ function TaxBar({ label, amount, total, color }: { label: string; amount: number
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function RetirementPage() {
+  const { fmt: fmtRaw, fmtCompact } = useCurrency();
+  function fmt(n: number, compact = false): string { return compact ? fmtCompact(n) : fmtRaw(n); }
+
   const [projection, setProjection] = useState<RetirementProjection | null>(null);
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);

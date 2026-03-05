@@ -15,6 +15,7 @@ import {
   BudgetUpdate,
   CustomCategory,
 } from "@/lib/api";
+import { useCurrency } from "@/lib/currency";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -38,14 +39,7 @@ function navigateMonth(month: number, year: number, dir: -1 | 1) {
   return { month: m, year: y };
 }
 
-function fmt(value: string | number): string {
-  const n = typeof value === "string" ? parseFloat(value) : value;
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    Math.abs(n)
-  );
-}
-
-function formatBudgetPeriod(b: BudgetWithActual): string {
+function formatBudgetPeriod(b: BudgetWithActual, locale: string): string {
   if (b.budget_type === "monthly") {
     return `${MONTH_NAMES[(b.month ?? 1) - 1]} ${b.year}`;
   }
@@ -61,7 +55,7 @@ function formatBudgetPeriod(b: BudgetWithActual): string {
     const s = new Date(b.start_date + "T00:00:00");
     const e = new Date(b.end_date + "T00:00:00");
     const fmtDate = (d: Date) =>
-      d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      d.toLocaleDateString(locale, { month: "short", day: "numeric" });
     return `${fmtDate(s)} – ${fmtDate(e)}, ${b.year}`;
   }
   return "";
@@ -104,6 +98,7 @@ function SummaryCard({
   subtext?: string;
   valueColor: string;
 }) {
+  const { fmt } = useCurrency();
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
       <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">{label}</p>
@@ -140,6 +135,7 @@ function BudgetRow({
   onEdit: (b: BudgetWithActual) => void;
   onDelete: (id: string) => void;
 }) {
+  const { fmt, locale } = useCurrency();
   const pct = parseFloat(budget.percent_used);
   const remaining = parseFloat(budget.remaining);
   const isOver = remaining < 0;
@@ -158,7 +154,7 @@ function BudgetRow({
         <div className="min-w-0">
           <p className="text-sm font-medium text-gray-900 truncate">{budget.category.name}</p>
           {showPeriod && (
-            <p className="text-xs text-gray-400">{formatBudgetPeriod(budget)}</p>
+            <p className="text-xs text-gray-400">{formatBudgetPeriod(budget, locale)}</p>
           )}
           {isAtAlert && (
             <p className="text-xs text-yellow-600 flex items-center gap-1">⚠ {budget.alert_threshold}% threshold</p>
@@ -302,6 +298,7 @@ function StepIndicator({ step }: { step: number }) {
 }
 
 function WizardStep1({ wizard, setWizard, onNext }: { wizard: WizardState; setWizard: React.Dispatch<React.SetStateAction<WizardState>>; onNext: () => void }) {
+  const { locale } = useCurrency();
   const BUDGET_TYPES: { value: BudgetType; label: string; desc: string }[] = [
     { value: "monthly", label: "Monthly", desc: "Track spending for a single month" },
     { value: "annual", label: "Annual", desc: "Plan for an entire year" },
@@ -449,7 +446,7 @@ function WizardStep1({ wizard, setWizard, onNext }: { wizard: WizardState; setWi
             </div>
             <p className="text-xs text-gray-400 mt-1">
               {wizard.startDate && wizard.endDate
-                ? `${new Date(wizard.startDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(wizard.endDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                ? `${new Date(wizard.startDate + "T00:00:00").toLocaleDateString(locale, { month: "short", day: "numeric" })} – ${new Date(wizard.endDate + "T00:00:00").toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" })}`
                 : ""}
             </p>
           </div>
@@ -728,6 +725,7 @@ function WizardStep4({
   onBack: () => void;
   onSave: () => void;
 }) {
+  const { fmt } = useCurrency();
   const catMap = new Map(categories.map((c) => [c.id, c]));
   const validEntries = wizard.amounts.filter((a) => parseFloat(a.amount) > 0);
   const total = validEntries.reduce((s, e) => s + parseFloat(e.amount), 0);
@@ -806,11 +804,12 @@ function EditModal({
   onClose: () => void;
   onSave: (data: BudgetUpdate) => void;
 }) {
+  const { locale } = useCurrency();
   const [amount, setAmount] = useState(parseFloat(budget.amount).toString());
   const [rollover, setRollover] = useState(budget.rollover_enabled);
   const [threshold, setThreshold] = useState(budget.alert_threshold);
 
-  const periodLabel = formatBudgetPeriod(budget);
+  const periodLabel = formatBudgetPeriod(budget, locale);
 
   return (
     <ModalShell title={`Edit — ${budget.category.name}`} onClose={onClose}>
@@ -888,6 +887,7 @@ function LongTermView({
   onDelete: (id: string) => void;
   onCreateClick: () => void;
 }) {
+  const { fmt } = useCurrency();
   const today = new Date();
   const [ltYear, setLtYear] = useState(today.getFullYear());
   const [ltBudgets, setLtBudgets] = useState<BudgetWithActual[]>([]);

@@ -133,6 +133,7 @@ async def _enrich(
         category_id=budget.category_id,
         category=budget.category,
         amount=budget.amount,
+        currency_code=budget.currency_code,
         budget_type=budget.budget_type,
         month=budget.month,
         year=budget.year,

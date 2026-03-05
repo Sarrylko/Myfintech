@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, memo, useCallback } from "react";
+import { useCurrency } from "@/lib/currency";
 import { useRouter } from "next/navigation";
 import {
   listProperties,
@@ -46,23 +47,6 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip as ChartTooltip, Legend, ResponsiveContainer,
 } from "recharts";
-
-function fmt(val: string | number | null | undefined): string {
-  if (val === null || val === undefined || val === "") return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(Number(val));
-}
-
-function fmtDate(d: string | null | undefined): string {
-  if (!d) return "—";
-  return new Date(d + "T00:00:00").toLocaleDateString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
-  });
-}
 
 const TABS = ["Overview", "Units & Leases", "Tenants", "Payments", "Reports"] as const;
 type Tab = typeof TABS[number];
@@ -243,6 +227,16 @@ function OverviewTab({
   allLeases: Lease[];
   tenants: Tenant[];
 }) {
+  const { fmt: fmtRaw, fmtDate: fmtDateRaw, locale } = useCurrency();
+  function fmt(val: string | number | null | undefined): string {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  }
+  function fmtDate(d: string | null | undefined): string {
+    if (!d) return "—";
+    return fmtDateRaw(d);
+  }
+
   const [recentPayments, setRecentPayments] = useState<(Payment & { leaseLabel: string })[]>([]);
 
   useEffect(() => {
@@ -319,6 +313,16 @@ function UnitsLeasesTab({
   allLeases: Lease[];
   setAllLeases: React.Dispatch<React.SetStateAction<Lease[]>>;
 }) {
+  const { fmt: fmtRaw, fmtDate: fmtDateRaw } = useCurrency();
+  function fmt(val: string | number | null | undefined): string {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  }
+  function fmtDate(d: string | null | undefined): string {
+    if (!d) return "—";
+    return fmtDateRaw(d);
+  }
+
   const [selectedPropId, setSelectedPropId] = useState<string>(properties[0]?.id ?? "");
   const [units, setUnits] = useState<Unit[]>([]);
   const [loadingUnits, setLoadingUnits] = useState(false);
@@ -776,6 +780,12 @@ function TenantsTab({
   setTenants: React.Dispatch<React.SetStateAction<Tenant[]>>;
   allLeases: Lease[];
 }) {
+  const { fmt: fmtRaw } = useCurrency();
+  function fmt(val: string | number | null | undefined): string {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  }
+
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState<TenantCreate>({ name: "" });
   const [saving, setSaving] = useState(false);
@@ -1037,11 +1047,6 @@ function KpiCard({
   );
 }
 
-function fmtM(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "—";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
-}
-
 function fmtPct(n: number | null | undefined, suffix = "%"): string {
   if (n === null || n === undefined) return "—";
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)}${suffix}`;
@@ -1077,6 +1082,12 @@ const TT = {
 function ReportsTab({
   properties,
 }: { properties: Property[] }) {
+  const { fmt: fmtRaw, fmtCompact, locale } = useCurrency();
+  function fmtM(n: number | null | undefined): string {
+    if (n === null || n === undefined) return "—";
+    return fmtRaw(n, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  }
+
   const today = new Date();
   const [selectedPropId, setSelectedPropId] = useState<string>("all");
   const [year, setYear] = useState(today.getFullYear());
@@ -1280,7 +1291,7 @@ function ReportsTab({
               LTD — Lifetime to Date
             </p>
             <p className="text-xs text-gray-300 mb-3">
-              Since {new Date(lt.start_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })} · {lt.months} months
+              Since {new Date(lt.start_date + "T12:00:00").toLocaleDateString(locale, { month: "short", year: "numeric" })} · {lt.months} months
             </p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <KpiCard icon="🏠" label="Total Rent Roll"    value={fmtM(lt.rent_charged)}  higherIsBetter={true} trend={null} tooltip={TT.rentRoll} />
@@ -1484,7 +1495,7 @@ function ReportsTab({
                 <div key={e.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-2.5">
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-gray-400 shrink-0">
-                      {new Date(e.event_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      {new Date(e.event_date + "T12:00:00").toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" })}
                     </span>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600 capitalize">
                       {e.event_type.replace(/_/g, " ")}
@@ -1754,10 +1765,7 @@ function ReportsTab({
 
         const chartData: ChartRow[] = [];
         let chartTitle = "";
-        const fmtTick = (v: number) =>
-          v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M`
-          : v >= 1_000   ? `$${(v / 1_000).toFixed(0)}k`
-          : `$${v}`;
+        const fmtTick = (v: number) => fmtCompact(v);
 
         // TIME-SERIES CHART: Show monthly breakdown for YTD/LastYear
         if (timeSeriesData && timeSeriesData.length > 0) {
@@ -1829,7 +1837,7 @@ function ReportsTab({
                 <YAxis tickFormatter={fmtTick} tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} width={52} />
                 <ChartTooltip
                   formatter={(value: number, name: string) => [
-                    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value),
+                    fmtM(value),
                     name,
                   ]}
                   contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
@@ -1965,6 +1973,16 @@ function PaymentsTab({
   properties: Property[];
   allUnits: Unit[];
 }) {
+  const { fmt: fmtRaw, fmtDate: fmtDateRaw } = useCurrency();
+  function fmt(val: string | number | null | undefined): string {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  }
+  function fmtDate(d: string | null | undefined): string {
+    if (!d) return "—";
+    return fmtDateRaw(d);
+  }
+
   const [selectedLeaseId, setSelectedLeaseId] = useState<string>(
     allLeases.find((l) => l.status === "active")?.id ?? allLeases[0]?.id ?? ""
   );

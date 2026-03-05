@@ -24,7 +24,12 @@ import {
   NotificationPreferences,
   getNotifPrefs,
   updateNotifPrefs,
+  HouseholdSettings,
+  getHouseholdSettings,
+  updateHouseholdSettings,
 } from "@/lib/api";
+import { COUNTRIES, CURRENCIES } from "@/lib/countries";
+import { useCurrency } from "@/lib/currency";
 
 export type SettingsTab =
   | "profile"
@@ -923,6 +928,7 @@ function CategoriesTab() {
 
 // ── Preferences Tab ──────────────────────────────────────────────────────────
 function PreferencesTab() {
+  const { currency: ctxCurrency, locale: ctxLocale, countryCode: ctxCountry, refreshSettings } = useCurrency();
   const [settings, setSettings] = useState<InvestmentRefreshSettings>({
     price_refresh_enabled: true,
     price_refresh_interval_minutes: 15,
@@ -931,11 +937,42 @@ function PreferencesTab() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
+  // Locale & Currency state
+  const [localeSettings, setLocaleSettings] = useState<HouseholdSettings>({
+    default_currency: ctxCurrency,
+    default_locale: ctxLocale,
+    country_code: ctxCountry,
+  });
+  const [localeSaving, setLocaleSaving] = useState(false);
+  const [localeMsg, setLocaleMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
   useEffect(() => {
     getInvestmentSettings()
       .then((s) => { setSettings(s); setLoaded(true); })
       .catch(() => setLoaded(true));
+    getHouseholdSettings()
+      .then((s) => setLocaleSettings(s))
+      .catch(() => {});
   }, []);
+
+  async function handleLocaleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setLocaleSaving(true);
+    setLocaleMsg(null);
+    try {
+      await updateHouseholdSettings(localeSettings);
+      if (refreshSettings) refreshSettings();
+      setLocaleMsg({ type: "ok", text: "Locale & currency saved." });
+      setTimeout(() => setLocaleMsg(null), 3000);
+    } catch (err) {
+      setLocaleMsg({
+        type: "err",
+        text: err instanceof Error ? err.message : "Failed to save settings",
+      });
+    } finally {
+      setLocaleSaving(false);
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -1027,6 +1064,91 @@ function PreferencesTab() {
             className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 transition"
           >
             {saving ? "Saving…" : "Save"}
+          </button>
+        </form>
+      </div>
+
+      {/* ── Locale & Currency ── */}
+      <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
+        <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
+          Locale &amp; Currency
+        </h4>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+          Set your household&apos;s home country, display currency, and locale. These affect how all monetary values and dates are formatted throughout the app.
+        </p>
+        <form onSubmit={handleLocaleSave} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="hh-country" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Home Country
+              </label>
+              <select
+                id="hh-country"
+                value={localeSettings.country_code}
+                onChange={(e) => setLocaleSettings((s) => ({ ...s, country_code: e.target.value }))}
+                className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-full"
+              >
+                {COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="hh-currency" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Default Currency
+              </label>
+              <select
+                id="hh-currency"
+                value={localeSettings.default_currency}
+                onChange={(e) => setLocaleSettings((s) => ({ ...s, default_currency: e.target.value }))}
+                className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-full"
+              >
+                {CURRENCIES.map((c) => (
+                  <option key={c.code} value={c.code}>{c.code} — {c.name} ({c.symbol})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label htmlFor="hh-locale" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Display Locale
+            </label>
+            <select
+              id="hh-locale"
+              value={localeSettings.default_locale}
+              onChange={(e) => setLocaleSettings((s) => ({ ...s, default_locale: e.target.value }))}
+              className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-full md:w-64"
+            >
+              <option value="en-US">en-US — English (United States)</option>
+              <option value="en-CA">en-CA — English (Canada)</option>
+              <option value="en-GB">en-GB — English (United Kingdom)</option>
+              <option value="en-AU">en-AU — English (Australia)</option>
+              <option value="en-IN">en-IN — English (India)</option>
+              <option value="en-SG">en-SG — English (Singapore)</option>
+              <option value="en-NZ">en-NZ — English (New Zealand)</option>
+              <option value="en-ZA">en-ZA — English (South Africa)</option>
+              <option value="en-IE">en-IE — English (Ireland)</option>
+              <option value="fr-CA">fr-CA — French (Canada)</option>
+              <option value="fr-FR">fr-FR — French (France)</option>
+              <option value="de-DE">de-DE — German (Germany)</option>
+              <option value="es-MX">es-MX — Spanish (Mexico)</option>
+              <option value="pt-BR">pt-BR — Portuguese (Brazil)</option>
+              <option value="ja-JP">ja-JP — Japanese</option>
+              <option value="zh-CN">zh-CN — Chinese (Simplified)</option>
+            </select>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+              Controls number formatting — e.g., comma vs period as decimal separator.
+            </p>
+          </div>
+
+          {localeMsg && <Alert type={localeMsg.type}>{localeMsg.text}</Alert>}
+
+          <button
+            type="submit"
+            disabled={localeSaving}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 transition"
+          >
+            {localeSaving ? "Saving…" : "Save Locale & Currency"}
           </button>
         </form>
       </div>
@@ -1378,6 +1500,7 @@ export default function SettingsPanel({
             Settings
           </h2>
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
             aria-label="Close settings"
@@ -1402,6 +1525,7 @@ export default function SettingsPanel({
         <div className="flex border-b border-gray-100 dark:border-gray-800 shrink-0 overflow-x-auto">
           {TABS.map((t) => (
             <button
+              type="button"
               key={t.id}
               onClick={() => setActiveTab(t.id)}
               className={`px-4 py-3 text-sm font-medium whitespace-nowrap transition border-b-2 ${

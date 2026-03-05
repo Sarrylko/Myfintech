@@ -76,6 +76,7 @@ class LeaseCreate(BaseModel):
     lease_end: date | None = None
     move_in_date: date | None = None
     move_out_date: date | None = None
+    currency_code: str = "USD"
     monthly_rent: Decimal
     deposit: Decimal | None = None
     status: str = "active"
@@ -87,6 +88,7 @@ class LeaseUpdate(BaseModel):
     lease_end: date | None = None
     move_in_date: date | None = None
     move_out_date: date | None = None
+    currency_code: str | None = None
     monthly_rent: Decimal | None = None
     deposit: Decimal | None = None
     status: str | None = None
@@ -103,6 +105,7 @@ class LeaseResponse(BaseModel):
     lease_end: date | None
     move_in_date: date | None
     move_out_date: date | None
+    currency_code: str
     monthly_rent: Decimal
     deposit: Decimal | None
     status: str

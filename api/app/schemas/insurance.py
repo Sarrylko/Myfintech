@@ -61,6 +61,7 @@ class InsurancePolicyCreate(BaseModel):
     policy_type: PolicyType
     provider: str
     policy_number: str | None = None
+    currency_code: str = "USD"
     premium_amount: Decimal | None = None
     premium_frequency: PremiumFrequency = "monthly"
     coverage_amount: Decimal | None = None
@@ -80,6 +81,7 @@ class InsurancePolicyUpdate(BaseModel):
     policy_type: PolicyType | None = None
     provider: str | None = None
     policy_number: str | None = None
+    currency_code: str | None = None
     premium_amount: Decimal | None = None
     premium_frequency: PremiumFrequency | None = None
     coverage_amount: Decimal | None = None
@@ -103,6 +105,7 @@ class InsurancePolicyResponse(BaseModel):
     policy_type: str
     provider: str
     policy_number: str | None
+    currency_code: str
     premium_amount: Decimal | None
     premium_frequency: str
     coverage_amount: Decimal | None

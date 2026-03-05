@@ -32,6 +32,7 @@ import {
   AccountTransactionSummary,
   CSVImportResult,
 } from "@/lib/api";
+import { useCurrency } from "@/lib/currency";
 
 // ─── Subtype classification ───────────────────────────────────────────────────
 
@@ -51,16 +52,6 @@ function isRetirement(subtype: string | null): boolean {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function fmt(val: string | number | null | undefined, decimals = 0): string {
-  if (val === null || val === undefined || val === "") return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(Number(val));
-}
 
 function fmtQty(val: string | null): string {
   if (!val) return "—";
@@ -128,6 +119,11 @@ function HoldingsTable({
   accountId: string;
   onChanged: () => void;
 }) {
+  const { fmt: fmtRaw, locale } = useCurrency();
+  const fmt = (val: string | number | null | undefined, decimals = 0): string => {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  };
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<HoldingUpdate>({});
   const [showAddForm, setShowAddForm] = useState(false);
@@ -788,6 +784,11 @@ function TransactionActivityView({
   holdings: Holding[];
   onSyncedToPositions?: () => void;
 }) {
+  const { fmt: fmtRaw, locale } = useCurrency();
+  const fmt = (val: string | number | null | undefined, decimals = 0): string => {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  };
   const [summary, setSummary] = useState<AccountTransactionSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -994,7 +995,7 @@ function TransactionActivityView({
                       </td>
                       <td className="px-3 py-2.5 text-right text-gray-500 tabular-nums">{pos.transaction_count}</td>
                       <td className="px-3 py-2.5 text-right text-gray-400 text-xs">
-                        {new Date(pos.last_transaction_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })}
+                        {new Date(pos.last_transaction_date).toLocaleDateString(locale, { month: "short", day: "numeric", year: "2-digit" })}
                       </td>
                     </tr>
                     {isExpanded && pos.transactions.map((txn) => (
@@ -1012,7 +1013,7 @@ function TransactionActivityView({
                         <td className="px-3 py-1.5 text-right text-gray-400 truncate max-w-[120px]" colSpan={2}>{txn.notes || "—"}</td>
                         <td className="px-3 py-1.5 text-right">
                           <div className="flex items-center gap-1 justify-end">
-                            <span className="text-gray-400 mr-1">{new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })}</span>
+                            <span className="text-gray-400 mr-1">{new Date(txn.date).toLocaleDateString(locale, { month: "short", day: "numeric", year: "2-digit" })}</span>
                             <button type="button" aria-label="Edit transaction" onClick={(e) => { e.stopPropagation(); setEditingTxn(txn); setShowAddModal(true); }} className="p-0.5 text-gray-400 hover:text-blue-600 rounded">
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-2.828 0L9 15v-2z" /></svg>
                             </button>
@@ -1063,6 +1064,11 @@ function AccountRow({
   holdingsLoading: boolean;
   onHoldingChanged: (accountId: string) => void;
 }) {
+  const { fmt: fmtRaw } = useCurrency();
+  const fmt = (val: string | number | null | undefined, decimals = 0): string => {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  };
   const [activeTab, setActiveTab] = useState<"positions" | "activity">("positions");
   return (
     <div className="border-b border-gray-50 last:border-0">
@@ -1166,6 +1172,11 @@ function Segment({
   holdingsLoadingMap: Record<string, boolean>;
   onHoldingChanged: (accountId: string) => void;
 }) {
+  const { fmt: fmtRaw } = useCurrency();
+  const fmt = (val: string | number | null | undefined, decimals = 0): string => {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  };
   const total = totalBalance(accounts);
   return (
     <div className="bg-white rounded-xl shadow border border-gray-100">
@@ -1204,6 +1215,11 @@ function Segment({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InvestmentsPage() {
+  const { fmt: fmtRaw } = useCurrency();
+  const fmt = (val: string | number | null | undefined, decimals = 0): string => {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  };
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [members, setMembers] = useState<UserResponse[]>([]);
   const [ownerFilter, setOwnerFilter] = useState<string>("all");

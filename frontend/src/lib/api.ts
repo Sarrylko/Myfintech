@@ -124,6 +124,27 @@ export async function changePassword(
   });
 }
 
+// ─── Household Settings (locale / currency) ───────────────────────────────────
+
+export interface HouseholdSettings {
+  default_currency: string;
+  default_locale: string;
+  country_code: string;
+}
+
+export async function getHouseholdSettings(): Promise<HouseholdSettings> {
+  return apiFetch<HouseholdSettings>("/api/v1/users/household/settings");
+}
+
+export async function updateHouseholdSettings(
+  data: Partial<HouseholdSettings>
+): Promise<HouseholdSettings> {
+  return apiFetch<HouseholdSettings>("/api/v1/users/household/settings", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
 // ─── Notification Preferences ────────────────────────────────────────────────
 
 export interface NotificationPreferences {
@@ -410,6 +431,8 @@ export async function listAccountTransactions(
 export interface Property {
   id: string;
   address: string;
+  country: string;
+  currency_code: string;
   city: string | null;
   state: string | null;
   zip_code: string | null;
@@ -434,6 +457,8 @@ export interface Property {
 
 export interface PropertyCreate {
   address: string;
+  country?: string;
+  currency_code?: string;
   city?: string;
   state?: string;
   zip_code?: string;

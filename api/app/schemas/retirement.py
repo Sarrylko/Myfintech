@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class RetirementProfileCreate(BaseModel):
+    currency_code: str = "USD"
     birth_year: int
     retirement_age: int = 65
     life_expectancy_age: int = 90
@@ -47,6 +48,7 @@ class RetirementProfileCreate(BaseModel):
 
 
 class RetirementProfileUpdate(BaseModel):
+    currency_code: str | None = None
     birth_year: int | None = None
     retirement_age: int | None = None
     life_expectancy_age: int | None = None
@@ -69,6 +71,7 @@ class RetirementProfileUpdate(BaseModel):
 class RetirementProfileResponse(BaseModel):
     id: uuid.UUID
     household_id: uuid.UUID
+    currency_code: str
     birth_year: int
     retirement_age: int
     life_expectancy_age: int

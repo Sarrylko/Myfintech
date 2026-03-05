@@ -19,6 +19,7 @@ import {
   TransactionSplit,
   CustomCategory,
 } from "@/lib/api";
+import { useCurrency } from "@/lib/currency";
 
 // ─── Category Taxonomy ────────────────────────────────────────────────────────
 
@@ -134,15 +135,6 @@ function getPageNumbers(current: number, total: number): (number | "…")[] {
   return pages;
 }
 
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-function fmtAmt(amount: string): { display: string; isExpense: boolean } {
-  const n = parseFloat(amount);
-  const abs = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(Math.abs(n));
-  return { display: n > 0 ? `-${abs}` : `+${abs}`, isExpense: n > 0 };
-}
 
 /** A single row in the split editor. */
 type SplitLine = { id: string; amount: string; categoryGroup: string; categoryItem: string; notes: string };
@@ -645,7 +637,14 @@ function ImportModal({ accounts, onImported, onClose }: {
 }
 
 export default function TransactionsPage() {
+  const { fmt, fmtDate, locale } = useCurrency();
   const router = useRouter();
+
+  function fmtAmt(amount: string): { display: string; isExpense: boolean } {
+    const n = parseFloat(amount);
+    const abs = fmt(Math.abs(n), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return { display: n > 0 ? `-${abs}` : `+${abs}`, isExpense: n > 0 };
+  }
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
@@ -736,7 +735,7 @@ export default function TransactionsPage() {
       if (t.pending) continue;
       const d = new Date(t.date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const label = d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+      const label = d.toLocaleDateString(locale, { month: "short", year: "2-digit" });
       if (!months[key]) months[key] = { key, label, expenses: 0, income: 0 };
       const amt = parseFloat(t.amount);
       if (amt > 0) months[key].expenses += amt;
@@ -887,20 +886,20 @@ export default function TransactionsPage() {
           <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
             <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Expenses</p>
             <p className="text-xl font-bold text-red-600">
-              -{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(totalExpenses)}
+              -{fmt(totalExpenses)}
             </p>
           </div>
           <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
             <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Income</p>
             <p className="text-xl font-bold text-green-600">
-              +{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(totalIncome)}
+              +{fmt(totalIncome)}
             </p>
           </div>
           <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
             <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net</p>
             <p className={`text-xl font-bold ${netCashFlow >= 0 ? "text-green-600" : "text-red-600"}`}>
               {netCashFlow >= 0 ? "+" : "-"}
-              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Math.abs(netCashFlow))}
+              {fmt(Math.abs(netCashFlow))}
             </p>
           </div>
           <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
@@ -951,7 +950,7 @@ export default function TransactionsPage() {
                       />
                       <Tooltip
                         formatter={(v: number, name: string) => [
-                          new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v),
+                          fmt(v),
                           name.charAt(0).toUpperCase() + name.slice(1),
                         ]}
                         contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
@@ -986,7 +985,7 @@ export default function TransactionsPage() {
                           <div className="flex items-center justify-between text-xs mb-1">
                             <span className="text-gray-700 font-medium truncate max-w-[55%]">{name}</span>
                             <span className="text-gray-500 shrink-0 ml-2">
-                              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(amount)}
+                              {fmt(amount)}
                             </span>
                           </div>
                           <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">

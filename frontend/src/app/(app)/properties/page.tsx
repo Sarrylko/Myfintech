@@ -52,33 +52,15 @@ import {
   PremiumFrequency,
 } from "@/lib/api";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { useCurrency } from "@/lib/currency";
+import { COUNTRIES, CURRENCIES } from "@/lib/countries";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmt(val: string | null | number | undefined): string {
-  if (val === null || val === undefined || val === "") return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(Number(val));
-}
-
-function fmtDec(val: string | null | number | undefined, decimals = 2): string {
-  if (val === null || val === undefined || val === "") return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(Number(val));
-}
-
-function gain(current: string | null, costBasis: number): string {
+function gain(current: string | null, costBasis: number, fmtFn: (v: string | null | number | undefined) => string): string {
   if (!current || costBasis === 0) return "—";
   const diff = Number(current) - costBasis;
-  return `${diff >= 0 ? "+" : ""}${fmt(String(diff))}`;
+  return `${diff >= 0 ? "+" : ""}${fmtFn(String(diff))}`;
 }
 
 function gainColor(current: string | null, costBasis: number): string {
@@ -235,6 +217,8 @@ function TabBtn({
 // ─── Edit Details form types ──────────────────────────────────────────────────
 
 interface DetailForm {
+  country: string;
+  currency_code: string;
   purchase_price: string;
   purchase_date: string;
   closing_costs: string;
@@ -251,6 +235,8 @@ interface DetailForm {
 
 function toDetailForm(p: Property): DetailForm {
   return {
+    country: p.country ?? "US",
+    currency_code: p.currency_code ?? "USD",
     purchase_price: p.purchase_price ? String(Number(p.purchase_price)) : "",
     purchase_date: p.purchase_date
       ? new Date(p.purchase_date).toISOString().split("T")[0]
@@ -271,6 +257,11 @@ function toDetailForm(p: Property): DetailForm {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function PropertiesPage() {
+  const { fmt: fmtRaw, fmtDate, locale } = useCurrency();
+  const fmt = (val: string | null | number | undefined): string => {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val));
+  };
   const router = useRouter();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
@@ -287,6 +278,7 @@ export default function PropertiesPage() {
   // Detail edit panel
   const [editingDetails, setEditingDetails] = useState<string | null>(null);
   const [detailForm, setDetailForm] = useState<DetailForm>({
+    country: "US", currency_code: "USD",
     purchase_price: "", purchase_date: "", closing_costs: "",
     is_primary_residence: false, is_property_managed: false,
     management_fee_pct: "", leasing_fee_amount: "",
@@ -462,6 +454,8 @@ export default function PropertiesPage() {
       else payload.leasing_fee_amount = null;
       payload.zillow_url = detailForm.zillow_url.trim() || null;
       payload.redfin_url = detailForm.redfin_url.trim() || null;
+      payload.country = detailForm.country || "US";
+      payload.currency_code = detailForm.currency_code || "USD";
       payload.county = detailForm.county.trim() || null;
       payload.pin = detailForm.pin.trim() || null;
       payload.entity_id = detailForm.entity_id || null;
@@ -516,7 +510,7 @@ export default function PropertiesPage() {
           <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
             <p className="text-sm text-gray-500 mb-1">Total Gain / Loss</p>
             <p className={`text-2xl font-bold ${gainColor(String(totalValue), totalCostBasis)}`}>
-              {gain(String(totalValue), totalCostBasis)}
+              {gain(String(totalValue), totalCostBasis, fmt)}
             </p>
           </div>
         </div>
@@ -564,6 +558,11 @@ export default function PropertiesPage() {
                       <span className="text-xs bg-gray-100 text-gray-500 rounded px-2 py-0.5">
                         {typeLabel(p.property_type)}
                       </span>
+                      {p.country && p.country !== "US" && (
+                        <span className="text-xs bg-blue-50 text-blue-600 rounded px-2 py-0.5 font-medium">
+                          {p.country}
+                        </span>
+                      )}
                       {p.is_primary_residence && (
                         <span className="text-xs bg-green-100 text-green-700 rounded px-2 py-0.5 font-medium">
                           Primary Residence
@@ -681,7 +680,7 @@ export default function PropertiesPage() {
                     <div>
                       <p className="text-xs text-gray-400 mb-0.5">Purchase Date</p>
                       <p className="font-medium text-gray-700">
-                        {new Date(p.purchase_date).toLocaleDateString("en-US", {
+                        {new Date(p.purchase_date).toLocaleDateString(locale, {
                           month: "short", day: "numeric", year: "numeric",
                         })}
                       </p>
@@ -754,7 +753,7 @@ export default function PropertiesPage() {
                     <div>
                       <p className="text-xs text-gray-400 mb-0.5">Gain / Loss</p>
                       <p className={`font-medium ${gainColor(p.current_value, basis)}`}>
-                        {gain(p.current_value, basis)}
+                        {gain(p.current_value, basis, fmt)}
                       </p>
                     </div>
                   )}
@@ -762,7 +761,7 @@ export default function PropertiesPage() {
                     <div className="ml-auto text-right">
                       <p className="text-xs text-gray-400">Last updated</p>
                       <p className="text-xs text-gray-500">
-                        {new Date(p.last_valuation_date).toLocaleDateString("en-US", {
+                        {new Date(p.last_valuation_date).toLocaleDateString(locale, {
                           month: "short", day: "numeric", year: "numeric",
                         })}
                       </p>
@@ -807,6 +806,34 @@ export default function PropertiesPage() {
                     <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">
                       Property Identification
                     </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label htmlFor={`prop-country-${p.id}`} className="block text-xs font-medium text-gray-600 mb-1">Country</label>
+                        <select
+                          id={`prop-country-${p.id}`}
+                          value={detailForm.country}
+                          onChange={(e) => setDetailForm((f) => ({ ...f, country: e.target.value }))}
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                        >
+                          {COUNTRIES.map((c) => (
+                            <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label htmlFor={`prop-currency-${p.id}`} className="block text-xs font-medium text-gray-600 mb-1">Currency</label>
+                        <select
+                          id={`prop-currency-${p.id}`}
+                          value={detailForm.currency_code}
+                          onChange={(e) => setDetailForm((f) => ({ ...f, currency_code: e.target.value }))}
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                        >
+                          {CURRENCIES.map((c) => (
+                            <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">County</label>
@@ -1113,6 +1140,7 @@ function LoanForm({
   saveLabel: string;
   accounts: import("@/lib/api").Account[];
 }) {
+  const { fmt } = useCurrency();
   function numField(key: string): string {
     const v = form[key];
     return v !== undefined && v !== null && v !== "" ? String(v) : "";
@@ -1137,7 +1165,7 @@ function LoanForm({
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
               {[a.institution_name, a.name, a.mask ? `···${a.mask}` : ""].filter(Boolean).join(" · ")}
-              {a.current_balance ? ` (${Number(a.current_balance).toLocaleString("en-US", { style: "currency", currency: "USD" })})` : ""}
+              {a.current_balance ? ` (${fmt(Number(a.current_balance))})` : ""}
             </option>
           ))}
         </select>
@@ -1216,6 +1244,7 @@ function LoansTab({
   loans: Loan[];
   onUpdate: (updated: Loan[]) => void;
 }) {
+  const { fmt } = useCurrency();
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState<LoanCreate & { [k: string]: unknown }>({ ...BLANK_LOAN });
   const [addSaving, setAddSaving] = useState(false);
@@ -1343,7 +1372,7 @@ function LoansTab({
                   <div>
                     <p className="text-xs text-gray-400">Payment / mo</p>
                     <p className="text-sm text-gray-700">
-                      {l.monthly_payment ? fmtDec(l.monthly_payment) : "—"}
+                      {l.monthly_payment ? fmt(Number(l.monthly_payment), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}
                       {l.escrow_included && (
                         <span className="ml-1 text-xs text-blue-500" title="Escrow included">✓ escrow</span>
                       )}
@@ -1393,6 +1422,7 @@ function CostsTab({
   insurance: InsurancePolicy[];
   onUpdate: (updated: PropertyCost[]) => void;
 }) {
+  const { fmt, locale } = useCurrency();
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ ...BLANK_COST, amount: "" as unknown as number });
   const [addSaving, setAddSaving] = useState(false);
@@ -1555,14 +1585,14 @@ function CostsTab({
                     <span className="text-sm text-gray-700">{c.label || "—"}</span>
                     {c.effective_date && (
                       <p className="text-xs text-gray-400 mt-0.5">
-                        effective {new Date(c.effective_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        effective {new Date(c.effective_date + "T00:00:00").toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" })}
                       </p>
                     )}
                   </div>
                 </div>
                 <div className="flex items-center gap-4 shrink-0">
                   <div className="text-right">
-                    <p className={`text-sm font-semibold ${c.is_escrowed ? "text-gray-400" : "text-gray-900"}`}>{fmtDec(c.amount)}</p>
+                    <p className={`text-sm font-semibold ${c.is_escrowed ? "text-gray-400" : "text-gray-900"}`}>{c.amount != null && c.amount !== "" ? fmt(Number(c.amount), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</p>
                     <p className="text-xs text-gray-400">{c.frequency}{c.is_escrowed ? " · tax record" : ""}</p>
                   </div>
                   <button onClick={() => toggleActive(c)} title={c.is_active ? "Deactivate" : "Activate"}
@@ -1601,10 +1631,10 @@ function CostsTab({
               </div>
               <div className="text-right shrink-0">
                 <p className="text-sm font-semibold text-gray-900">
-                  {fmtDec(toMonthly(Number(ins.premium_amount), ins.premium_frequency))}/mo
+                  {fmt(toMonthly(Number(ins.premium_amount), ins.premium_frequency), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo
                 </p>
                 <p className="text-xs text-gray-400">
-                  {fmtDec(ins.premium_amount!)} {ins.premium_frequency}
+                  {ins.premium_amount != null ? fmt(Number(ins.premium_amount), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"} {ins.premium_frequency}
                 </p>
               </div>
             </div>
@@ -1643,7 +1673,7 @@ function CostsTab({
               <span className="ml-1 text-xs text-yellow-600">· includes insurance premiums</span>
             )}
           </span>
-          <span className="font-semibold text-gray-900">{fmtDec(monthlyTotal)}/mo</span>
+          <span className="font-semibold text-gray-900">{fmt(monthlyTotal, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo</span>
         </div>
       )}
     </div>
@@ -1707,6 +1737,7 @@ function MaintenanceTab({
   expenses: MaintenanceExpense[];
   onUpdate: (updated: MaintenanceExpense[]) => void;
 }) {
+  const { fmt, locale } = useCurrency();
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ ...BLANK_EXPENSE, amount: "" as unknown as number });
   const [addSaving, setAddSaving] = useState(false);
@@ -1865,7 +1896,7 @@ function MaintenanceTab({
               <div className="flex items-center justify-between gap-4 bg-gray-50 rounded-lg px-4 py-2.5">
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <span className="text-xs text-gray-400 shrink-0">
-                    {new Date(e.expense_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    {new Date(e.expense_date + "T12:00:00").toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" })}
                   </span>
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${EXPENSE_COLORS[e.category] ?? EXPENSE_COLORS.other}`}>
                     {e.category.replace(/_/g, " ")}
@@ -1879,7 +1910,7 @@ function MaintenanceTab({
                   {e.vendor && <span className="text-xs text-gray-400 truncate">· {e.vendor}</span>}
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-sm font-semibold text-gray-900">{fmtDec(e.amount)}</span>
+                  <span className="text-sm font-semibold text-gray-900">{e.amount != null && e.amount !== "" ? fmt(Number(e.amount), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</span>
                   <button onClick={() => { setEditId(e.id); setEditForm(expenseToForm(e)); }}
                     className="text-xs text-gray-400 hover:text-primary-600 transition">Edit</button>
                   <button onClick={() => handleDelete(e.id)} disabled={deletingId === e.id}
@@ -1976,10 +2007,10 @@ function MaintenanceTab({
       {expenses.length > 0 && (
         <div className="mt-3 pt-3 border-t border-gray-100 flex gap-6 text-sm">
           <span className="text-gray-500">
-            YTD ({thisYear}): <span className="font-semibold text-gray-900">{fmtDec(ytdTotal)}</span>
+            YTD ({thisYear}): <span className="font-semibold text-gray-900">{fmt(ytdTotal, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </span>
           <span className="text-gray-500">
-            All-time: <span className="font-semibold text-gray-900">{fmtDec(allTotal)}</span>
+            All-time: <span className="font-semibold text-gray-900">{fmt(allTotal, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </span>
         </div>
       )}
@@ -2011,6 +2042,7 @@ function ValuationsTab({
   valuations: PropertyValuation[];
   onUpdate: (updated: PropertyValuation[]) => void;
 }) {
+  const { fmt, locale } = useCurrency();
   const today = new Date().toISOString().split("T")[0];
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ value: "", source: "manual", valuation_date: today, notes: "" });
@@ -2021,7 +2053,7 @@ function ValuationsTab({
   const chartData = [...valuations]
     .sort((a, b) => new Date(a.valuation_date).getTime() - new Date(b.valuation_date).getTime())
     .map((v) => ({
-      date: new Date(v.valuation_date).toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
+      date: new Date(v.valuation_date).toLocaleDateString(locale, { month: "short", year: "2-digit" }),
       value: Number(v.value),
     }));
 
@@ -2113,7 +2145,7 @@ function ValuationsTab({
                 {SOURCE_LABELS[v.source] ?? v.source}
               </span>
               <span className="text-gray-400 text-xs">
-                {new Date(v.valuation_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                {new Date(v.valuation_date).toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" })}
               </span>
               {v.notes && <span className="text-gray-400 text-xs italic">{v.notes}</span>}
             </div>
@@ -2204,6 +2236,7 @@ function DocumentsTab({
   docs: PropertyDocument[];
   onUpdate: (updated: PropertyDocument[]) => void;
 }) {
+  const { locale } = useCurrency();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [category, setCategory] = useState("");
   const [description, setDescription] = useState("");
@@ -2323,7 +2356,7 @@ function DocumentsTab({
                   )}
                   <span className="text-xs text-gray-400">{fmtFileSize(doc.file_size)}</span>
                   <span className="text-xs text-gray-400">
-                    {new Date(doc.uploaded_at).toLocaleDateString()}
+                    {new Date(doc.uploaded_at).toLocaleDateString(locale)}
                   </span>
                   {doc.description && (
                     <span className="text-xs text-gray-500 italic truncate">{doc.description}</span>
@@ -2399,6 +2432,7 @@ function PropertyInsuranceTab({
   policies: InsurancePolicy[];
   onUpdate: (updated: InsurancePolicy[]) => void;
 }) {
+  const { fmt, locale } = useCurrency();
   const [showAddEdit, setShowAddEdit] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<InsurancePolicy | null>(null);
   const [form, setForm] = useState({ ...BLANK_INS_FORM });
@@ -2411,7 +2445,7 @@ function PropertyInsuranceTab({
 
   function fmtPremium(p: InsurancePolicy) {
     if (!p.premium_amount) return "—";
-    return `$${Number(p.premium_amount).toLocaleString()}${INS_FREQ_LABEL[p.premium_frequency] ?? ""}`;
+    return `${fmt(Number(p.premium_amount))}${INS_FREQ_LABEL[p.premium_frequency] ?? ""}`;
   }
 
   function openAdd() {
@@ -2579,13 +2613,13 @@ function PropertyInsuranceTab({
                     <td className="px-3 py-2.5 font-medium text-gray-800">{pol.provider}</td>
                     <td className="px-3 py-2.5 text-right text-gray-700">{fmtPremium(pol)}</td>
                     <td className="px-3 py-2.5 text-right text-gray-700">
-                      {pol.coverage_amount ? `$${Number(pol.coverage_amount).toLocaleString()}` : "—"}
+                      {pol.coverage_amount ? fmt(Number(pol.coverage_amount)) : "—"}
                     </td>
                     <td className="px-3 py-2.5 text-right text-gray-700">
-                      {pol.deductible ? `$${Number(pol.deductible).toLocaleString()}` : "—"}
+                      {pol.deductible ? fmt(Number(pol.deductible)) : "—"}
                     </td>
                     <td className={`px-3 py-2.5 ${renewalDayColor(pol.renewal_date)}`}>
-                      {pol.renewal_date ? new Date(pol.renewal_date).toLocaleDateString() : "—"}
+                      {pol.renewal_date ? new Date(pol.renewal_date).toLocaleDateString(locale) : "—"}
                     </td>
                     <td className="px-3 py-2.5 text-center">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${pol.is_active ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>
@@ -2621,7 +2655,7 @@ function PropertyInsuranceTab({
                       <td colSpan={8} className="px-4 py-3 bg-blue-50/30 text-xs text-gray-600">
                         <div className="flex flex-wrap gap-x-6 gap-y-1">
                           {pol.policy_number && <span><strong>Policy #:</strong> {pol.policy_number}</span>}
-                          {pol.start_date && <span><strong>Start:</strong> {new Date(pol.start_date).toLocaleDateString()}</span>}
+                          {pol.start_date && <span><strong>Start:</strong> {new Date(pol.start_date).toLocaleDateString(locale)}</span>}
                           <span><strong>Auto-Renew:</strong> {pol.auto_renew ? "Yes" : "No"}</span>
                           {pol.notes && <span><strong>Notes:</strong> {pol.notes}</span>}
                         </div>

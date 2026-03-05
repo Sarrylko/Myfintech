@@ -72,13 +72,27 @@ class UserPasswordChange(BaseModel):
     new_password: str
 
 
-
 class HouseholdResponse(BaseModel):
     id: uuid.UUID
     name: str
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class HouseholdSettings(BaseModel):
+    """Locale and currency preferences for a household."""
+    default_currency: str = "USD"
+    default_locale: str = "en-US"
+    country_code: str = "US"
+
+    model_config = {"from_attributes": True}
+
+
+class HouseholdSettingsUpdate(BaseModel):
+    default_currency: str | None = None
+    default_locale: str | None = None
+    country_code: str | None = None
 
 
 class HouseholdMemberCreate(BaseModel):

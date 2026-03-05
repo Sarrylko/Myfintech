@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +20,7 @@ class RetirementProfile(Base):
         UUID(as_uuid=True), ForeignKey("households.id", ondelete="CASCADE"),
         unique=True, index=True
     )
+    currency_code: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")
     birth_year: Mapped[int] = mapped_column(Integer)
     retirement_age: Mapped[int] = mapped_column(Integer, default=65)
     life_expectancy_age: Mapped[int] = mapped_column(Integer, default=90)

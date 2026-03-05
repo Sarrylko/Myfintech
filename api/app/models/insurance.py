@@ -27,6 +27,7 @@ class InsurancePolicy(Base):
     # Core fields
     provider: Mapped[str] = mapped_column(String(255))
     policy_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    currency_code: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")
     premium_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     premium_frequency: Mapped[str] = mapped_column(
         String(20), server_default=text("'monthly'")

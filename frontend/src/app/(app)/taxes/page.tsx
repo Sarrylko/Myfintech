@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useCurrency } from "@/lib/currency";
 import { useRouter } from "next/navigation";
 import {
   listHouseholdMembers,
@@ -32,15 +33,6 @@ interface TaxPropertyData {
 interface TaxData {
   properties: TaxPropertyData[];
   portfolio_total: TaxPropertyData;
-}
-
-function fmt(val: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(val);
 }
 
 function fmtFileSize(bytes: number): string {
@@ -447,6 +439,7 @@ function DocumentsTab({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function TaxCenterPage() {
+  const { fmt } = useCurrency();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [currentYear] = useState(2026); // Fixed year to avoid hydration issues

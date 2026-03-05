@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useCurrency } from "@/lib/currency";
 import {
   detectRecurring,
   confirmRecurring,
@@ -12,22 +13,6 @@ import {
 } from "@/lib/api";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function fmt(val: string | number | null | undefined): string {
-  if (val === null || val === undefined || val === "") return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(val));
-}
-
-function fmtDate(iso: string): string {
-  return new Date(iso + "T00:00:00").toLocaleDateString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
-  });
-}
 
 const FREQ_LABEL: Record<string, string> = {
   weekly: "Weekly",
@@ -77,6 +62,11 @@ function SavedRow({
   onToggle: (id: string, active: boolean) => void;
   onDelete: (id: string) => void;
 }) {
+  const { fmt: fmtRaw } = useCurrency();
+  function fmt(val: string | number | null | undefined): string {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
   return (
     <div className={`flex items-center justify-between px-5 py-3 border-b border-gray-50 last:border-0 ${!rec.is_active ? "opacity-50" : ""}`}>
       <div className="flex items-center gap-3 min-w-0">
@@ -136,6 +126,12 @@ function CandidateRow({
   checked: boolean;
   onCheck: (key: string, val: boolean) => void;
 }) {
+  const { fmt: fmtRaw, fmtDate: fmtDateRaw } = useCurrency();
+  function fmt(val: string | number | null | undefined): string {
+    if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  function fmtDate(iso: string): string { return fmtDateRaw(iso); }
   return (
     <label className={`flex items-center gap-4 px-5 py-3 border-b border-gray-50 last:border-0 cursor-pointer hover:bg-gray-50 transition ${checked ? "bg-blue-50/50" : ""}`}>
       <input
@@ -166,6 +162,7 @@ function CandidateRow({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function RecurringPage() {
+  const { fmt } = useCurrency();
   const [saved, setSaved] = useState<RecurringTransaction[]>([]);
   const [candidates, setCandidates] = useState<RecurringCandidate[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -323,14 +320,14 @@ export default function RecurringPage() {
         <div className="bg-white rounded-xl shadow p-5 border border-gray-100">
           <p className="text-sm text-gray-500 mb-1">Monthly Spend</p>
           <p className="text-2xl font-bold text-blue-600">
-            {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(monthlyTotal)}
+            {fmt(monthlyTotal)}
           </p>
           <p className="text-xs text-gray-400 mt-1">From monthly-frequency items</p>
         </div>
         <div className="bg-white rounded-xl shadow p-5 border border-gray-100">
           <p className="text-sm text-gray-500 mb-1">Annual Spend</p>
           <p className="text-2xl font-bold text-purple-600">
-            {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(monthlyTotal * 12)}
+            {fmt(monthlyTotal * 12)}
           </p>
           <p className="text-xs text-gray-400 mt-1">Monthly × 12 estimate</p>
         </div>

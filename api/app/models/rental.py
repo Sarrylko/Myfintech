@@ -66,6 +66,7 @@ class Lease(Base):
     lease_end: Mapped[date | None] = mapped_column(Date)
     move_in_date: Mapped[date | None] = mapped_column(Date)
     move_out_date: Mapped[date | None] = mapped_column(Date)
+    currency_code: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")
     monthly_rent: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     deposit: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     status: Mapped[str] = mapped_column(String(20), default="active")  # active | ended

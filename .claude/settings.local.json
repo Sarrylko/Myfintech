@@ -48,7 +48,9 @@
       "Bash(bash scripts/obsidian-log.sh:*)",
       "Bash(bash /c/Github/MyFinTech/Myfintech/scripts/obsidian-log.sh)",
       "Bash(set +e)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(grep -n \"USD\\\\|currency\\\\|country\" /c/Github/MyFinTech/Myfintech/api/app/models/*.py)",
+      "Bash(grep -r \"currency\\\\|locale\\\\|timezone\" /c/Github/MyFinTech/Myfintech/api/app/routers/*.py)"
     ]
   }
 }

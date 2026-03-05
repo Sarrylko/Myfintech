@@ -15,6 +15,9 @@ class Household(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     name: Mapped[str] = mapped_column(String(255))
+    default_currency: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")
+    default_locale: Mapped[str] = mapped_column(String(10), default="en-US", server_default="en-US")
+    country_code: Mapped[str] = mapped_column(String(2), default="US", server_default="US")
     price_refresh_interval_minutes: Mapped[int] = mapped_column(Integer, default=15)
     price_refresh_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_price_refresh_at: Mapped[datetime | None] = mapped_column(

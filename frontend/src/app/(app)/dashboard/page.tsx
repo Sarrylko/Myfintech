@@ -33,27 +33,9 @@ import {
 } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
+import { useCurrency } from "@/lib/currency";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmt(value: number, showSign = false): string {
-  const formatted = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(Math.abs(value));
-  if (showSign && value < 0) return `-${formatted}`;
-  return formatted;
-}
-
-function fmtDate(dateStr: string): string {
-  return new Date(dateStr + "T00:00:00").toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function formatBudgetPeriodShort(b: BudgetWithActual): string {
+function formatBudgetPeriodShort(b: BudgetWithActual, fmtDate: (d: string) => string): string {
   const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   if (b.budget_type === "annual") return `${b.year} (Full Year)`;
   if (b.budget_type === "quarterly" && b.start_date) {
@@ -119,6 +101,7 @@ function NetWorthCard({
   color?: string;
   icon: React.ReactNode;
 }) {
+  const { fmt } = useCurrency();
   return (
     <Card>
       <div className="flex items-center gap-2 mb-2">
@@ -146,6 +129,7 @@ function MiniProgressBar({ pct, alertThreshold }: { pct: number; alertThreshold:
 // ─── Budget Status Card ───────────────────────────────────────────────────────
 
 function MonthlyBudgetSection({ budgets }: { budgets: BudgetWithActual[] }) {
+  const { fmt } = useCurrency();
   if (budgets.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-40 text-center">
@@ -219,6 +203,7 @@ function MonthlyBudgetSection({ budgets }: { budgets: BudgetWithActual[] }) {
 // ─── Long-term Budgets Card ───────────────────────────────────────────────────
 
 function LongTermBudgetSection({ budgets }: { budgets: BudgetWithActual[] }) {
+  const { fmt, fmtDate } = useCurrency();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -268,7 +253,7 @@ function LongTermBudgetSection({ budgets }: { budgets: BudgetWithActual[] }) {
               </div>
               <div className="flex-1 min-w-0 flex items-baseline gap-2">
                 <span className="text-sm font-medium text-gray-800 truncate">{b.category.name}</span>
-                <span className="text-xs text-gray-400 shrink-0">{formatBudgetPeriodShort(b)}</span>
+                <span className="text-xs text-gray-400 shrink-0">{formatBudgetPeriodShort(b, fmtDate)}</span>
                 {!isActive && (
                   <span className="text-xs bg-blue-50 text-blue-500 px-1.5 py-0.5 rounded shrink-0">upcoming</span>
                 )}
@@ -288,6 +273,7 @@ function LongTermBudgetSection({ budgets }: { budgets: BudgetWithActual[] }) {
 // ─── Recent Transactions ──────────────────────────────────────────────────────
 
 function RecentTransactionsSection({ transactions }: { transactions: Transaction[] }) {
+  const { fmt, locale } = useCurrency();
   if (transactions.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-40 text-center">
@@ -310,7 +296,7 @@ function RecentTransactionsSection({ transactions }: { transactions: Transaction
               <p className="text-sm text-gray-800 font-medium truncate">
                 {t.merchant_name ?? t.name}
               </p>
-              <p className="text-xs text-gray-400">{fmtDate(t.date)}</p>
+              <p className="text-xs text-gray-400">{new Date(t.date + "T00:00:00").toLocaleDateString(locale, { month: "short", day: "numeric" })}</p>
             </div>
             <span className={`text-sm font-semibold ml-3 shrink-0 ${isIncome ? "text-green-600" : "text-gray-800"}`}>
               {isIncome ? "+" : ""}{fmt(Math.abs(amount))}
@@ -333,6 +319,7 @@ function LiabilitiesSection({
   loans: Loan[];
   properties: Property[];
 }) {
+  const { fmt } = useCurrency();
   if (creditAccounts.length === 0 && loans.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-40 text-center">
@@ -431,14 +418,8 @@ const METRICS = [
   { key: "total_debts",      label: "Liabilities",  color: "#ef4444" },
 ] as const;
 
-function fmtAxis(v: number): string {
-  const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000)     return `$${(v / 1_000).toFixed(0)}K`;
-  return `$${v}`;
-}
-
 function HistoryTooltip({ active, payload, label }: { active?: boolean; payload?: {name: string; value: number; color: string}[]; label?: string }) {
+  const { fmtCompact } = useCurrency();
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-white border border-gray-100 rounded-lg shadow-lg p-3 text-xs min-w-[160px]">
@@ -446,7 +427,7 @@ function HistoryTooltip({ active, payload, label }: { active?: boolean; payload?
       {payload.map((entry) => (
         <div key={entry.name} className="flex justify-between gap-4 mb-0.5">
           <span style={{ color: entry.color }}>{entry.name}</span>
-          <span className="font-semibold text-gray-800">{fmtAxis(entry.value)}</span>
+          <span className="font-semibold text-gray-800">{fmtCompact(entry.value)}</span>
         </div>
       ))}
     </div>
@@ -460,6 +441,7 @@ function FinancialHistorySection({
   snapshots: NetWorthSnapshot[];
   onTakeSnapshot: () => Promise<void>;
 }) {
+  const { fmtCompact, locale } = useCurrency();
   const [timeRange, setTimeRange] = useState<TimeRange>("90D");
   const [visible, setVisible] = useState<Set<string>>(new Set(["net_worth", "total_debts"]));
   const [saving, setSaving] = useState(false);
@@ -472,7 +454,7 @@ function FinancialHistorySection({
   const filtered = snapshots
     .filter((s) => new Date(s.snapshot_date) >= cutoff)
     .map((s) => ({
-      date: fmtDate(s.snapshot_date.substring(0, 10)),
+      date: new Date(s.snapshot_date.substring(0, 10) + "T00:00:00").toLocaleDateString(locale, { month: "short", day: "numeric" }),
       net_worth:         parseFloat(s.net_worth),
       total_cash:        parseFloat(s.total_cash),
       total_investments: parseFloat(s.total_investments),
@@ -573,7 +555,7 @@ function FinancialHistorySection({
               interval="preserveStartEnd"
             />
             <YAxis
-              tickFormatter={fmtAxis}
+              tickFormatter={fmtCompact}
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
               axisLine={false}
@@ -604,16 +586,14 @@ function FinancialHistorySection({
 // ─── Current Spend Chart ──────────────────────────────────────────────────────
 
 function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
+  const { fmt, locale } = useCurrency();
   const now = new Date();
   const data = buildSpendTimeline(transactions);
   const thisMonthSpend = data[data.length - 1]?.thisMonth ?? 0;
   const lastMonthByToday = data[now.getDate() - 1]?.lastMonth ?? 0;
   const diff = thisMonthSpend - lastMonthByToday;
-  const monthName = now.toLocaleString("en-US", { month: "long" });
-  const lastMonthName = new Date(now.getFullYear(), now.getMonth() - 1, 1).toLocaleString("en-US", { month: "long" });
-
-  const fmtCurrency = (v: number) =>
-    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Math.abs(v));
+  const monthName = now.toLocaleString(locale, { month: "long" });
+  const lastMonthName = new Date(now.getFullYear(), now.getMonth() - 1, 1).toLocaleString(locale, { month: "long" });
 
   const CustomTooltip = ({ active, payload, label }: {
     active?: boolean; payload?: { value: number | null; name: string; color: string }[]; label?: number;
@@ -624,12 +604,12 @@ function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
         <p className="text-gray-500 mb-1">Day {label}</p>
         {payload.map((p) => p.value != null && (
           <p key={p.name} className={`font-medium ${p.name === "thisMonth" ? "text-blue-500" : "text-slate-400"}`}>
-            {p.name === "thisMonth" ? monthName : lastMonthName}: {fmtCurrency(p.value)}
+            {p.name === "thisMonth" ? monthName : lastMonthName}: {fmt(p.value)}
           </p>
         ))}
         {payload[0]?.value != null && payload[1]?.value != null && (
           <p className="text-gray-400 mt-1 border-t border-gray-100 pt-1">
-            Δ {fmtCurrency(payload[0].value - payload[1].value)}
+            Δ {fmt(payload[0].value - payload[1].value)}
           </p>
         )}
       </div>
@@ -643,7 +623,7 @@ function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
         <div>
           <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Current Spend</p>
           <p className="text-3xl font-semibold text-gray-900 dark:text-white tabular-nums">
-            {fmtCurrency(thisMonthSpend)}
+            {fmt(thisMonthSpend)}
           </p>
           {thisMonthSpend === 0 && (
             <p className="text-xs text-gray-400 mt-1">No transactions recorded for {monthName} yet</p>
@@ -654,7 +634,7 @@ function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
             diff > 0 ? "bg-amber-50 text-amber-700" : "bg-green-50 text-green-700"
           }`}>
             <span>{diff > 0 ? "▲" : "▼"}</span>
-            <span>{fmtCurrency(Math.abs(diff))} {diff > 0 ? "more" : "less"} than {lastMonthName}</span>
+            <span>{fmt(Math.abs(diff))} {diff > 0 ? "more" : "less"} than {lastMonthName}</span>
           </div>
         )}
       </div>
@@ -744,6 +724,7 @@ function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
   syncing: boolean;
   lastUpdated: Date | null;
 }) {
+  const { fmt } = useCurrency();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (key: string) => setExpanded((p) => ({ ...p, [key]: !p[key] }));
 
@@ -761,8 +742,6 @@ function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
   const investTotal   = sum(investAccs);
   const netCash       = checkingTotal + savingsTotal - creditTotal;
 
-  const fmtBal = (v: number, abs = false) =>
-    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(abs ? Math.abs(v) : v);
 
   function timeAgo(d: Date) {
     const mins = Math.round((Date.now() - d.getTime()) / 60000);
@@ -850,7 +829,7 @@ function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
               </div>
               <span className="flex-1 text-sm text-gray-700 font-medium">{row.label}</span>
               <span className={`text-sm font-semibold tabular-nums ${row.valueColor ?? "text-gray-900"}`}>
-                {fmtBal(row.total)}
+                {fmt(row.total)}
               </span>
               {!row.isNetCash && row.accs.length > 0 ? (
                 <svg className={`w-4 h-4 text-gray-300 transition-transform shrink-0 ${expanded[row.key] ? "rotate-180" : ""}`}
@@ -874,7 +853,7 @@ function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
                       {a.mask && <p className="text-xs text-gray-400">••• {a.mask}</p>}
                     </div>
                     <span className="text-xs font-semibold tabular-nums text-gray-700">
-                      {fmtBal(parseFloat(String(a.current_balance ?? 0)))}
+                      {fmt(parseFloat(String(a.current_balance ?? 0)))}
                     </span>
                   </div>
                 ))}
@@ -888,6 +867,7 @@ function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
 }
 
 export default function Dashboard() {
+  const { fmt, fmtCompact, locale } = useCurrency();
   const today = new Date();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [monthlyBudgets, setMonthlyBudgets] = useState<BudgetWithActual[]>([]);
@@ -985,7 +965,7 @@ export default function Dashboard() {
   const netWorth = cash + investments + realEstate - accountLiabilities;
 
   // ── Budget stats ───────────────────────────────────────────────────────────
-  const monthName = today.toLocaleString("en-US", { month: "long" });
+  const monthName = today.toLocaleString(locale, { month: "long" });
 
   const ICONS = {
     cash: (
@@ -1028,12 +1008,12 @@ export default function Dashboard() {
       {/* Header */}
       <PageHeader
         title="Dashboard"
-        subtitle={today.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+        subtitle={today.toLocaleDateString(locale, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
         action={
           <div className="flex items-center gap-3">
             {lastUpdated && (
               <span className="text-xs text-gray-400 hidden sm:block">
-                Updated {lastUpdated.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                Updated {lastUpdated.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" })}
               </span>
             )}
             <button

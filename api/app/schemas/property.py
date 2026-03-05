@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict
 
 class PropertyCreate(BaseModel):
     address: str
+    country: str = "US"
+    currency_code: str = "USD"
     city: str | None = None
     state: str | None = None
     zip_code: str | None = None
@@ -28,6 +30,8 @@ class PropertyCreate(BaseModel):
 
 class PropertyUpdate(BaseModel):
     address: str | None = None
+    country: str | None = None
+    currency_code: str | None = None
     city: str | None = None
     state: str | None = None
     zip_code: str | None = None
@@ -53,6 +57,8 @@ class PropertyResponse(BaseModel):
 
     id: uuid.UUID
     address: str
+    country: str
+    currency_code: str
     city: str | None
     state: str | None
     zip_code: str | None

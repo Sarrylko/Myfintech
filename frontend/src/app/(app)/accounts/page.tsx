@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useCurrency } from "@/lib/currency";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getLinkToken,
@@ -89,6 +90,7 @@ const DEFAULT_MANUAL: ManualAccountCreate = {
 };
 
 export function AccountsContent() {
+  const { locale, fmt } = useCurrency();
   const router = useRouter();
   const searchParams = useSearchParams();
   const snapSyncedRef = useRef(false);
@@ -361,12 +363,7 @@ export function AccountsContent() {
   function sumBal(list: Account[]) {
     return list.reduce((s, a) => s + (a.current_balance ? parseFloat(a.current_balance) : 0), 0);
   }
-  function fmtK(n: number) {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency", currency: "USD",
-      minimumFractionDigits: 0, maximumFractionDigits: 0,
-    }).format(n);
-  }
+  function fmtK(n: number) { return fmt(n); }
 
   const visibleAccounts = accounts.filter((a) => !a.is_hidden);
   const CHECKING_SUBTYPES = new Set(["checking", "prepaid"]);
@@ -984,7 +981,7 @@ PLAID_ENV=sandbox`}
         const snapAccounts = accounts.filter((a) => a.snaptrade_connection_id === conn.id);
         const isSyncing = syncingSnapId === conn.id;
         const lastSynced = conn.last_synced_at
-          ? new Date(conn.last_synced_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+          ? new Date(conn.last_synced_at).toLocaleString(locale, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
           : null;
 
         return (
@@ -1038,7 +1035,7 @@ PLAID_ENV=sandbox`}
         const itemAccounts = accountsByItem[item.id] ?? [];
         const isSyncing = syncingId === item.id;
         const lastSynced = item.last_synced_at
-          ? new Date(item.last_synced_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+          ? new Date(item.last_synced_at).toLocaleString(locale, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
           : null;
 
         return (
@@ -1091,7 +1088,8 @@ PLAID_ENV=sandbox`}
 }
 
 function AccountRow({ acct, members, onEdit, onDelete }: { acct: Account; members: UserResponse[]; onEdit: () => void; onDelete: () => void }) {
-  const addedDate = new Date(acct.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const { locale } = useCurrency();
+  const addedDate = new Date(acct.created_at).toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" });
   const owner = members.find((m) => m.id === acct.owner_user_id);
 
   return (
@@ -1126,12 +1124,12 @@ function AccountRow({ acct, members, onEdit, onDelete }: { acct: Account; member
         <div className="text-right">
           <div className="text-sm font-semibold text-gray-900">
             {acct.current_balance !== null
-              ? new Intl.NumberFormat("en-US", { style: "currency", currency: acct.currency_code, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(parseFloat(acct.current_balance!))
+              ? new Intl.NumberFormat(locale, { style: "currency", currency: acct.currency_code, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(parseFloat(acct.current_balance!))
               : "—"}
           </div>
           {acct.available_balance !== null && acct.available_balance !== acct.current_balance && (
             <div className="text-xs text-gray-400">
-              {new Intl.NumberFormat("en-US", { style: "currency", currency: acct.currency_code, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(parseFloat(acct.available_balance!))} avail.
+              {new Intl.NumberFormat(locale, { style: "currency", currency: acct.currency_code, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(parseFloat(acct.available_balance!))} avail.
             </div>
           )}
         </div>

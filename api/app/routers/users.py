@@ -8,10 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.security import hash_password, verify_password
-from app.models.user import User
+from app.models.user import Household, User
 from app.schemas.user import (
     HouseholdMemberCreate,
     HouseholdMemberUpdate,
+    HouseholdSettings,
+    HouseholdSettingsUpdate,
     NotificationPreferences,
     UserPasswordChange,
     UserProfileUpdate,
@@ -111,6 +113,45 @@ async def update_notification_prefs(
         monthly_report=user.notif_monthly_report,
         transaction_alerts=user.notif_transaction_alerts,
     )
+
+
+# ─── Household locale / currency settings ─────────────────────────────────────
+
+@router.get("/household/settings", response_model=HouseholdSettings)
+async def get_household_settings(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return locale and currency preferences for the household."""
+    result = await db.execute(
+        select(Household).where(Household.id == user.household_id)
+    )
+    household = result.scalar_one_or_none()
+    if not household:
+        raise HTTPException(status_code=404, detail="Household not found")
+    return HouseholdSettings.model_validate(household)
+
+
+@router.patch("/household/settings", response_model=HouseholdSettings)
+async def update_household_settings(
+    payload: HouseholdSettingsUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update locale and currency preferences (owner only)."""
+    if user.role != "owner":
+        raise HTTPException(status_code=403, detail="Only household owners can change locale settings")
+    result = await db.execute(
+        select(Household).where(Household.id == user.household_id)
+    )
+    household = result.scalar_one_or_none()
+    if not household:
+        raise HTTPException(status_code=404, detail="Household not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(household, field, value)
+    await db.commit()
+    await db.refresh(household)
+    return HouseholdSettings.model_validate(household)
 
 
 # ─── Household member management ──────────────────────────────────────────────

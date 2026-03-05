@@ -19,6 +19,8 @@ class Property(Base):
         UUID(as_uuid=True), ForeignKey("households.id"), index=True
     )
     address: Mapped[str] = mapped_column(String(500))
+    country: Mapped[str] = mapped_column(String(2), default="US", server_default="US")
+    currency_code: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")
     city: Mapped[str | None] = mapped_column(String(100))
     state: Mapped[str | None] = mapped_column(String(50))
     zip_code: Mapped[str | None] = mapped_column(String(20))
