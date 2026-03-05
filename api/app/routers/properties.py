@@ -35,16 +35,8 @@ async def create_property(
 ):
     prop = Property(
         household_id=user.household_id,
-        address=payload.address,
-        city=payload.city,
-        state=payload.state,
-        zip_code=payload.zip_code,
-        property_type=payload.property_type,
-        purchase_price=payload.purchase_price,
-        purchase_date=payload.purchase_date,
-        current_value=payload.current_value,
         last_valuation_date=datetime.now(timezone.utc) if payload.current_value else None,
-        notes=payload.notes,
+        **payload.model_dump(exclude_none=True),
     )
     db.add(prop)
     await db.flush()

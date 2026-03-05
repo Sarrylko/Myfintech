@@ -30,7 +30,7 @@ interface CurrencyContextValue {
   /** Compact format: $1.2M, £850K */
   fmtCompact: (value: number) => string;
   /** Format a date string "YYYY-MM-DD" using the household locale */
-  fmtDate: (date: string) => string;
+  fmtDate: (date: string | null | undefined) => string;
   /** True while the settings are being fetched */
   loading: boolean;
   /** Re-fetch household settings (call after saving locale/currency preferences) */
@@ -51,7 +51,7 @@ const CurrencyContext = createContext<CurrencyContextValue>({
       maximumFractionDigits: 0,
     }).format(Math.abs(v)),
   fmtCompact: (v) => `$${Math.abs(v) >= 1_000_000 ? (v / 1_000_000).toFixed(1) + "M" : Math.abs(v) >= 1_000 ? (v / 1_000).toFixed(0) + "K" : v}`,
-  fmtDate: (d) => new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+  fmtDate: (d) => d ? new Date(d.includes("T") ? d : d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—",
   loading: true,
   refreshSettings: () => {},
 });
@@ -132,12 +132,14 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
   );
 
   const fmtDate = useCallback(
-    (date: string) =>
-      new Date(date + "T00:00:00").toLocaleDateString(locale, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      }),
+    (date: string | null | undefined) =>
+      date
+        ? new Date(date.includes("T") ? date : date + "T00:00:00").toLocaleDateString(locale, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })
+        : "—",
     [locale]
   );
 

@@ -274,6 +274,26 @@ function OverviewTab({
       </div>
 
       <SectionCard>
+        <h3 className="font-semibold text-gray-800 mb-3">Rental Properties</h3>
+        <div className="space-y-1">
+          {properties.map((p) => (
+            <div key={p.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🏠</span>
+                <span className="text-sm font-medium text-gray-800">{p.address}</span>
+                {p.country && p.country !== "US" && (
+                  <span className="text-xs bg-blue-50 text-blue-600 rounded px-2 py-0.5 font-medium">{p.country}</span>
+                )}
+              </div>
+              <span className="text-xs text-gray-400">
+                {p.city && p.state ? `${p.city}, ${p.state}` : p.city ?? p.state ?? ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard>
         <h3 className="font-semibold text-gray-800 mb-4">Active Leases</h3>
         {activeLeases.length === 0 ? (
           <p className="text-sm text-gray-400">No active leases. Add units and tenants to get started.</p>
@@ -460,7 +480,7 @@ function UnitsLeasesTab({
     return (
       <SectionCard>
         <p className="text-sm text-gray-400">
-          No properties yet. <a href="/settings" className="text-primary-600 underline">Add a property</a> first.
+          No properties yet. <a href="/properties" className="text-primary-600 underline">Add a property</a> first.
         </p>
       </SectionCard>
     );
@@ -477,7 +497,9 @@ function UnitsLeasesTab({
           className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
         >
           {properties.map((p) => (
-            <option key={p.id} value={p.id}>{p.address}</option>
+            <option key={p.id} value={p.id}>
+              {p.address}{p.country && p.country !== "US" ? ` (${p.country})` : ""}
+            </option>
           ))}
         </select>
       </div>

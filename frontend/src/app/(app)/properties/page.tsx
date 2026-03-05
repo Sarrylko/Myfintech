@@ -4,6 +4,7 @@ import { useEffect, useState, memo, useCallback, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import {
   listProperties,
+  createProperty,
   updateProperty,
   deleteProperty,
   listLoans,
@@ -50,6 +51,7 @@ import {
   InsurancePolicyCreate,
   PolicyType,
   PremiumFrequency,
+  PropertyCreate,
 } from "@/lib/api";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { useCurrency } from "@/lib/currency";
@@ -288,6 +290,17 @@ export default function PropertiesPage() {
 
   const [deleting, setDeleting] = useState<string | null>(null);
 
+  // Add property modal
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addForm, setAddForm] = useState({
+    address: "", city: "", state: "", zip_code: "",
+    country: "US", currency_code: "USD", property_type: "",
+    is_primary_residence: false, current_value: "",
+    purchase_price: "", purchase_date: "", notes: "",
+  });
+  const [addSaving, setAddSaving] = useState(false);
+  const [addError, setAddError] = useState("");
+
   // Per-property tabs and data
   const [activeTab, setActiveTab] = useState<Record<string, string | null>>({});
   const [loans, setLoans] = useState<Record<string, Loan[]>>({});
@@ -484,6 +497,42 @@ export default function PropertiesPage() {
     }
   }
 
+  async function handleAddProperty(e: React.FormEvent) {
+    e.preventDefault();
+    if (!addForm.address.trim()) return;
+    setAddSaving(true);
+    setAddError("");
+    try {
+      const payload: PropertyCreate = {
+        address: addForm.address.trim(),
+        city: addForm.city || undefined,
+        state: addForm.state || undefined,
+        zip_code: addForm.zip_code || undefined,
+        country: addForm.country || "US",
+        currency_code: addForm.currency_code || "USD",
+        property_type: addForm.property_type || undefined,
+        is_primary_residence: addForm.is_primary_residence,
+        current_value: addForm.current_value ? Number(addForm.current_value) : undefined,
+        purchase_price: addForm.purchase_price ? Number(addForm.purchase_price) : undefined,
+        purchase_date: addForm.purchase_date || undefined,
+        notes: addForm.notes || undefined,
+      };
+      const created = await createProperty(payload);
+      setProperties((prev) => [created, ...prev]);
+      setShowAddModal(false);
+      setAddForm({
+        address: "", city: "", state: "", zip_code: "",
+        country: "US", currency_code: "USD", property_type: "",
+        is_primary_residence: false, current_value: "",
+        purchase_price: "", purchase_date: "", notes: "",
+      });
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Failed to add property");
+    } finally {
+      setAddSaving(false);
+    }
+  }
+
   const totalValue = properties.reduce((sum, p) => sum + (p.current_value ? Number(p.current_value) : 0), 0);
   const totalCostBasis = properties.reduce((sum, p) => sum + costBasis(p), 0);
 
@@ -491,9 +540,13 @@ export default function PropertiesPage() {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold">Real Estate</h2>
-        <a href="/settings" className="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition">
+        <button
+          type="button"
+          onClick={() => setShowAddModal(true)}
+          className="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition"
+        >
           + Add Property
-        </a>
+        </button>
       </div>
 
       {properties.length > 0 && (
@@ -529,9 +582,13 @@ export default function PropertiesPage() {
       ) : properties.length === 0 ? (
         <div className="bg-white rounded-lg shadow border border-gray-100 p-12 text-center text-gray-400">
           <p className="text-lg mb-2">No properties added yet</p>
-          <p className="text-sm mb-4">
-            Go to <a href="/settings" className="text-primary-600 underline">Settings</a> to add your first property.
-          </p>
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            className="mt-2 px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 transition"
+          >
+            Add your first property
+          </button>
         </div>
       ) : (
         <div className="space-y-4">
@@ -1105,6 +1162,148 @@ export default function PropertiesPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Add Property Modal ──────────────────────────────────────────── */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h2 className="font-semibold text-gray-900">Add Property</h2>
+              <button type="button" onClick={() => setShowAddModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            </div>
+            <form onSubmit={handleAddProperty} className="p-6 space-y-4">
+              {addError && (
+                <div className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-4 py-3">{addError}</div>
+              )}
+
+              {/* Address */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Address *</label>
+                <input
+                  required
+                  value={addForm.address}
+                  onChange={(e) => setAddForm((f) => ({ ...f, address: e.target.value }))}
+                  placeholder="123 Main St"
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+
+              {/* City / State / ZIP */}
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">City</label>
+                  <input title="City" value={addForm.city} onChange={(e) => setAddForm((f) => ({ ...f, city: e.target.value }))}
+                    placeholder="City"
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">State</label>
+                  <input title="State" value={addForm.state} onChange={(e) => setAddForm((f) => ({ ...f, state: e.target.value }))}
+                    placeholder="CA"
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">ZIP</label>
+                  <input title="ZIP Code" value={addForm.zip_code} onChange={(e) => setAddForm((f) => ({ ...f, zip_code: e.target.value }))}
+                    placeholder="ZIP"
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                </div>
+              </div>
+
+              {/* Country / Currency */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
+                  <select title="Country" value={addForm.country} onChange={(e) => setAddForm((f) => ({ ...f, country: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500">
+                    {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name} ({c.code})</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Currency</label>
+                  <select title="Currency" value={addForm.currency_code} onChange={(e) => setAddForm((f) => ({ ...f, currency_code: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500">
+                    {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Property Type / Primary Residence */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Property Type</label>
+                  <select title="Property Type" value={addForm.property_type} onChange={(e) => setAddForm((f) => ({ ...f, property_type: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500">
+                    <option value="">— Select —</option>
+                    {(["single_family", "condo", "townhouse", "multi_family", "land", "other"] as const).map((t) => (
+                      <option key={t} value={t}>{typeLabel(t)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-end pb-2">
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={addForm.is_primary_residence}
+                      onChange={(e) => setAddForm((f) => ({ ...f, is_primary_residence: e.target.checked }))}
+                      className="rounded border-gray-300"
+                    />
+                    Primary Residence
+                  </label>
+                </div>
+              </div>
+
+              {/* Current Value / Purchase Price / Purchase Date */}
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Current Value</label>
+                  <input type="number" min="0" step="any" value={addForm.current_value}
+                    onChange={(e) => setAddForm((f) => ({ ...f, current_value: e.target.value }))}
+                    placeholder="0"
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Purchase Price</label>
+                  <input type="number" min="0" step="any" value={addForm.purchase_price}
+                    onChange={(e) => setAddForm((f) => ({ ...f, purchase_price: e.target.value }))}
+                    placeholder="0"
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Purchase Date</label>
+                  <input type="date" title="Purchase Date" value={addForm.purchase_date}
+                    onChange={(e) => setAddForm((f) => ({ ...f, purchase_date: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+                <textarea title="Notes" value={addForm.notes} onChange={(e) => setAddForm((f) => ({ ...f, notes: e.target.value }))}
+                  rows={2} className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary-500" />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addSaving}
+                  className="px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition"
+                >
+                  {addSaving ? "Adding…" : "Add Property"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
@@ -2890,6 +3089,7 @@ function PropertyInsuranceTab({
           </div>
         </div>
       )}
+
     </div>
   );
 }
