@@ -1417,9 +1417,9 @@ export default function SettingsPanel({
     if (open) setActiveTab(initialTab);
   }, [open, initialTab]);
 
-  // Body scroll lock
+  // Body scroll lock — only in modal mode; page mode lets the browser scroll naturally
   useEffect(() => {
-    if (open) {
+    if (open && !asPage) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -1427,7 +1427,7 @@ export default function SettingsPanel({
     return () => {
       document.body.style.overflow = "";
     };
-  }, [open]);
+  }, [open, asPage]);
 
   // ── Page (full-width, no modal overlay) ──────────────────────────────────
   if (asPage) {

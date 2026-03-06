@@ -256,7 +256,7 @@ async def _property_metrics(
     def property_costs_monthly_equiv(costs: list) -> float:
         total = 0.0
         for c in costs:
-            if not c.is_active:
+            if not c.is_active or c.is_escrowed:
                 continue
             amt = float(c.amount)
             if c.frequency == "monthly":
@@ -281,7 +281,7 @@ async def _property_metrics(
     def category_monthly_equiv(cat: str) -> float:
         total = 0.0
         for c in active_costs:
-            if not c.is_active or c.category != cat:
+            if not c.is_active or c.is_escrowed or c.category != cat:
                 continue
             amt = float(c.amount)
             if c.frequency == "monthly":
