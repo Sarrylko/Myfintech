@@ -30,6 +30,7 @@ import {
 } from "@/lib/api";
 import { COUNTRIES, CURRENCIES } from "@/lib/countries";
 import { useCurrency } from "@/lib/currency";
+import { useForex } from "@/components/ForexProvider";
 
 export type SettingsTab =
   | "profile"
@@ -1152,6 +1153,39 @@ function PreferencesTab() {
           </button>
         </form>
       </div>
+
+      {/* ── Exchange Rates ── */}
+      <ExchangeRatesSection />
+    </div>
+  );
+}
+
+function ExchangeRatesSection() {
+  const { refreshing, refreshRates, lastUpdated } = useForex();
+  return (
+    <div className="border border-gray-100 dark:border-gray-800 rounded-xl p-5">
+      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+        Exchange Rates
+      </h3>
+      <p className="text-xs text-gray-400 dark:text-gray-500 mb-3">
+        Used to convert foreign-currency properties to USD on the dashboard.
+        {lastUpdated ? ` Rates cached ${lastUpdated}.` : " Rates not yet loaded."}
+      </p>
+      <button
+        type="button"
+        onClick={refreshRates}
+        disabled={refreshing}
+        className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition"
+      >
+        <svg
+          className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round"
+            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        {refreshing ? "Refreshing…" : "Refresh Exchange Rates"}
+      </button>
     </div>
   );
 }

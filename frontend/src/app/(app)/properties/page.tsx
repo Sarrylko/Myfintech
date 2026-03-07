@@ -56,6 +56,8 @@ import {
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { useCurrency } from "@/lib/currency";
 import { COUNTRIES, CURRENCIES } from "@/lib/countries";
+import { fmtInCurrency, convertToUSD } from "@/lib/forex";
+import { useForex } from "@/components/ForexProvider";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -147,13 +149,13 @@ const EXPENSE_COLORS: Record<string, string> = {
 // ─── Small UI components ──────────────────────────────────────────────────────
 
 function CurrencyField({
-  label, value, onChange, placeholder, hint,
-}: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; hint?: string }) {
+  label, value, onChange, placeholder, hint, symbol = "$",
+}: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; hint?: string; symbol?: string }) {
   return (
     <div>
       <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
       <div className="relative">
-        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{symbol}</span>
         <input
           type="number" min="0" step="any" value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -259,9 +261,25 @@ function toDetailForm(p: Property): DetailForm {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function PropertiesPage() {
-  const { fmt: fmtRaw, fmtDate, locale } = useCurrency();
+  const { fmt: fmtRaw, fmtDate, locale, currency: householdCurrency } = useCurrency();
+  const { rates: fxRates } = useForex();
+  // Look up the symbol for a currency code
+  const currencySymbol = (code: string) =>
+    CURRENCIES.find((c) => c.code === code)?.symbol ?? code;
   const fmt = (val: string | null | number | undefined): string => {
     if (val === null || val === undefined || val === "") return "—";
+    return fmtRaw(Number(val));
+  };
+  // Format a monetary amount in the property's own currency when it differs from the household's
+  const fmtProp = (
+    val: string | null | number | undefined,
+    currencyCode: string | null | undefined
+  ): string => {
+    if (val === null || val === undefined || val === "") return "—";
+    const code = currencyCode || householdCurrency;
+    if (code && code !== householdCurrency) {
+      return fmtInCurrency(Number(val), code);
+    }
     return fmtRaw(Number(val));
   };
   const router = useRouter();
@@ -533,8 +551,24 @@ export default function PropertiesPage() {
     }
   }
 
-  const totalValue = properties.reduce((sum, p) => sum + (p.current_value ? Number(p.current_value) : 0), 0);
-  const totalCostBasis = properties.reduce((sum, p) => sum + costBasis(p), 0);
+  // FX-converted USD totals for summary cards
+  const totalValueUSD = properties.reduce((sum, p) => {
+    const val = p.current_value ? Number(p.current_value) : 0;
+    return sum + convertToUSD(val, p.currency_code || householdCurrency, fxRates);
+  }, 0);
+  const totalCostBasisUSD = properties.reduce((sum, p) => {
+    const basis = costBasis(p);
+    return sum + convertToUSD(basis, p.currency_code || householdCurrency, fxRates);
+  }, 0);
+  // Per-currency breakdown for summary cards (show when portfolio has non-household-currency properties)
+  const valuesByCurrency: Record<string, number> = {};
+  for (const p of properties) {
+    const cur = p.currency_code || householdCurrency;
+    valuesByCurrency[cur] = (valuesByCurrency[cur] ?? 0) + (p.current_value ? Number(p.current_value) : 0);
+  }
+  const currencyBreakdown = Object.keys(valuesByCurrency).some((c) => c !== householdCurrency)
+    ? Object.entries(valuesByCurrency).map(([cur, val]) => `${cur} ${fmtInCurrency(val, cur)}`).join(" · ")
+    : null;
 
   return (
     <div>
@@ -553,17 +587,18 @@ export default function PropertiesPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
             <p className="text-sm text-gray-500 mb-1">Total Current Value</p>
-            <p className="text-2xl font-bold">{fmt(String(totalValue))}</p>
+            <p className="text-2xl font-bold">{fmt(String(totalValueUSD))}</p>
+            {currencyBreakdown && <p className="text-xs text-gray-400 mt-0.5">{currencyBreakdown}</p>}
           </div>
           <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
             <p className="text-sm text-gray-500 mb-1">Total Cost Basis</p>
-            <p className="text-2xl font-bold">{fmt(String(totalCostBasis))}</p>
+            <p className="text-2xl font-bold">{fmt(String(totalCostBasisUSD))}</p>
             <p className="text-xs text-gray-400 mt-0.5">Purchase price + closing costs</p>
           </div>
           <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
             <p className="text-sm text-gray-500 mb-1">Total Gain / Loss</p>
-            <p className={`text-2xl font-bold ${gainColor(String(totalValue), totalCostBasis)}`}>
-              {gain(String(totalValue), totalCostBasis, fmt)}
+            <p className={`text-2xl font-bold ${gainColor(String(totalValueUSD), totalCostBasisUSD)}`}>
+              {gain(String(totalValueUSD), totalCostBasisUSD, fmt)}
             </p>
           </div>
         </div>
@@ -731,7 +766,7 @@ export default function PropertiesPage() {
                 <div className="mt-4 flex flex-wrap gap-6 items-end">
                   <div>
                     <p className="text-xs text-gray-400 mb-0.5">Purchase Price</p>
-                    <p className="font-medium text-gray-700">{fmt(p.purchase_price)}</p>
+                    <p className="font-medium text-gray-700">{fmtProp(p.purchase_price, p.currency_code)}</p>
                   </div>
                   {p.purchase_date && (
                     <div>
@@ -746,7 +781,7 @@ export default function PropertiesPage() {
                   {p.closing_costs && (
                     <div>
                       <p className="text-xs text-gray-400 mb-0.5">Closing Costs</p>
-                      <p className="font-medium text-gray-700">{fmt(p.closing_costs)}</p>
+                      <p className="font-medium text-gray-700">{fmtProp(p.closing_costs, p.currency_code)}</p>
                     </div>
                   )}
                   {/* Current value quick-edit */}
@@ -784,7 +819,7 @@ export default function PropertiesPage() {
                         className="font-semibold text-gray-900 hover:text-primary-600 transition group flex items-center gap-1"
                         title="Click to update value"
                       >
-                        {fmt(p.current_value)}
+                        {fmtProp(p.current_value, p.currency_code)}
                         <span className="text-xs text-gray-300 group-hover:text-primary-400">✏</span>
                       </button>
                     )}
@@ -792,16 +827,16 @@ export default function PropertiesPage() {
                   {loanBalance > 0 && (
                     <div>
                       <p className="text-xs text-gray-400 mb-0.5">Liability</p>
-                      <p className="font-medium text-red-500">{fmt(loanBalance)}</p>
+                      <p className="font-medium text-red-500">{fmtProp(loanBalance, p.currency_code)}</p>
                     </div>
                   )}
                   {monthlyCarrying > 0 && (
                     <div>
                       <p className="text-xs text-gray-400 mb-0.5">Monthly Cost</p>
-                      <p className="font-medium text-orange-600">{fmt(monthlyCarrying)}<span className="text-xs text-gray-400 font-normal">/mo</span></p>
+                      <p className="font-medium text-orange-600">{fmtProp(monthlyCarrying, p.currency_code)}<span className="text-xs text-gray-400 font-normal">/mo</span></p>
                       {monthlyLoanPayment > 0 && monthlyRecurring > 0 && (
                         <p className="text-xs text-gray-400">
-                          {fmt(monthlyLoanPayment)} mortgage + {fmt(monthlyRecurring)} costs
+                          {fmtProp(monthlyLoanPayment, p.currency_code)} mortgage + {fmtProp(monthlyRecurring, p.currency_code)} costs
                         </p>
                       )}
                     </div>
@@ -810,7 +845,7 @@ export default function PropertiesPage() {
                     <div>
                       <p className="text-xs text-gray-400 mb-0.5">Gain / Loss</p>
                       <p className={`font-medium ${gainColor(p.current_value, basis)}`}>
-                        {gain(p.current_value, basis, fmt)}
+                        {gain(p.current_value, basis, (v) => fmtProp(v, p.currency_code))}
                       </p>
                     </div>
                   )}
@@ -837,12 +872,12 @@ export default function PropertiesPage() {
                         <span>
                           Equity{" "}
                           <span className={equity >= 0 ? "text-green-600 font-medium" : "text-red-500 font-medium"}>
-                            {fmt(equity)} ({equityPct.toFixed(1)}%)
+                            {fmtProp(equity, p.currency_code)} ({equityPct.toFixed(1)}%)
                           </span>
                         </span>
                         <span>
                           Total loan balance{" "}
-                          <span className="text-gray-600 font-medium">{fmt(loanBalance)}</span>
+                          <span className="text-gray-600 font-medium">{fmtProp(loanBalance, p.currency_code)}</span>
                         </span>
                       </div>
                       <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -951,6 +986,7 @@ export default function PropertiesPage() {
                         value={detailForm.purchase_price}
                         onChange={(v) => setDetailForm((f) => ({ ...f, purchase_price: v }))}
                         placeholder="450000"
+                        symbol={currencySymbol(detailForm.currency_code || householdCurrency)}
                       />
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">Purchase Date</label>
@@ -966,6 +1002,7 @@ export default function PropertiesPage() {
                         value={detailForm.closing_costs}
                         onChange={(v) => setDetailForm((f) => ({ ...f, closing_costs: v }))}
                         placeholder="8500"
+                        symbol={currencySymbol(detailForm.currency_code || householdCurrency)}
                       />
                     </div>
 
@@ -1108,6 +1145,7 @@ export default function PropertiesPage() {
                   <LoansTab
                     propertyId={p.id}
                     loans={propLoans}
+                    currencyCode={p.currency_code}
                     onUpdate={(updated) => setLoans((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
@@ -1119,6 +1157,7 @@ export default function PropertiesPage() {
                     costs={costs[p.id] ?? []}
                     loans={propLoans}
                     insurance={propInsurance[p.id] ?? []}
+                    currencyCode={p.currency_code}
                     onUpdate={(updated) => setCosts((prev) => ({ ...prev, [p.id]: updated }))}
                   />
                 )}
@@ -1437,13 +1476,22 @@ function LoanForm({
 }
 
 function LoansTab({
-  propertyId, loans, onUpdate,
+  propertyId, loans, currencyCode, onUpdate,
 }: {
   propertyId: string;
   loans: Loan[];
+  currencyCode?: string;
   onUpdate: (updated: Loan[]) => void;
 }) {
-  const { fmt } = useCurrency();
+  const { fmt: fmtHousehold, currency: householdCurrency } = useCurrency();
+  const fmtLoan = (val: string | null | number | undefined, decimals = 0): string => {
+    if (val === null || val === undefined || val === "") return "—";
+    const code = currencyCode || householdCurrency;
+    if (code && code !== householdCurrency) {
+      return fmtInCurrency(Number(val), code);
+    }
+    return fmtHousehold(Number(val), { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  };
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState<LoanCreate & { [k: string]: unknown }>({ ...BLANK_LOAN });
   const [addSaving, setAddSaving] = useState(false);
@@ -1560,7 +1608,7 @@ function LoansTab({
                   </div>
                   <div>
                     <p className="text-xs text-gray-400">Balance</p>
-                    <p className="text-sm font-semibold text-gray-900">{fmt(l.current_balance)}</p>
+                    <p className="text-sm font-semibold text-gray-900">{fmtLoan(l.current_balance)}</p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-400">Rate</p>
@@ -1571,7 +1619,7 @@ function LoansTab({
                   <div>
                     <p className="text-xs text-gray-400">Payment / mo</p>
                     <p className="text-sm text-gray-700">
-                      {l.monthly_payment ? fmt(Number(l.monthly_payment), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}
+                      {l.monthly_payment ? fmtLoan(l.monthly_payment, 2) : "—"}
                       {l.escrow_included && (
                         <span className="ml-1 text-xs text-blue-500" title="Escrow included">✓ escrow</span>
                       )}
@@ -1613,15 +1661,24 @@ const BLANK_COST: PropertyCostCreate = {
 };
 
 function CostsTab({
-  propertyId, costs, loans, insurance, onUpdate,
+  propertyId, costs, loans, insurance, currencyCode, onUpdate,
 }: {
   propertyId: string;
   costs: PropertyCost[];
   loans: Loan[];
   insurance: InsurancePolicy[];
+  currencyCode?: string;
   onUpdate: (updated: PropertyCost[]) => void;
 }) {
-  const { fmt, locale } = useCurrency();
+  const { fmt: fmtHousehold, currency: householdCurrency, locale } = useCurrency();
+  const fmt = (val: string | null | number | undefined, opts?: { minimumFractionDigits?: number; maximumFractionDigits?: number }): string => {
+    if (val === null || val === undefined || val === "") return "—";
+    const code = currencyCode || householdCurrency;
+    if (code && code !== householdCurrency) {
+      return fmtInCurrency(Number(val), code);
+    }
+    return fmtHousehold(Number(val), opts);
+  };
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ ...BLANK_COST, amount: "" as unknown as number });
   const [addSaving, setAddSaving] = useState(false);

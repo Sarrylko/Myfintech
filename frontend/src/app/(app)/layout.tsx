@@ -29,6 +29,7 @@ import { APP_VERSION } from "@/lib/version";
 import { useTheme } from "@/components/ThemeProvider";
 import UserMenu from "@/components/UserMenu";
 import { CurrencyProvider } from "@/lib/currency";
+import { ForexProvider } from "@/components/ForexProvider";
 
 type NavItem = {
   href: string;
@@ -280,7 +281,9 @@ export default function AppLayout({
 
         {/* Page content */}
         <main className="flex-1 p-6 pt-[4.5rem] md:pt-6">
-          <CurrencyProvider>{children}</CurrencyProvider>
+          <CurrencyProvider>
+            <ForexProvider>{children}</ForexProvider>
+          </CurrencyProvider>
         </main>
       </div>
     </div>

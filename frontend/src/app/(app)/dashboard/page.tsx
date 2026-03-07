@@ -34,6 +34,8 @@ import {
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { useCurrency } from "@/lib/currency";
+import { useForex } from "@/components/ForexProvider";
+import { convertToUSD, fmtInCurrency } from "@/lib/forex";
 
 function formatBudgetPeriodShort(b: BudgetWithActual, fmtDate: (d: string) => string): string {
   const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -94,12 +96,14 @@ function NetWorthCard({
   subtext,
   color = "text-gray-900",
   icon,
+  breakdown,
 }: {
   label: string;
   value: number;
   subtext?: string;
   color?: string;
   icon: React.ReactNode;
+  breakdown?: { label: string; amount: string }[];
 }) {
   const { fmt } = useCurrency();
   return (
@@ -109,6 +113,15 @@ function NetWorthCard({
         <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">{label}</p>
       </div>
       <p className={`text-2xl font-bold ${color} dark:text-white`}>{fmt(value)}</p>
+      {breakdown && breakdown.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+          {breakdown.map((b) => (
+            <span key={b.label} className="text-xs text-gray-400">
+              {b.label} {b.amount}
+            </span>
+          ))}
+        </div>
+      )}
       {subtext && <p className="text-xs text-gray-400 mt-1">{subtext}</p>}
     </Card>
   );
@@ -867,7 +880,8 @@ function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
 }
 
 export default function Dashboard() {
-  const { fmt, fmtCompact, locale } = useCurrency();
+  const { fmt, fmtCompact, locale, currency } = useCurrency();
+  const { rates: fxRates } = useForex();
   const today = new Date();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [monthlyBudgets, setMonthlyBudgets] = useState<BudgetWithActual[]>([]);
@@ -959,10 +973,25 @@ export default function Dashboard() {
     .filter((a) => ["credit", "loan"].includes(a.type))
     .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
 
-  const realEstate = properties
-    .reduce((s, p) => s + parseFloat(p.current_value ?? "0"), 0);
+  // Group properties by currency and convert to USD using live FX rates
+  const realEstateByCurrency: Record<string, number> = {};
+  let realEstateUSD = 0;
+  for (const p of properties) {
+    const val = parseFloat(p.current_value ?? "0");
+    const cur = p.currency_code || "USD";
+    realEstateByCurrency[cur] = (realEstateByCurrency[cur] ?? 0) + val;
+    realEstateUSD += convertToUSD(val, cur, fxRates);
+  }
+  const reCurrencies = Object.keys(realEstateByCurrency);
+  // Show breakdown when any property currency differs from household currency
+  const reBreakdown = reCurrencies.some((cur) => cur !== currency)
+    ? reCurrencies.map((cur) => ({
+        label: cur,
+        amount: fmtInCurrency(realEstateByCurrency[cur], cur),
+      }))
+    : undefined;
 
-  const netWorth = cash + investments + realEstate - accountLiabilities;
+  const netWorth = cash + investments + realEstateUSD - accountLiabilities;
 
   // ── Budget stats ───────────────────────────────────────────────────────────
   const monthName = today.toLocaleString(locale, { month: "long" });
@@ -1067,9 +1096,10 @@ export default function Dashboard() {
         />
         <NetWorthCard
           label="Real Estate"
-          value={realEstate}
+          value={realEstateUSD}
           icon={ICONS.realestate}
           subtext={`${properties.length} propert${properties.length !== 1 ? "ies" : "y"}`}
+          breakdown={reBreakdown}
         />
         <NetWorthCard
           label="Liabilities"
