@@ -1,6 +1,9 @@
+import asyncio
+import logging
 import uuid
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -14,6 +17,19 @@ from app.models.business_entity import BusinessEntity
 from app.models.user import User
 from app.schemas.business_document import BusinessDocumentResponse
 from app.services.pdf_extractor import extract_pdf_text
+
+log = logging.getLogger(__name__)
+
+
+async def _trigger_doc_ingest() -> None:
+    """Fire-and-forget: ask the RAG API to re-index all documents."""
+    if not settings.rag_api_url:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f"{settings.rag_api_url}/admin/ingest/docs")
+    except Exception as exc:
+        log.warning("RAG doc ingest trigger failed (non-critical): %s", exc)
 
 router = APIRouter(tags=["business-documents"])
 
@@ -134,6 +150,7 @@ async def upload_document(
     db.add(doc)
     await db.flush()
     await db.refresh(doc)
+    asyncio.create_task(_trigger_doc_ingest())
     return doc
 
 

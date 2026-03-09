@@ -5,7 +5,8 @@ Endpoints:
   GET  /health
   GET  /v1/models
   POST /v1/chat/completions   (streaming + non-streaming)
-  POST /admin/ingest          (trigger full re-ingest)
+  POST /admin/ingest          (trigger full re-ingest: DB + docs)
+  POST /admin/ingest/docs     (trigger docs-only re-ingest, called after file upload)
   GET  /admin/stats           (Qdrant collection stats)
   POST /admin/learn           (save a ChatGPT Q&A to the knowledge base)
   GET  /admin/learned         (list saved Q&A pairs for a household)
@@ -69,6 +70,13 @@ async def _run_full_ingest():
         db_count = await run_db_ingest()
         doc_count = await run_doc_ingest()
         log.info("Full ingest done — DB: %d points, Docs: %d chunks", db_count, doc_count)
+
+
+async def _run_doc_ingest():
+    async with _ingest_lock:
+        log.info("Running docs-only ingest...")
+        doc_count = await run_doc_ingest()
+        log.info("Docs ingest done — %d chunks upserted", doc_count)
 
 
 async def _periodic_db_sync():
@@ -227,6 +235,15 @@ async def trigger_ingest():
         return {"status": "already_running", "message": "Ingest is already in progress."}
     asyncio.create_task(_run_full_ingest())
     return {"status": "started", "message": "Full ingest triggered in background."}
+
+
+@app.post("/admin/ingest/docs")
+async def trigger_doc_ingest():
+    """Docs-only re-ingest — called automatically after file uploads."""
+    if _ingest_lock.locked():
+        return {"status": "already_running", "message": "Ingest is already in progress."}
+    asyncio.create_task(_run_doc_ingest())
+    return {"status": "started", "message": "Docs ingest triggered in background."}
 
 
 @app.get("/admin/stats")

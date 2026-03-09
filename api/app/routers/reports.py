@@ -23,6 +23,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.capital_event import CapitalEvent
 from app.models.property import Property
+from app.models.insurance import InsurancePolicy
 from app.models.property_details import Loan, MaintenanceExpense, PropertyCost
 from app.models.rental import Lease, Payment, RentCharge, Unit
 from app.models.user import User
@@ -302,8 +303,9 @@ async def _property_metrics(
         # Management fee: only if property is managed by property manager
         # Note: charged = gross rent billed to tenant, before PM takes their fee
         mgmt_fee = 0.0
-        if prop.is_property_managed and prop.management_fee_pct:
-            mgmt_fee = charged * float(prop.management_fee_pct) / 100
+        if prop.is_property_managed:
+            pct = float(prop.management_fee_pct) if prop.management_fee_pct else 8.0
+            mgmt_fee = charged * pct / 100
 
         return {
             "loan_payment": round(monthly_debt_service * months, 2),
@@ -907,7 +909,27 @@ async def tax_export(
             else:  # one_time
                 return amt
 
-        insurance_annual = sum(annual_amount(c) for c in costs if c.category == "insurance")
+        # Also pull premiums from insurance_policies linked to this property
+        policies_result = await db.execute(
+            select(InsurancePolicy).where(
+                InsurancePolicy.property_id == prop.id,
+                InsurancePolicy.is_active == True,
+            )
+        )
+        linked_policies = list(policies_result.scalars().all())
+
+        def policy_annual_premium(policy: InsurancePolicy) -> float:
+            amt = float(policy.premium_amount or 0)
+            freq = policy.premium_frequency or "annual"
+            if freq == "monthly":     return amt * 12
+            if freq == "quarterly":   return amt * 4
+            if freq == "semi_annual": return amt * 2
+            return amt  # annual or one_time
+
+        insurance_from_costs    = sum(annual_amount(c) for c in costs if c.category == "insurance")
+        insurance_from_policies = sum(policy_annual_premium(p) for p in linked_policies)
+        insurance_annual        = insurance_from_costs + insurance_from_policies
+
         property_tax_annual = sum(annual_amount(c) for c in costs if c.category == "property_tax")
         hoa_annual = sum(annual_amount(c) for c in costs if c.category == "hoa")
         other_fixed_annual = sum(
@@ -943,8 +965,9 @@ async def tax_export(
 
         # Calculate management fees (based on rent charged, not collected)
         mgmt_fees = 0.0
-        if prop.is_property_managed and prop.management_fee_pct:
-            mgmt_fees = rent_charged * float(prop.management_fee_pct) / 100
+        if prop.is_property_managed:
+            pct = float(prop.management_fee_pct) if prop.management_fee_pct else 8.0
+            mgmt_fees = rent_charged * pct / 100
 
         # Get loan balance at end of year
         loans_result = await db.execute(

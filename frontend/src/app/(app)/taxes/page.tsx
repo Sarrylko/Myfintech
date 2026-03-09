@@ -472,7 +472,7 @@ export default function TaxCenterPage() {
     if (!mounted) return;
     if (activeTab === "summary") loadTaxData();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedYear]);
+  }, [selectedYear, activeTab]);
 
   async function loadTaxData() {
     setLoading(true);

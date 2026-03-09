@@ -45,10 +45,7 @@
       "Bash(xargs grep -l \"investment\\\\|holding\\\\|position\\\\|brokerage\\\\|ticker\")",
       "Bash(cat 'c:\\\\Github\\\\MyFinTech\\\\Myfintech\\\\frontend\\\\src\\\\app\\\\\\(app\\)\\\\budgets\\\\page.tsx')",
       "Bash(docker pull ghcr.io/open-webui/open-webui:main)",
-      "Bash(bash scripts/obsidian-log.sh:*)",
-      "Bash(bash /c/Github/MyFinTech/Myfintech/scripts/obsidian-log.sh)",
-      "Bash(set +e)",
-      "Bash(echo \"exit: $?\")",
+
       "Bash(grep -n \"USD\\\\|currency\\\\|country\" /c/Github/MyFinTech/Myfintech/api/app/models/*.py)",
       "Bash(grep -r \"currency\\\\|locale\\\\|timezone\" /c/Github/MyFinTech/Myfintech/api/app/routers/*.py)"
     ]

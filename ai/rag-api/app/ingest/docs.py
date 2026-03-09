@@ -1,5 +1,5 @@
 """
-Ingests uploaded financial and property documents into Qdrant.
+Ingests uploaded financial, property, and business documents into Qdrant.
 Priority: use extracted_text from DB (fast). Fallback: read PDF from disk via pdfplumber.
 """
 import logging
@@ -156,8 +156,60 @@ async def _ingest_property_documents(conn, all_points: list, doc_root: str):
     log.info("Prepared chunks for %d property documents", count)
 
 
+async def _ingest_business_documents(conn, all_points: list, doc_root: str):
+    rows = conn.execute(text("""
+        SELECT
+            bd.id, bd.household_id, bd.entity_id,
+            bd.filename, bd.stored_filename, bd.category,
+            bd.description, bd.extracted_text,
+            be.name AS entity_name
+        FROM business_documents bd
+        LEFT JOIN business_entities be ON be.id = bd.entity_id
+        ORDER BY bd.uploaded_at DESC
+    """)).fetchall()
+
+    count = 0
+    for r in rows:
+        raw_text = r.extracted_text
+        if not raw_text:
+            file_path = _resolve_path(doc_root, "business", str(r.entity_id), r.stored_filename)
+            if os.path.exists(file_path):
+                raw_text = _extract_pdf(file_path)
+
+        if not raw_text:
+            continue
+
+        entity_label = r.entity_name or str(r.entity_id)
+        prefix = (
+            f"Business document for {entity_label}: {r.filename} "
+            f"(category: {r.category}"
+            + (f", description: {r.description}" if r.description else "")
+            + ")\n\n"
+        )
+
+        for i, chunk in enumerate(_chunk_text(raw_text)):
+            all_points.append({
+                "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"bdoc:{r.id}:chunk:{i}")),
+                "text": prefix + chunk,
+                "payload": {
+                    "source": "doc",
+                    "table": "business_documents",
+                    "record_id": str(r.id),
+                    "household_id": str(r.household_id),
+                    "entity_id": str(r.entity_id),
+                    "entity_name": r.entity_name,
+                    "category": r.category,
+                    "filename": r.filename,
+                    "chunk_index": i,
+                },
+            })
+        count += 1
+
+    log.info("Prepared chunks for %d business documents", count)
+
+
 async def run_doc_ingest():
-    """Ingest all financial and property documents."""
+    """Ingest all financial, property, and business documents."""
     log.info("Starting document ingest...")
     doc_root = settings.finance_doc_root
     engine = _engine()
@@ -172,6 +224,10 @@ async def run_doc_ingest():
             await _ingest_property_documents(conn, all_points, doc_root)
         except Exception as e:
             log.warning("Property document ingest failed: %s", e)
+        try:
+            await _ingest_business_documents(conn, all_points, doc_root)
+        except Exception as e:
+            log.warning("Business document ingest failed: %s", e)
 
     engine.dispose()
 
