@@ -5,13 +5,12 @@ Endpoints:
   GET  /health
   GET  /v1/models
   POST /v1/chat/completions   (streaming + non-streaming)
-  POST /admin/ingest          (trigger full re-ingest: DB + docs)
-  POST /admin/ingest/docs     (trigger docs-only re-ingest, called after file upload)
+  POST /admin/ingest          (proxy → ingest-worker /sync/db)
+  POST /admin/ingest/docs     (proxy → ingest-worker /sync/files)
   GET  /admin/stats           (Qdrant collection stats)
   POST /admin/learn           (save a ChatGPT Q&A to the knowledge base)
   GET  /admin/learned         (list saved Q&A pairs for a household)
 """
-import asyncio
 import logging
 import time
 import uuid
@@ -23,8 +22,6 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import settings
-from app.ingest.db import run_db_ingest
-from app.ingest.docs import run_doc_ingest
 from app.retrieval import collection_count, ensure_collections, search_combined, upsert_points
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
@@ -59,38 +56,6 @@ async def verify_api_key(
     raise HTTPException(status_code=401, detail="Invalid or missing RAG API key")
 
 
-# ── Background sync task ─────────────────────────────────────────────────────
-
-_ingest_lock = asyncio.Lock()
-
-
-async def _run_full_ingest():
-    async with _ingest_lock:
-        log.info("Running full ingest (DB + docs)...")
-        db_count = await run_db_ingest()
-        doc_count = await run_doc_ingest()
-        log.info("Full ingest done — DB: %d points, Docs: %d chunks", db_count, doc_count)
-
-
-async def _run_doc_ingest():
-    async with _ingest_lock:
-        log.info("Running docs-only ingest...")
-        doc_count = await run_doc_ingest()
-        log.info("Docs ingest done — %d chunks upserted", doc_count)
-
-
-async def _periodic_db_sync():
-    interval = settings.db_sync_interval_seconds
-    while True:
-        await asyncio.sleep(interval)
-        log.info("Periodic DB sync triggered (interval: %ds)", interval)
-        try:
-            async with _ingest_lock:
-                await run_db_ingest()
-        except Exception as e:
-            log.error("Periodic DB sync failed: %s", e)
-
-
 async def _wait_for_ollama():
     """Poll Ollama until it responds — models may still be loading."""
     log.info("Waiting for Ollama at %s...", settings.ollama_url)
@@ -103,6 +68,7 @@ async def _wait_for_ollama():
                     return
         except Exception:
             pass
+        import asyncio
         await asyncio.sleep(5)
     log.warning("Ollama did not become ready after 5 minutes — continuing anyway.")
 
@@ -111,24 +77,8 @@ async def _wait_for_ollama():
 async def lifespan(app: FastAPI):
     log.info("Starting MyFintech RAG API...")
     ensure_collections()
-
-    # Wait for Ollama to be ready before ingesting
     await _wait_for_ollama()
-
-    db_count = collection_count(settings.qdrant_collection_db)
-    doc_count = collection_count(settings.qdrant_collection_docs)
-    if db_count == 0 and doc_count == 0:
-        log.info("Collections are empty — running initial full ingest...")
-        asyncio.create_task(_run_full_ingest())
-    else:
-        log.info(
-            "Collections have %d DB points, %d doc points — skipping initial ingest.",
-            db_count, doc_count,
-        )
-
-    # Start periodic DB sync in background
-    asyncio.create_task(_periodic_db_sync())
-
+    log.info("RAG API ready. Ingest is managed by ingest-worker service.")
     yield
     log.info("RAG API shutting down.")
 
@@ -227,23 +177,32 @@ async def chat_completions(request: Request):
         return JSONResponse(result)
 
 
-# ── Admin endpoints ────────────────────────────────────────────────────────────
+# ── Admin endpoints (proxy to ingest-worker) ──────────────────────────────────
+
+async def _proxy_to_ingest_worker(path: str) -> dict:
+    """Forward an ingest trigger to the ingest-worker service."""
+    if not settings.ingest_worker_url:
+        return {"status": "unavailable", "message": "ingest-worker not configured"}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{settings.ingest_worker_url}{path}")
+            return resp.json()
+    except Exception as e:
+        log.warning("Proxy to ingest-worker failed: %s", e)
+        return {"status": "error", "message": str(e)}
+
 
 @app.post("/admin/ingest")
 async def trigger_ingest():
-    if _ingest_lock.locked():
-        return {"status": "already_running", "message": "Ingest is already in progress."}
-    asyncio.create_task(_run_full_ingest())
-    return {"status": "started", "message": "Full ingest triggered in background."}
+    result = await _proxy_to_ingest_worker("/sync/db")
+    return {"status": "proxied", "ingest_worker": result}
 
 
 @app.post("/admin/ingest/docs")
 async def trigger_doc_ingest():
     """Docs-only re-ingest — called automatically after file uploads."""
-    if _ingest_lock.locked():
-        return {"status": "already_running", "message": "Ingest is already in progress."}
-    asyncio.create_task(_run_doc_ingest())
-    return {"status": "started", "message": "Docs ingest triggered in background."}
+    result = await _proxy_to_ingest_worker("/sync/files")
+    return {"status": "proxied", "ingest_worker": result}
 
 
 @app.get("/admin/stats")
@@ -259,7 +218,7 @@ async def stats():
         "fintech_rag_db": {
             "collection": settings.qdrant_collection_db,
             "total_points": db_count,
-            "description": "Live database records (refreshed hourly)",
+            "description": "Live database records (synced by ingest-worker)",
         },
         "fintech_rag_docs": {
             "collection": settings.qdrant_collection_docs,
@@ -274,7 +233,7 @@ async def stats():
         "total_points": db_count + doc_count + learned_count,
         "llm_model": settings.llm_model,
         "embed_model": settings.embed_model,
-        "db_sync_interval_seconds": settings.db_sync_interval_seconds,
+        "ingest_worker_url": settings.ingest_worker_url,
     }
 
 

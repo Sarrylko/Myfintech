@@ -72,6 +72,45 @@ services:
       ollama:
         condition: service_healthy
 
+  # ── Ingest Worker ────────────────────────────────────────────────────────────
+  ingest-worker:
+    build:
+      context: ./ai/ingest-worker
+    container_name: fintech-ingest-worker
+    restart: unless-stopped
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: "postgresql://MyFintechReadonly:Apple%40123@postgres:5432/myfintech"
+      FINANCE_DOC_ROOT: /data/finance
+      EMBED_MODEL: ${RAG_EMBED_MODEL:-nomic-embed-text}
+      QDRANT_COLLECTION_DB: ${RAG_COLLECTION_DB:-fintech_rag_db}
+      QDRANT_COLLECTION_DOCS: ${RAG_COLLECTION_DOCS:-fintech_rag_docs}
+      DB_SYNC_INTERVAL_SECONDS: ${INGEST_DB_SYNC_INTERVAL:-3600}
+      FILE_RECONCILE_INTERVAL_SECONDS: ${INGEST_FILE_RECONCILE_INTERVAL:-3600}
+      FILE_WATCH_ENABLED: ${INGEST_FILE_WATCH:-true}
+      INGEST_API_KEY: ${INGEST_API_KEY:-}
+    volumes:
+      - ${UPLOADS_HOST_PATH:-C:/MyFintechUploads}:/data/finance:ro
+    ports:
+      - "8002:8000"
+    networks:
+      - ai-internal
+      - myfintech_private
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
   # ── RAG API ─────────────────────────────────────────────────────────────────
   rag-api:
     build:
@@ -89,6 +128,7 @@ services:
       QDRANT_COLLECTION: ${RAG_COLLECTION:-fintech_rag}
       DB_SYNC_INTERVAL_SECONDS: ${RAG_DB_SYNC_INTERVAL:-3600}
       RAG_API_KEY: ${RAG_API_KEY:-}
+      INGEST_WORKER_URL: http://ingest-worker:8000
     volumes:
       # Same upload path as the main stack — read-only access to all uploaded files
       - ${UPLOADS_HOST_PATH:-C:/MyFintechUploads}:/data/finance:ro
@@ -104,6 +144,8 @@ services:
         condition: service_healthy
       ollama-init:
         condition: service_completed_successfully
+      ingest-worker:
+        condition: service_healthy
 
   # ── Chat UI ──────────────────────────────────────────────────────────────────
   openwebui:

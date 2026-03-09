@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     qdrant_collection_learned: str = "fintech_rag_learned"  # saved ChatGPT Q&A pairs
     db_sync_interval_seconds: int = 3600
     rag_api_key: str = ""  # set RAG_API_KEY env var to require auth on /v1/ endpoints
+    ingest_worker_url: str = "http://ingest-worker:8000"
 
     class Config:
         env_file = ".env"
