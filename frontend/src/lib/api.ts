@@ -2057,6 +2057,36 @@ export async function getLearnedAnswers(): Promise<{ items: LearnedAnswer[] }> {
   return apiFetch<{ items: LearnedAnswer[] }>("/api/v1/ai/learned");
 }
 
+// ─── Financial Picture ────────────────────────────────────────────────────────
+
+export interface FinancialPictureCache {
+  cached: boolean;
+  report_text: string | null;
+  generated_at: string | null;
+  year: number;
+}
+
+/** Fetch the cached financial picture report (instant, no AI call). */
+export async function getFinancialPicture(year?: number | null): Promise<FinancialPictureCache> {
+  const qs = year ? `?year=${year}` : "";
+  return apiFetch<FinancialPictureCache>(`/api/v1/ai/financial-picture${qs}`);
+}
+
+/** Stream a fresh financial picture report (documents + live DB). Updates cache when done. */
+export async function streamFinancialPicture(year?: number | null): Promise<Response> {
+  const qs = year ? `?year=${year}` : "";
+  const res = await fetch(`${API_BASE}/api/v1/ai/financial-picture${qs}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail || `Financial picture error: ${res.status}`);
+  }
+  return res;
+}
+
 // ─── Vehicles ─────────────────────────────────────────────────────────────────
 
 export interface Vehicle {

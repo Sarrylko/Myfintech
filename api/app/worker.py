@@ -55,6 +55,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.services.notifications.send_monthly_report",
         "schedule": crontab(hour=8, minute=30, day_of_month=1),  # 1st of month 08:30 UTC
     },
+    # ── AI Financial Picture ────────────────────
+    "generate-financial-pictures": {
+        "task": "app.services.financial_picture.generate_all_financial_pictures",
+        "schedule": crontab(hour=7, minute=15),  # Daily at 07:15 UTC (after net-worth snapshot)
+    },
 }
 
 # Explicitly include task modules so the worker registers them on startup.
@@ -65,4 +70,5 @@ celery_app.conf.include = [
     "app.services.networth",
     "app.services.property",
     "app.services.notifications",
+    "app.services.financial_picture",
 ]
