@@ -23,7 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_async_db
+from app.core.database import get_db as get_async_db
 from app.core.deps import get_current_user
 from app.core.redis import get_redis
 from app.models.account import Account
@@ -186,9 +186,10 @@ async def generate_financial_picture(
     if h_row[1] and h_row[1] > 0:
         live_lines.append(f"\nHOLDINGS (live): {h_row[1]} positions, total ${float(h_row[0] or 0):,.2f}")
 
+    prop_ids_for_units = [p.id for p in properties] if properties else []
     units = (await db.execute(
-        select(Unit).where(Unit.household_id == current_user.household_id)
-    )).scalars().all()
+        select(Unit).where(Unit.property_id.in_(prop_ids_for_units))
+    )).scalars().all() if prop_ids_for_units else []
     if units:
         unit_ids = [u.id for u in units]
         active_leases = (await db.execute(

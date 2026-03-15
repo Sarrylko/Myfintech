@@ -134,7 +134,8 @@ def _build_live_snapshot(db: Session, household_id) -> str:
         lines.append(f"\nINVESTMENT HOLDINGS (live): {h_row[1]} positions, total ${float(h_row[0] or 0):,.2f}")
 
     # Active leases
-    units = db.execute(select(Unit).where(Unit.household_id == household_id)).scalars().all()
+    prop_ids_for_units = [p.id for p in properties] if properties else []
+    units = db.execute(select(Unit).where(Unit.property_id.in_(prop_ids_for_units))).scalars().all() if prop_ids_for_units else []
     if units:
         unit_ids = [u.id for u in units]
         active_leases = db.execute(
