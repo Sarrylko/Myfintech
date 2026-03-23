@@ -1062,6 +1062,8 @@ export interface Holding {
   cost_basis: string | null;
   current_value: string | null;
   currency_code: string;
+  asset_class: string | null;
+  coingecko_id: string | null;
   as_of_date: string | null;
   created_at: string;
 }
@@ -1077,6 +1079,8 @@ export interface HoldingCreate {
   cost_basis?: string | null;
   current_value?: string | null;
   currency_code?: string;
+  asset_class?: string | null;
+  coingecko_id?: string | null;
 }
 
 export type HoldingUpdate = Partial<HoldingCreate>;
@@ -1090,6 +1094,18 @@ export interface TickerInfo {
 
 export async function getTickerInfo(symbol: string): Promise<TickerInfo> {
   return apiFetch<TickerInfo>(`/api/v1/investments/ticker-info?symbol=${encodeURIComponent(symbol)}`, {});
+}
+
+export interface CoinInfo {
+  id: string;
+  symbol: string;
+  name: string;
+  last_price: number | null;
+  found: boolean;
+}
+
+export async function cryptoSearch(query: string): Promise<CoinInfo[]> {
+  return apiFetch<CoinInfo[]>(`/api/v1/investments/crypto-search?query=${encodeURIComponent(query)}`, {});
 }
 
 export async function createHolding(accountId: string, data: HoldingCreate): Promise<Holding> {

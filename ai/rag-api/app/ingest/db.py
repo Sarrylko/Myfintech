@@ -766,6 +766,7 @@ def _ingest_holdings(conn, points: list):
         SELECT
             h.id, h.household_id, h.ticker_symbol, h.name,
             h.quantity, h.cost_basis, h.current_value,
+            h.asset_class, h.coingecko_id,
             a.name AS account_name
         FROM holdings h
         LEFT JOIN accounts a ON a.id = h.account_id
@@ -778,9 +779,11 @@ def _ingest_holdings(conn, points: list):
             diff = float(r.current_value) - float(r.cost_basis)
             pct = (diff / float(r.cost_basis) * 100) if r.cost_basis else 0
             gain = f", unrealized P&L: {_fmt_money(diff)} ({pct:.1f}%)"
+        asset_label = "Cryptocurrency" if r.asset_class == "crypto" else "Investment"
+        coin_info = f" (CoinGecko: {r.coingecko_id})" if r.coingecko_id else ""
         text_chunk = (
-            f"Investment holding: {r.name or r.ticker_symbol or 'Unknown'} "
-            f"({'ticker: ' + r.ticker_symbol if r.ticker_symbol else 'no ticker'}), "
+            f"{asset_label} holding: {r.name or r.ticker_symbol or 'Unknown'} "
+            f"({'ticker: ' + r.ticker_symbol if r.ticker_symbol else 'no ticker'}{coin_info}), "
             f"qty: {r.quantity}, current value: {_fmt_money(r.current_value)}, "
             f"account: {r.account_name or 'Unknown'}{gain}"
         )
@@ -793,6 +796,7 @@ def _ingest_holdings(conn, points: list):
                 "record_id": str(r.id),
                 "household_id": str(r.household_id),
                 "ticker": r.ticker_symbol,
+                "asset_class": r.asset_class,
                 "current_value": float(r.current_value) if r.current_value else None,
             },
         })

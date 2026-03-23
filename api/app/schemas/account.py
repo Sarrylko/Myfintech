@@ -115,6 +115,8 @@ class HoldingResponse(BaseModel):
     cost_basis: Decimal | None
     current_value: Decimal | None
     currency_code: str
+    asset_class: str | None = None
+    coingecko_id: str | None = None
     as_of_date: datetime | None
     created_at: datetime
 
@@ -128,6 +130,8 @@ class HoldingCreate(BaseModel):
     cost_basis: Decimal | None = None
     current_value: Decimal | None = None
     currency_code: str = "USD"
+    asset_class: str | None = None
+    coingecko_id: str | None = None
 
 
 class HoldingUpdate(BaseModel):
@@ -137,3 +141,5 @@ class HoldingUpdate(BaseModel):
     cost_basis: Decimal | None = None
     current_value: Decimal | None = None
     currency_code: str | None = None
+    asset_class: str | None = None
+    coingecko_id: str | None = None

@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.account import Account
+from app.models.business_entity import BusinessEntity  # noqa: F401 — resolves FK for Account.entity_id
 from app.models.investment import Holding
+from app.models.snaptrade import SnapTradeConnection  # noqa: F401 — resolves FK for Account.snaptrade_connection_id
 from app.models.user import Household
 from app.worker import celery_app
 
@@ -130,6 +132,33 @@ def next_market_open() -> datetime | None:
     return None
 
 
+_CG_BASE = "https://api.coingecko.com/api/v3"
+
+
+def _fetch_crypto_prices(coingecko_ids: list[str]) -> dict[str, Decimal]:
+    """Batch-fetch USD prices for a list of CoinGecko IDs. Returns {id: price}."""
+    if not coingecko_ids:
+        return {}
+    try:
+        r = http_requests.get(
+            f"{_CG_BASE}/simple/price",
+            params={"ids": ",".join(coingecko_ids), "vs_currencies": "usd"},
+            timeout=8,
+        )
+        if r.status_code != 200:
+            logger.warning("CoinGecko price fetch returned %s", r.status_code)
+            return {}
+        result: dict[str, Decimal] = {}
+        for coin_id, data in r.json().items():
+            usd = data.get("usd")
+            if usd and usd > 0:
+                result[coin_id] = Decimal(str(round(float(usd), 8)))
+        return result
+    except Exception as exc:
+        logger.warning("CoinGecko price fetch failed: %s", exc)
+        return {}
+
+
 def refresh_prices_for_household(household_id: uuid.UUID, session: Session) -> int:
     """Fetch live prices for all holdings in a household. Returns count updated."""
     result = session.execute(
@@ -143,15 +172,24 @@ def refresh_prices_for_household(household_id: uuid.UUID, session: Session) -> i
     if not holdings:
         return 0
 
-    # Group holdings by ticker
-    ticker_to_holdings: dict[str, list[Holding]] = {}
+    # Split into crypto (CoinGecko) vs equity (Yahoo Finance)
+    crypto_holdings: list[Holding] = []
+    equity_holdings: list[Holding] = []
     for h in holdings:
-        sym = h.ticker_symbol.upper()
-        ticker_to_holdings.setdefault(sym, []).append(h)
+        if h.asset_class == "crypto" and h.coingecko_id:
+            crypto_holdings.append(h)
+        else:
+            equity_holdings.append(h)
 
     updated = 0
     now_utc = datetime.now(timezone.utc)
     account_ids: set[uuid.UUID] = set()
+
+    # ── Equity: Yahoo Finance ──────────────────────────────────────────────────
+    ticker_to_holdings: dict[str, list[Holding]] = {}
+    for h in equity_holdings:
+        sym = h.ticker_symbol.upper()
+        ticker_to_holdings.setdefault(sym, []).append(h)
 
     for sym, h_list in ticker_to_holdings.items():
         price_dec = _fetch_price(sym)
@@ -165,11 +203,30 @@ def refresh_prices_for_household(household_id: uuid.UUID, session: Session) -> i
                 account_ids.add(h.account_id)
             updated += 1
 
+    # ── Crypto: CoinGecko (24/7) ───────────────────────────────────────────────
+    id_to_holdings: dict[str, list[Holding]] = {}
+    for h in crypto_holdings:
+        id_to_holdings.setdefault(h.coingecko_id, []).append(h)
+
+    if id_to_holdings:
+        crypto_prices = _fetch_crypto_prices(list(id_to_holdings.keys()))
+        for coin_id, price_dec in crypto_prices.items():
+            for h in id_to_holdings[coin_id]:
+                h.current_value = price_dec * h.quantity
+                h.as_of_date = now_utc
+                if h.account_id:
+                    account_ids.add(h.account_id)
+                updated += 1
+        # Log coins with no price returned
+        for coin_id in id_to_holdings:
+            if coin_id not in crypto_prices:
+                logger.debug("No crypto price available for coingecko_id=%s", coin_id)
+
     # Sync current_balance on each affected account to sum of its holdings
     for account_id in account_ids:
         try:
             account = session.get(Account, account_id)
-            if account and account.is_manual:
+            if account:
                 all_holdings = session.execute(
                     select(Holding).where(Holding.account_id == account_id)
                 ).scalars().all()
@@ -191,9 +248,7 @@ def refresh_prices_for_household(household_id: uuid.UUID, session: Session) -> i
 @celery_app.task(name="app.services.price_refresh.refresh_investment_prices")
 def refresh_investment_prices() -> None:
     """Celery task: refresh investment prices for all households where due."""
-    if not is_market_open():
-        logger.debug("Market is closed — skipping price refresh")
-        return
+    market_open = is_market_open()
 
     engine = create_engine(settings.database_url_sync, pool_pre_ping=True)
     now_utc = datetime.now(timezone.utc)
@@ -210,6 +265,22 @@ def refresh_investment_prices() -> None:
                 elapsed = now_utc - hh.last_price_refresh_at
                 if elapsed < timedelta(minutes=hh.price_refresh_interval_minutes):
                     continue
+
+            # Check if this household has any crypto holdings (runs 24/7)
+            has_crypto = session.execute(
+                select(Holding.id).where(
+                    Holding.household_id == hh.id,
+                    Holding.asset_class == "crypto",
+                    Holding.coingecko_id.isnot(None),
+                ).limit(1)
+            ).scalar_one_or_none()
+
+            # If market is closed and no crypto holdings, skip entirely
+            if not market_open and not has_crypto:
+                logger.debug(
+                    "Market closed, no crypto — skipping household %s", hh.id
+                )
+                continue
 
             try:
                 count = refresh_prices_for_household(hh.id, session)

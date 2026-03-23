@@ -9,6 +9,7 @@ import {
   updateHolding,
   deleteHolding,
   getTickerInfo,
+  cryptoSearch,
   getRefreshStatus,
   getMarketStatus,
   refreshInvestmentPrices,
@@ -49,6 +50,10 @@ const RETIREMENT_SUBTYPES = new Set([
 function isRetirement(subtype: string | null): boolean {
   if (!subtype) return false;
   return RETIREMENT_SUBTYPES.has(subtype.toLowerCase());
+}
+
+function isCrypto(subtype: string | null): boolean {
+  return subtype?.toLowerCase() === "crypto exchange";
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -99,7 +104,7 @@ function totalBalance(accounts: Account[]): number {
 
 // ─── Holdings Table ───────────────────────────────────────────────────────────
 
-const BLANK_ADD: HoldingCreate = { ticker_symbol: "", name: "", quantity: "", cost_basis: "", current_value: "" };
+const BLANK_ADD: HoldingCreate = { ticker_symbol: "", name: "", quantity: "", cost_basis: "", current_value: "", asset_class: null, coingecko_id: null };
 
 // Convert empty strings to null so Pydantic accepts optional Decimal fields
 function nullifyEmpty<T extends Record<string, unknown>>(form: T): T {
@@ -111,13 +116,14 @@ function nullifyEmpty<T extends Record<string, unknown>>(form: T): T {
 }
 
 function HoldingsTable({
-  holdings, loading, isManual, accountId, onChanged,
+  holdings, loading, isManual, accountId, onChanged, isCryptoAccount,
 }: {
   holdings: Holding[];
   loading: boolean;
   isManual: boolean;
   accountId: string;
   onChanged: () => void;
+  isCryptoAccount?: boolean;
 }) {
   const { fmt: fmtRaw, locale } = useCurrency();
   const fmt = (val: string | number | null | undefined, decimals = 0): string => {
@@ -147,15 +153,44 @@ function HoldingsTable({
     tickerTimer.current = setTimeout(async () => {
       setLookingUpTicker(true);
       try {
-        const info = await getTickerInfo(ticker);
-        const resolvedName = info.found ? (info.name ?? "Unknown") : "Unknown";
-        const price = info.last_price ?? null;
-        if (isAdd) {
-          addLastPrice.current = price;
-          setAddForm((p) => ({ ...p, name: resolvedName, current_value: calcValue(price, p.quantity) || p.current_value }));
+        if (isCryptoAccount) {
+          const results = await cryptoSearch(ticker);
+          if (results.length > 0) {
+            const top = results[0];
+            const price = top.last_price ?? null;
+            if (isAdd) {
+              addLastPrice.current = price;
+              setAddForm((p) => ({
+                ...p,
+                ticker_symbol: top.symbol.toUpperCase(),
+                name: top.name,
+                coingecko_id: top.id,
+                asset_class: "crypto",
+                current_value: calcValue(price, p.quantity) || p.current_value,
+              }));
+            } else {
+              editLastPrice.current = price;
+              setEditForm((p) => ({
+                ...p,
+                ticker_symbol: top.symbol.toUpperCase(),
+                name: top.name,
+                coingecko_id: top.id,
+                asset_class: "crypto",
+                current_value: calcValue(price, p.quantity) || p.current_value,
+              }));
+            }
+          }
         } else {
-          editLastPrice.current = price;
-          setEditForm((p) => ({ ...p, name: resolvedName, current_value: calcValue(price, p.quantity) || p.current_value }));
+          const info = await getTickerInfo(ticker);
+          const resolvedName = info.found ? (info.name ?? "Unknown") : "Unknown";
+          const price = info.last_price ?? null;
+          if (isAdd) {
+            addLastPrice.current = price;
+            setAddForm((p) => ({ ...p, name: resolvedName, current_value: calcValue(price, p.quantity) || p.current_value }));
+          } else {
+            editLastPrice.current = price;
+            setEditForm((p) => ({ ...p, name: resolvedName, current_value: calcValue(price, p.quantity) || p.current_value }));
+          }
         }
       } catch {
         // silently ignore lookup errors
@@ -173,6 +208,8 @@ function HoldingsTable({
       quantity: h.quantity,
       cost_basis: h.cost_basis ?? "",
       current_value: h.current_value ?? "",
+      asset_class: h.asset_class ?? null,
+      coingecko_id: h.coingecko_id ?? null,
     });
     setRowError("");
   }
@@ -263,7 +300,7 @@ function HoldingsTable({
                 return (
                   <tr key={h.id} className="border-t border-blue-100 bg-blue-50/40">
                     <td className="px-4 py-2">
-                      <input className={inp} placeholder="AAPL" value={editForm.ticker_symbol ?? ""} onChange={(e) => { const val = e.target.value.toUpperCase(); setEditForm((p) => ({ ...p, ticker_symbol: val })); scheduleLookup(val, false); }} />
+                      <input className={inp} placeholder={isCryptoAccount ? "BTC" : "AAPL"} value={editForm.ticker_symbol ?? ""} onChange={(e) => { const val = e.target.value.toUpperCase(); setEditForm((p) => ({ ...p, ticker_symbol: val })); scheduleLookup(val, false); }} />
                     </td>
                     <td className="px-4 py-2">
                       <input className={inp} placeholder={lookingUpTicker ? "Looking up…" : "Apple Inc."} value={editForm.name ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))} />
@@ -300,8 +337,20 @@ function HoldingsTable({
                 <tr key={h.id} className="border-t border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-2.5 font-mono font-semibold text-gray-800">
                     {h.ticker_symbol ? (
-                      <a href={`https://finance.yahoo.com/quote/${h.ticker_symbol}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 hover:underline">
+                      <a
+                        href={
+                          h.asset_class === "crypto" && h.coingecko_id
+                            ? `https://www.coingecko.com/en/coins/${h.coingecko_id}`
+                            : `https://finance.yahoo.com/quote/${h.ticker_symbol}`
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-800 hover:underline"
+                      >
                         {h.ticker_symbol}
+                        {h.asset_class === "crypto" && (
+                          <span className="ml-1 text-xs font-normal text-yellow-600 font-sans">₿</span>
+                        )}
                       </a>
                     ) : (
                       <span className="text-gray-400 font-sans font-normal">—</span>
@@ -341,10 +390,10 @@ function HoldingsTable({
             {showAddForm && (
               <tr className="border-t border-green-100 bg-green-50/40">
                 <td className="px-4 py-2">
-                  <input className={inp} placeholder="AAPL" value={addForm.ticker_symbol ?? ""} onChange={(e) => { const val = e.target.value.toUpperCase(); setAddForm((p) => ({ ...p, ticker_symbol: val })); scheduleLookup(val, true); }} />
+                  <input className={inp} placeholder={isCryptoAccount ? "BTC, ETH…" : "AAPL"} value={addForm.ticker_symbol ?? ""} onChange={(e) => { const val = e.target.value.toUpperCase(); setAddForm((p) => ({ ...p, ticker_symbol: val })); scheduleLookup(val, true); }} />
                 </td>
                 <td className="px-4 py-2">
-                  <input className={inp} placeholder={lookingUpTicker ? "Looking up…" : "Auto-filled from ticker"} value={addForm.name ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))} />
+                  <input className={inp} placeholder={lookingUpTicker ? "Looking up…" : isCryptoAccount ? "Auto-filled from search" : "Auto-filled from ticker"} value={addForm.name ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))} />
                 </td>
                 <td className="px-4 py-2">
                   <input className={`${inp} text-right`} type="number" step="any" placeholder="Shares *" value={addForm.quantity} onChange={(e) => { const qty = e.target.value; setAddForm((p) => ({ ...p, quantity: qty, current_value: calcValue(addLastPrice.current, qty) || p.current_value })); }} />
@@ -1054,7 +1103,7 @@ function TransactionActivityView({
 // ─── Account Row ─────────────────────────────────────────────────────────────
 
 function AccountRow({
-  account, ownerName, expanded, onToggle, holdings, holdingsLoading, onHoldingChanged,
+  account, ownerName, expanded, onToggle, holdings, holdingsLoading, onHoldingChanged, isCryptoAccount,
 }: {
   account: Account;
   ownerName?: string;
@@ -1063,6 +1112,7 @@ function AccountRow({
   holdings: Holding[];
   holdingsLoading: boolean;
   onHoldingChanged: (accountId: string) => void;
+  isCryptoAccount?: boolean;
 }) {
   const { fmt: fmtRaw } = useCurrency();
   const fmt = (val: string | number | null | undefined, decimals = 0): string => {
@@ -1137,6 +1187,7 @@ function AccountRow({
               isManual={account.is_manual}
               accountId={account.id}
               onChanged={() => onHoldingChanged(account.id)}
+              isCryptoAccount={isCryptoAccount}
             />
           ) : (
             <TransactionActivityView
@@ -1158,7 +1209,7 @@ function AccountRow({
 
 function Segment({
   title, subtitle, accounts, accentClass, emptyText, memberMap,
-  expandedId, onToggle, holdingsMap, holdingsLoadingMap, onHoldingChanged,
+  expandedId, onToggle, holdingsMap, holdingsLoadingMap, onHoldingChanged, isCryptoSegment,
 }: {
   title: string;
   subtitle: string;
@@ -1171,6 +1222,7 @@ function Segment({
   holdingsMap: Record<string, Holding[]>;
   holdingsLoadingMap: Record<string, boolean>;
   onHoldingChanged: (accountId: string) => void;
+  isCryptoSegment?: boolean;
 }) {
   const { fmt: fmtRaw } = useCurrency();
   const fmt = (val: string | number | null | undefined, decimals = 0): string => {
@@ -1204,6 +1256,7 @@ function Segment({
               holdings={holdingsMap[a.id] ?? []}
               holdingsLoading={holdingsLoadingMap[a.id] ?? false}
               onHoldingChanged={onHoldingChanged}
+              isCryptoAccount={isCryptoSegment}
             />
           ))}
         </div>
@@ -1326,11 +1379,13 @@ export default function InvestmentsPage() {
     ? accounts.filter((a) => !a.owner_user_id)
     : accounts.filter((a) => a.owner_user_id === ownerFilter);
 
-  const brokerage = filtered.filter((a) => !isRetirement(a.subtype));
+  const crypto = filtered.filter((a) => isCrypto(a.subtype));
+  const brokerage = filtered.filter((a) => !isRetirement(a.subtype) && !isCrypto(a.subtype));
   const retirement = filtered.filter((a) => isRetirement(a.subtype));
+  const totalCrypto = totalBalance(crypto);
   const totalBrokerage = totalBalance(brokerage);
   const totalRetirement = totalBalance(retirement);
-  const totalAll = totalBrokerage + totalRetirement;
+  const totalAll = totalBrokerage + totalRetirement + totalCrypto;
 
   return (
     <div>
@@ -1362,7 +1417,7 @@ export default function InvestmentsPage() {
       )}
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white rounded-xl shadow p-5 border border-gray-100">
           <p className="text-sm text-gray-500 mb-1">Total Investments</p>
           <p className="text-2xl font-bold text-gray-900">{loading ? "…" : fmt(totalAll)}</p>
@@ -1378,6 +1433,11 @@ export default function InvestmentsPage() {
           <p className="text-2xl font-bold text-purple-600">{loading ? "…" : fmt(totalRetirement)}</p>
           <p className="text-xs text-gray-400 mt-1">{retirement.length} account{retirement.length !== 1 ? "s" : ""}</p>
         </div>
+        <div className="bg-white rounded-xl shadow p-5 border border-gray-100">
+          <p className="text-sm text-gray-500 mb-1">Crypto & Digital Assets</p>
+          <p className="text-2xl font-bold text-yellow-600">{loading ? "…" : fmt(totalCrypto)}</p>
+          <p className="text-xs text-gray-400 mt-1">{crypto.length} account{crypto.length !== 1 ? "s" : ""}</p>
+        </div>
       </div>
 
       {/* Price refresh status bar */}
@@ -1391,6 +1451,14 @@ export default function InvestmentsPage() {
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${marketStatus.is_open ? "bg-green-500" : "bg-gray-400"}`} />
             {marketStatus.is_open ? "Market Open" : "Market Closed"}
+          </span>
+        )}
+
+        {/* Crypto 24/7 badge */}
+        {crypto.length > 0 && (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-yellow-100 text-yellow-700">
+            <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
+            Crypto: 24/7
           </span>
         )}
 
@@ -1468,6 +1536,20 @@ export default function InvestmentsPage() {
             holdingsMap={holdingsMap}
             holdingsLoadingMap={holdingsLoadingMap}
             onHoldingChanged={refetchHoldings}
+          />
+          <Segment
+            title="Crypto & Digital Assets"
+            subtitle="Bitcoin, Ethereum, and other cryptocurrency holdings — prices refresh 24/7 via CoinGecko"
+            accounts={crypto}
+            accentClass="text-yellow-600"
+            emptyText={'No crypto accounts. Add a manual account with subtype "Crypto Exchange" (e.g. Coinbase, Binance, Kraken).'}
+            memberMap={memberMap}
+            expandedId={expandedId}
+            onToggle={handleToggle}
+            holdingsMap={holdingsMap}
+            holdingsLoadingMap={holdingsLoadingMap}
+            onHoldingChanged={refetchHoldings}
+            isCryptoSegment={true}
           />
         </div>
       )}

@@ -565,6 +565,8 @@ async def create_holding(
         cost_basis=payload.cost_basis,
         current_value=payload.current_value,
         currency_code=payload.currency_code,
+        asset_class=payload.asset_class,
+        coingecko_id=payload.coingecko_id,
         as_of_date=datetime.now(timezone.utc),
     )
     db.add(holding)

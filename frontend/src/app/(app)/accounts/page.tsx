@@ -65,6 +65,7 @@ const SUBTYPES: Record<string, { value: string; label: string }[]> = {
     { value: "401k", label: "401(k)" },
     { value: "ira", label: "IRA" },
     { value: "roth", label: "Roth IRA" },
+    { value: "crypto exchange", label: "Crypto Exchange" },
   ],
   loan: [
     { value: "mortgage", label: "Mortgage" },
@@ -295,10 +296,9 @@ export function AccountsContent() {
     setSnapConnecting(true); setSnapError("");
     try {
       const { redirect_url } = await getSnapTradeConnectUrl();
-      window.open(redirect_url, "_blank");
+      window.location.href = redirect_url;
     } catch (e) {
       setSnapError(e instanceof Error ? e.message : "Failed to open SnapTrade portal");
-    } finally {
       setSnapConnecting(false);
     }
   }
@@ -419,6 +419,13 @@ export function AccountsContent() {
             className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm font-medium disabled:opacity-50"
           >
             {snapConnecting ? "Opening..." : "📊 Connect Brokerage"}
+          </button>
+          <button
+            onClick={handleSyncSnapAuth}
+            className="border border-indigo-200 text-indigo-600 px-4 py-2 rounded-lg hover:bg-indigo-50 transition text-sm font-medium"
+            title="Pull newly connected accounts from SnapTrade"
+          >
+            ↻ Sync Authorizations
           </button>
         </div>
       </div>

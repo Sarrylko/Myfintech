@@ -106,9 +106,9 @@ async def _sync_connection(
         connection.error_code = str(exc)[:255]
         return {"accounts_synced": 0, "holdings_synced": 0}
 
-    # Filter to accounts belonging to this brokerage authorization
+    # Use all accounts — SnapTrade doesn't always populate brokerage_authorization on account objects
     auth_id = connection.snaptrade_authorization_id
-    snap_accounts = [a for a in all_accounts if _get_auth_id(a) == auth_id]
+    snap_accounts = [a for a in all_accounts if _get_auth_id(a) == auth_id] or all_accounts
 
     accounts_synced = 0
     holdings_synced = 0
@@ -138,6 +138,7 @@ async def _sync_connection(
                 subtype="brokerage",
                 current_balance=total_val,
                 is_manual=False,
+                is_hidden=False,
             )
             db.add(acct)
         await db.flush()
@@ -166,10 +167,17 @@ async def _sync_connection(
         for pos in positions:
             sym_obj = _attr(pos, "symbol")
             # symbol.symbol may be a nested object with a .symbol attribute
-            ticker = _attr(sym_obj, "symbol") if sym_obj else None
-            if ticker and not isinstance(ticker, str):
-                ticker = _attr(ticker, "symbol")
-            name = _attr(sym_obj, "description") if sym_obj else None
+            inner_sym = _attr(sym_obj, "symbol") if sym_obj else None
+            if inner_sym and not isinstance(inner_sym, str):
+                ticker = _attr(inner_sym, "symbol")
+                name = _attr(inner_sym, "description")
+                # Detect crypto from SnapTrade symbol type
+                sym_type = _attr(inner_sym, "type")
+                is_crypto = _attr(sym_type, "code") == "crypto" if sym_type else False
+            else:
+                ticker = inner_sym
+                name = _attr(sym_obj, "description") if sym_obj else None
+                is_crypto = False
             units = _safe_decimal(_attr(pos, "units"))
             avg_price = _safe_decimal(_attr(pos, "average_purchase_price"))
             mkt_value = _safe_decimal(_attr(pos, "market_value"))
@@ -186,6 +194,7 @@ async def _sync_connection(
                 quantity=units,
                 cost_basis=cost_basis,
                 current_value=mkt_value,
+                asset_class="crypto" if is_crypto else None,
                 as_of_date=datetime.now(timezone.utc),
             ))
             holdings_synced += 1

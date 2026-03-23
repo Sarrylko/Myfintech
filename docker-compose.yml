@@ -102,6 +102,7 @@ services:
       - ./api/app:/app/app:delegated
     networks:
       - private
+      - public
     depends_on:
       api:
         condition: service_healthy
@@ -122,6 +123,7 @@ services:
       - ./api/app:/app/app:delegated
     networks:
       - private
+      - public
     depends_on:
       api:
         condition: service_healthy

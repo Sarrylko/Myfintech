@@ -46,6 +46,14 @@ class TickerInfo(BaseModel):
     found: bool
 
 
+class CoinInfo(BaseModel):
+    id: str
+    symbol: str
+    name: str
+    last_price: float | None
+    found: bool
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/market-status", response_model=MarketStatus)
@@ -190,6 +198,69 @@ async def get_ticker_info(
     loop = asyncio.get_event_loop()
     data = await loop.run_in_executor(None, _sync_ticker_lookup, sym)
     return TickerInfo(symbol=sym, **data)
+
+
+_CG_BASE = "https://api.coingecko.com/api/v3"
+
+
+def _sync_crypto_lookup(query: str) -> list[dict]:
+    """Search CoinGecko for coins matching a query, return top 5 with price for the top match."""
+    import requests
+
+    results: list[dict] = []
+    try:
+        r = requests.get(
+            f"{_CG_BASE}/search",
+            params={"query": query},
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return results
+        coins = r.json().get("coins", [])[:5]
+        if not coins:
+            return results
+
+        # Fetch price for all returned coins in a single batch call
+        ids_param = ",".join(c["id"] for c in coins)
+        prices: dict[str, float | None] = {}
+        try:
+            pr = requests.get(
+                f"{_CG_BASE}/simple/price",
+                params={"ids": ids_param, "vs_currencies": "usd"},
+                timeout=8,
+            )
+            if pr.status_code == 200:
+                for coin_id, data in pr.json().items():
+                    prices[coin_id] = data.get("usd")
+        except Exception:
+            pass
+
+        for coin in coins:
+            coin_id = coin["id"]
+            results.append({
+                "id": coin_id,
+                "symbol": coin.get("symbol", "").upper(),
+                "name": coin.get("name", ""),
+                "last_price": prices.get(coin_id),
+                "found": True,
+            })
+    except Exception:
+        pass
+
+    return results
+
+
+@router.get("/crypto-search", response_model=list[CoinInfo])
+async def crypto_search(
+    query: str,
+    user: User = Depends(get_current_user),
+):
+    """Search CoinGecko for a cryptocurrency by name or symbol."""
+    q = query.strip()
+    if not q:
+        return []
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _sync_crypto_lookup, q)
 
 
 @router.patch("/settings", response_model=InvestmentRefreshSettings)
