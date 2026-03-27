@@ -871,54 +871,79 @@ export default function TransactionsPage() {
 
       {/* Header */}
       <div className="flex flex-wrap gap-3 justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold">Transactions</h2>
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Transactions</h2>
+          <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Track, categorize and analyze your spending</p>
+        </div>
         <button
+          type="button"
           onClick={() => setShowImport(true)}
-          className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition text-sm font-medium"
+          className="inline-flex items-center gap-2 border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-700 transition text-sm font-medium"
         >
-          ↑ Import CSV
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+          Import CSV
         </button>
       </div>
 
       {/* Summary strip */}
       {filtered.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Expenses</p>
-            <p className="text-xl font-bold text-red-600">
-              -{fmt(totalExpenses)}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+          <div className="bg-gradient-to-br from-red-50 to-white dark:from-red-950/40 dark:to-slate-800 rounded-xl border border-red-100 dark:border-red-900/30 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-6 h-6 rounded-lg bg-red-100 dark:bg-red-900/50 flex items-center justify-center">
+                <svg className="w-3.5 h-3.5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 13l-5 5m0 0l-5-5m5 5V6" /></svg>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Expenses</p>
+            </div>
+            <p className="text-xl font-bold text-red-600 dark:text-red-400 tabular-nums">-{fmt(totalExpenses)}</p>
+          </div>
+          <div className="bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/40 dark:to-slate-800 rounded-xl border border-emerald-100 dark:border-emerald-900/30 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-6 h-6 rounded-lg bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
+                <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M7 11l5-5m0 0l5 5m-5-5v12" /></svg>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Income</p>
+            </div>
+            <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">+{fmt(totalIncome)}</p>
+          </div>
+          <div className={`bg-gradient-to-br ${netCashFlow >= 0 ? "from-blue-50 to-white dark:from-blue-950/40 dark:to-slate-800 border-blue-100 dark:border-blue-900/30" : "from-orange-50 to-white dark:from-orange-950/40 dark:to-slate-800 border-orange-100 dark:border-orange-900/30"} rounded-xl border p-4`}>
+            <div className="flex items-center gap-2 mb-2">
+              <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${netCashFlow >= 0 ? "bg-blue-100 dark:bg-blue-900/50" : "bg-orange-100 dark:bg-orange-900/50"}`}>
+                <svg className={`w-3.5 h-3.5 ${netCashFlow >= 0 ? "text-blue-500" : "text-orange-500"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Net Flow</p>
+            </div>
+            <p className={`text-xl font-bold tabular-nums ${netCashFlow >= 0 ? "text-blue-600 dark:text-blue-400" : "text-orange-600 dark:text-orange-400"}`}>
+              {netCashFlow >= 0 ? "+" : "-"}{fmt(Math.abs(netCashFlow))}
             </p>
           </div>
-          <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Income</p>
-            <p className="text-xl font-bold text-green-600">
-              +{fmt(totalIncome)}
-            </p>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Net</p>
-            <p className={`text-xl font-bold ${netCashFlow >= 0 ? "text-green-600" : "text-red-600"}`}>
-              {netCashFlow >= 0 ? "+" : "-"}
-              {fmt(Math.abs(netCashFlow))}
-            </p>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-100 shadow p-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Transactions</p>
-            <p className="text-xl font-bold text-gray-900">{filtered.length}</p>
+          <div className="bg-gradient-to-br from-slate-50 to-white dark:from-slate-700/40 dark:to-slate-800 rounded-xl border border-slate-100 dark:border-slate-700 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-6 h-6 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+                <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Transactions</p>
+            </div>
+            <p className="text-xl font-bold text-gray-900 dark:text-white tabular-nums">{filtered.length.toLocaleString()}</p>
           </div>
         </div>
       )}
 
       {/* ── Analytics ────────────────────────────────────────────── */}
-      {filtered.length > 0 && (
+      {filtered.length > 0 && monthlyTrend.length > 0 && (
         <div className="mb-5">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Analytics</p>
+            <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Analytics</p>
             <button
+              type="button"
               onClick={() => setShowCharts((v) => !v)}
-              className="text-xs text-gray-400 hover:text-gray-600 transition"
+              className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition flex items-center gap-1"
             >
-              {showCharts ? "Hide" : "Show"}
+              {showCharts ? (
+                <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>Hide</>
+              ) : (
+                <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>Show</>
+              )}
             </button>
           </div>
 
@@ -926,16 +951,25 @@ export default function TransactionsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
 
               {/* Monthly Cash Flow */}
-              <div className="lg:col-span-3 bg-white rounded-lg border border-gray-100 shadow p-4">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Monthly Cash Flow</p>
+              <div className="lg:col-span-3 bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Monthly Cash Flow</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Income vs expenses over time</p>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-gray-500">
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-400 inline-block" />Income</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-400 inline-block" />Expenses</span>
+                  </div>
+                </div>
                 {monthlyTrend.length === 0 ? (
                   <p className="text-xs text-gray-400 py-8 text-center">No data</p>
                 ) : (
-                  <ResponsiveContainer width="100%" height={180}>
-                    <BarChart data={monthlyTrend} barSize={10} barCategoryGap="30%">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={monthlyTrend} barSize={12} barCategoryGap="35%">
                       <XAxis
                         dataKey="label"
-                        tick={{ fontSize: 11, fill: "#6b7280" }}
+                        tick={{ fontSize: 11, fill: "#9ca3af" }}
                         axisLine={false}
                         tickLine={false}
                       />
@@ -953,45 +987,49 @@ export default function TransactionsPage() {
                           fmt(v),
                           name.charAt(0).toUpperCase() + name.slice(1),
                         ]}
-                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+                        contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e5e7eb", boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }}
+                        cursor={{ fill: "rgba(0,0,0,0.03)" }}
                       />
-                      <Legend
-                        iconType="circle"
-                        iconSize={7}
-                        wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                      />
-                      <Bar dataKey="income"   name="income"   fill="#22c55e" radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="expenses" name="expenses" fill="#f87171" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="income"   name="income"   fill="#34d399" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="expenses" name="expenses" fill="#fb7185" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
               </div>
 
               {/* Top Spending Categories */}
-              <div className="lg:col-span-2 bg-white rounded-lg border border-gray-100 shadow p-4">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Top Spending</p>
+              <div className="lg:col-span-2 bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-sm p-5">
+                <div className="mb-4">
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Top Spending</p>
+                  <p className="text-xs text-gray-400 mt-0.5">By category this period</p>
+                </div>
                 {categorySpend.length === 0 ? (
                   <p className="text-xs text-gray-400 py-8 text-center">No expense data</p>
                 ) : (
-                  <div className="space-y-2.5 mt-1">
+                  <div className="space-y-3">
                     {categorySpend.map(({ name, amount }, idx) => {
-                      const pct = Math.round((amount / categorySpend[0].amount) * 100);
-                      const colors = [
-                        "bg-indigo-500", "bg-violet-500", "bg-blue-500",
-                        "bg-sky-500", "bg-teal-500", "bg-cyan-500",
+                      const pct = Math.round((amount / totalExpenses) * 100);
+                      const barPct = Math.round((amount / categorySpend[0].amount) * 100);
+                      const barColors = [
+                        "bg-gradient-to-r from-indigo-400 to-indigo-500",
+                        "bg-gradient-to-r from-violet-400 to-violet-500",
+                        "bg-gradient-to-r from-blue-400 to-blue-500",
+                        "bg-gradient-to-r from-sky-400 to-sky-500",
+                        "bg-gradient-to-r from-teal-400 to-teal-500",
+                        "bg-gradient-to-r from-cyan-400 to-cyan-500",
                       ];
                       return (
-                        <div key={name}>
-                          <div className="flex items-center justify-between text-xs mb-1">
-                            <span className="text-gray-700 font-medium truncate max-w-[55%]">{name}</span>
-                            <span className="text-gray-500 shrink-0 ml-2">
-                              {fmt(amount)}
-                            </span>
+                        <div key={name} className="group">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span className="w-4 h-4 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-gray-500 text-[10px] font-bold flex items-center justify-center shrink-0">{idx + 1}</span>
+                            <span className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate flex-1">{name}</span>
+                            <span className="text-xs text-gray-400 dark:text-gray-500 shrink-0 tabular-nums">{pct}%</span>
+                            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 shrink-0 tabular-nums ml-1">{fmt(amount)}</span>
                           </div>
-                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="h-2 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden ml-6">
                             <div
-                              className={`h-full ${colors[idx % colors.length]} rounded-full transition-all duration-500`}
-                              style={{ width: `${pct}%` }}
+                              className={`h-full ${barColors[idx % barColors.length]} rounded-full transition-all duration-700 ease-out`}
+                              style={{ width: `${barPct}%` }}
                             />
                           </div>
                         </div>
@@ -1006,102 +1044,109 @@ export default function TransactionsPage() {
         </div>
       )}
 
-      {/* Filters — row 1 */}
-      <div className="flex flex-col md:flex-row gap-3 mb-2">
-        <input
-          type="text"
-          placeholder="Search by name, merchant, category, or notes..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="border border-gray-300 rounded-lg px-4 py-2 text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-primary-500"
-        />
-        <select
-          value={datePreset}
-          onChange={(e) => { setDatePreset(e.target.value); setDateFrom(""); setDateTo(""); }}
-          className="border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-44 bg-white"
-        >
-          {DATE_PRESETS.map((p) => (
-            <option key={p.value} value={p.value}>{p.label}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Filters — row 2 */}
-      <div className="flex flex-col md:flex-row gap-3 mb-4">
-        <select
-          value={selectedCategory}
-          onChange={(e) => setSelectedCategory(e.target.value)}
-          className="border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-52 bg-white"
-        >
-          <option value="all">All Categories</option>
-          {TAXONOMY.map((t) => (
-            <option key={t.category} value={t.category}>{t.category}</option>
-          ))}
-          {customTaxonomy.map((t) => (
-            <option key={t.category} value={t.category}>{t.category}</option>
-          ))}
-        </select>
-        <select
-          value={selectedAccount}
-          onChange={(e) => setSelectedAccount(e.target.value)}
-          className="border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-52 bg-white"
-        >
-          <option value="all">All Accounts</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}{a.mask ? ` ••• ${a.mask}` : ""}
-            </option>
-          ))}
-        </select>
-        {datePreset === "custom" && (
-          <>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 whitespace-nowrap">From</label>
-              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 whitespace-nowrap">To</label>
-              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
-            </div>
-          </>
-        )}
-        <button
-          onClick={() => setShowIgnored((v) => !v)}
-          className={`text-xs px-3 py-2 rounded-lg border transition whitespace-nowrap ${
-            showIgnored
-              ? "bg-orange-100 border-orange-300 text-orange-700"
-              : "border-gray-200 text-gray-500 hover:bg-gray-50"
-          }`}
-          title={showIgnored ? "Hide ignored transactions" : "Show ignored transactions"}
-        >
-          {showIgnored ? "Hide Ignored" : "Show Ignored"}
-        </button>
+      {/* Filters */}
+      <div className="bg-gray-50/80 dark:bg-slate-800/50 rounded-xl border border-gray-100 dark:border-slate-700 p-3 mb-4">
+        <div className="flex flex-col md:flex-row gap-2.5 mb-2.5">
+          <div className="relative flex-1">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <input
+              type="text"
+              placeholder="Search by name, merchant, category, or notes..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="border border-gray-200 dark:border-slate-600 rounded-lg pl-9 pr-4 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-800 dark:text-gray-200 dark:placeholder-gray-500"
+            />
+          </div>
+          <select
+            title="Date range"
+            value={datePreset}
+            onChange={(e) => { setDatePreset(e.target.value); setDateFrom(""); setDateTo(""); }}
+            className="border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-44 bg-white dark:bg-slate-800 dark:text-gray-200"
+          >
+            {DATE_PRESETS.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col md:flex-row gap-2.5">
+          <select
+            title="Filter by category"
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className="border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-52 bg-white dark:bg-slate-800 dark:text-gray-200"
+          >
+            <option value="all">All Categories</option>
+            {TAXONOMY.map((t) => (
+              <option key={t.category} value={t.category}>{t.category}</option>
+            ))}
+            {customTaxonomy.map((t) => (
+              <option key={t.category} value={t.category}>{t.category}</option>
+            ))}
+          </select>
+          <select
+            title="Filter by account"
+            value={selectedAccount}
+            onChange={(e) => setSelectedAccount(e.target.value)}
+            className="border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-52 bg-white dark:bg-slate-800 dark:text-gray-200"
+          >
+            <option value="all">All Accounts</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}{a.mask ? ` ••• ${a.mask}` : ""}
+              </option>
+            ))}
+          </select>
+          {datePreset === "custom" && (
+            <>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">From</label>
+                <input type="date" title="Start date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+                  className="border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-800 dark:text-gray-200" />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">To</label>
+                <input type="date" title="End date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+                  className="border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-800 dark:text-gray-200" />
+              </div>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowIgnored((v) => !v)}
+            className={`text-xs px-3 py-2 rounded-lg border transition whitespace-nowrap ${
+              showIgnored
+                ? "bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400"
+                : "border-gray-200 dark:border-slate-600 text-gray-500 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-700"
+            }`}
+            title={showIgnored ? "Hide ignored transactions" : "Show ignored transactions"}
+          >
+            {showIgnored ? "Hide Ignored" : "Show Ignored"}
+          </button>
+        </div>
       </div>
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>}
 
       {/* Table */}
-      <div className="bg-white rounded-lg shadow border border-gray-100 overflow-hidden">
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-hidden">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-gray-100 text-left text-xs text-gray-500 uppercase tracking-wide">
-              <th className="px-5 py-3">Date</th>
-              <th className="px-5 py-3">Description</th>
-              <th className="px-5 py-3 hidden md:table-cell">Category</th>
-              <th className="px-5 py-3 hidden lg:table-cell">Account</th>
-              <th className="px-5 py-3 text-right">Amount</th>
-              <th className="px-5 py-3 w-20"></th>
+            <tr className="border-b border-gray-100 dark:border-slate-700 bg-gray-50/60 dark:bg-slate-800/80 text-left">
+              <th className="px-5 py-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Date</th>
+              <th className="px-5 py-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Description</th>
+              <th className="px-5 py-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider hidden md:table-cell">Category</th>
+              <th className="px-5 py-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider hidden lg:table-cell">Account</th>
+              <th className="px-5 py-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider text-right">Amount</th>
+              <th className="px-5 py-3 w-16"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-50">
+          <tbody className="divide-y divide-gray-50 dark:divide-slate-700/50">
             {loading && (
-              <tr><td colSpan={6} className="px-5 py-12 text-center text-gray-400">Loading transactions...</td></tr>
+              <tr><td colSpan={6} className="px-5 py-12 text-center text-gray-400 dark:text-gray-500">Loading transactions...</td></tr>
             )}
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-5 py-12 text-center text-gray-400">
+                <td colSpan={6} className="px-5 py-12 text-center text-gray-400 dark:text-gray-500">
                   {transactions.length === 0
                     ? "No transactions yet. Link an account, import a CSV, or sync to pull transactions."
                     : "No transactions match your search."}
@@ -1113,31 +1158,31 @@ export default function TransactionsPage() {
               const { display, isExpense } = fmtAmt(txn.amount);
 
               return (
-                <tr key={txn.id} className={`hover:bg-gray-50 transition group ${txn.is_ignored ? "opacity-40" : ""}`}>
-                  <td className="px-5 py-3 text-sm text-gray-500 whitespace-nowrap">
-                    {fmtDate(txn.date)}
+                <tr key={txn.id} className={`hover:bg-gray-50/80 dark:hover:bg-slate-700/40 transition group ${txn.is_ignored ? "opacity-40" : ""}`}>
+                  <td className="px-5 py-3.5 whitespace-nowrap">
+                    <span className="text-sm text-gray-600 dark:text-gray-400">{fmtDate(txn.date)}</span>
                     {txn.pending && (
-                      <span className="ml-1.5 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded">Pending</span>
+                      <span className="ml-1.5 text-[10px] bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded-full font-medium">Pending</span>
                     )}
                     {txn.is_ignored && (
-                      <span className="ml-1.5 text-xs bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded">Ignored</span>
+                      <span className="ml-1.5 text-[10px] bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded-full font-medium">Ignored</span>
                     )}
                   </td>
-                  <td className="px-5 py-3 max-w-xs">
-                    <div className={`text-sm font-medium text-gray-800 truncate ${txn.is_ignored ? "line-through" : ""}`}>{txn.name}</div>
+                  <td className="px-5 py-3.5 max-w-xs">
+                    <div className={`text-sm font-medium text-gray-800 dark:text-gray-200 truncate ${txn.is_ignored ? "line-through" : ""}`}>{txn.name}</div>
                     {txn.merchant_name && txn.merchant_name !== txn.name && (
-                      <div className="text-xs text-gray-400 truncate">{txn.merchant_name}</div>
+                      <div className="text-xs text-gray-400 dark:text-gray-500 truncate">{txn.merchant_name}</div>
                     )}
-                    {txn.notes && <div className="text-xs text-gray-400 italic truncate">{txn.notes}</div>}
+                    {txn.notes && <div className="text-xs text-gray-400 dark:text-gray-500 italic truncate">{txn.notes}</div>}
                   </td>
-                  <td className="px-5 py-3 hidden md:table-cell">
+                  <td className="px-5 py-3.5 hidden md:table-cell">
                     {txn.has_splits && txn.splits.length > 0 ? (
                       <div className="flex flex-col gap-0.5">
-                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium w-fit">✂ Split</span>
+                        <span className="text-[11px] bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full font-medium w-fit">✂ Split</span>
                         {txn.splits.slice(0, 2).map((s) => {
                           const p = parseCategory(s.category);
                           return (
-                            <span key={s.id} className="text-xs text-gray-500 pl-1 truncate max-w-[160px]">
+                            <span key={s.id} className="text-xs text-gray-500 dark:text-gray-400 pl-1 truncate max-w-[160px]">
                               {p.group || s.category} — ${parseFloat(s.amount).toFixed(2)}
                             </span>
                           );
@@ -1151,45 +1196,47 @@ export default function TransactionsPage() {
                       return (
                         <div className="flex flex-col gap-0.5">
                           {parts.group && (
-                            <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium w-fit">
+                            <span className="text-[11px] bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 px-2 py-0.5 rounded-full font-semibold w-fit">
                               {parts.group}
                             </span>
                           )}
                           {parts.item && (
-                            <span className="text-xs text-gray-500 pl-1">{parts.item}</span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400 pl-1">{parts.item}</span>
                           )}
                           {!parts.group && (
-                            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full w-fit">
+                            <span className="text-[11px] bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded-full w-fit">
                               {txn.plaid_category}
                             </span>
                           )}
                         </div>
                       );
                     })() : (
-                      <span className="text-xs text-gray-400">—</span>
+                      <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
                     )}
                   </td>
-                  <td className="px-5 py-3 hidden lg:table-cell text-xs text-gray-600">
+                  <td className="px-5 py-3.5 hidden lg:table-cell text-xs text-gray-500 dark:text-gray-400">
                     {acct ? `${acct.name}${acct.mask ? ` ••• ${acct.mask}` : ""}` : "—"}
                   </td>
-                  <td className={`px-5 py-3 text-sm font-semibold text-right whitespace-nowrap ${isExpense ? "text-red-600" : "text-green-600"}`}>
+                  <td className={`px-5 py-3.5 text-sm font-bold text-right whitespace-nowrap tabular-nums ${isExpense ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                     {display}
                   </td>
-                  <td className="px-5 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition">
+                  <td className="px-5 py-3.5 text-right">
+                    <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition">
                       <button
+                        type="button"
                         onClick={() => setEditTxn(txn)}
-                        className="text-xs text-gray-400 hover:text-primary-600 px-1"
+                        className="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition"
                         title="Edit"
                       >
-                        ✏
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                       </button>
                       <button
+                        type="button"
                         onClick={() => handleIgnoreTxn(txn)}
-                        className={`text-xs px-1 ${txn.is_ignored ? "text-orange-400 hover:text-orange-600" : "text-gray-300 hover:text-orange-500"}`}
+                        className={`w-6 h-6 rounded-md flex items-center justify-center transition ${txn.is_ignored ? "text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/30" : "text-gray-300 dark:text-gray-600 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/30"}`}
                         title={txn.is_ignored ? "Un-ignore" : "Ignore"}
                       >
-                        {txn.is_ignored ? "○" : "⊘"}
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
                       </button>
                     </div>
                   </td>
@@ -1202,48 +1249,54 @@ export default function TransactionsPage() {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-1.5 mt-4 flex-wrap">
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={safePage === 1}
-            className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-default"
-          >
-            ← Prev
-          </button>
-          {getPageNumbers(safePage, totalPages).map((pg, i) =>
-            pg === "…" ? (
-              <span key={`ellipsis-${i}`} className="px-2 text-gray-400 text-sm select-none">…</span>
-            ) : (
-              <button
-                key={pg}
-                onClick={() => setPage(pg as number)}
-                className={`px-3 py-1.5 text-sm rounded-lg border transition ${
-                  safePage === pg
-                    ? "bg-primary-600 text-white border-primary-600 font-medium"
-                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
-                }`}
-              >
-                {pg}
-              </button>
-            )
-          )}
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={safePage === totalPages}
-            className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-default"
-          >
-            Next →
-          </button>
+        <div className="flex items-center justify-between mt-5">
+          <p className="text-xs text-gray-400 dark:text-gray-500">
+            Page {safePage} of {totalPages} — <span className="font-medium text-gray-600 dark:text-gray-400">{filtered.length.toLocaleString()}</span> transactions
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={safePage === 1}
+              className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-default transition"
+            >
+              ← Prev
+            </button>
+            {getPageNumbers(safePage, totalPages).map((pg, i) =>
+              pg === "…" ? (
+                <span key={`ellipsis-${i}`} className="px-2 text-gray-400 text-sm select-none">…</span>
+              ) : (
+                <button
+                  type="button"
+                  key={pg}
+                  onClick={() => setPage(pg as number)}
+                  className={`px-3 py-1.5 text-sm rounded-lg border transition ${
+                    safePage === pg
+                      ? "bg-indigo-600 text-white border-indigo-600 font-semibold shadow-sm"
+                      : "border-gray-200 dark:border-slate-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-700"
+                  }`}
+                >
+                  {pg}
+                </button>
+              )
+            )}
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage === totalPages}
+              className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-default transition"
+            >
+              Next →
+            </button>
+          </div>
         </div>
       )}
 
-      <p className="text-xs text-gray-400 mt-3 text-center">
-        {filtered.length === 0
-          ? ""
-          : totalPages > 1
-          ? `Page ${safePage} of ${totalPages} — ${filtered.length} transactions total`
-          : `${filtered.length} transaction${filtered.length !== 1 ? "s" : ""}`}
-      </p>
+      {filtered.length > 0 && totalPages === 1 && (
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-3 text-center">
+          {filtered.length} transaction{filtered.length !== 1 ? "s" : ""}
+        </p>
+      )}
     </div>
   );
 }

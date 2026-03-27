@@ -132,6 +132,7 @@ function HoldingsTable({
   };
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<HoldingUpdate>({});
+  const [editIsCrypto, setEditIsCrypto] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState<HoldingCreate>(BLANK_ADD);
   const [saving, setSaving] = useState(false);
@@ -147,13 +148,14 @@ function HoldingsTable({
     return (price * q).toFixed(2);
   }
 
-  function scheduleLookup(ticker: string, isAdd: boolean) {
+  function scheduleLookup(ticker: string, isAdd: boolean, forceIsCrypto?: boolean) {
     if (tickerTimer.current) clearTimeout(tickerTimer.current);
     if (!ticker) return;
     tickerTimer.current = setTimeout(async () => {
       setLookingUpTicker(true);
+      const useCrypto = forceIsCrypto !== undefined ? forceIsCrypto : (isAdd ? isCryptoAccount : editIsCrypto);
       try {
-        if (isCryptoAccount) {
+        if (useCrypto) {
           const results = await cryptoSearch(ticker);
           if (results.length > 0) {
             const top = results[0];
@@ -186,10 +188,10 @@ function HoldingsTable({
           const price = info.last_price ?? null;
           if (isAdd) {
             addLastPrice.current = price;
-            setAddForm((p) => ({ ...p, name: resolvedName, current_value: calcValue(price, p.quantity) || p.current_value }));
+            setAddForm((p) => ({ ...p, name: resolvedName, coingecko_id: null, asset_class: null, current_value: calcValue(price, p.quantity) || p.current_value }));
           } else {
             editLastPrice.current = price;
-            setEditForm((p) => ({ ...p, name: resolvedName, current_value: calcValue(price, p.quantity) || p.current_value }));
+            setEditForm((p) => ({ ...p, name: resolvedName, coingecko_id: null, asset_class: null, current_value: calcValue(price, p.quantity) || p.current_value }));
           }
         }
       } catch {
@@ -202,6 +204,7 @@ function HoldingsTable({
 
   function startEdit(h: Holding) {
     setEditingId(h.id);
+    setEditIsCrypto(h.asset_class === "crypto");
     setEditForm({
       ticker_symbol: h.ticker_symbol ?? "",
       name: h.name ?? "",
@@ -269,6 +272,19 @@ function HoldingsTable({
   const totalCost = allHaveCost && holdings.length > 0 ? holdings.reduce((s, h) => s + Number(h.cost_basis ?? 0), 0) : null;
   const totalGain = totalCost !== null ? totalValue - totalCost : null;
 
+  // Daily P&L: sum over holdings that have previous_close
+  const holdingsWithDaily = holdings.filter((h) => h.previous_close && Number(h.previous_close) > 0 && Number(h.quantity) > 0);
+  const totalDayGain = holdingsWithDaily.length > 0
+    ? holdingsWithDaily.reduce((s, h) => {
+        const qty = Number(h.quantity);
+        const cur = Number(h.current_value ?? 0) / (qty || 1);
+        const prev = Number(h.previous_close);
+        return s + (cur - prev) * qty;
+      }, 0)
+    : null;
+  const totalPrevValue = holdingsWithDaily.reduce((s, h) => s + Number(h.previous_close) * Number(h.quantity), 0);
+  const totalDayPct = totalDayGain !== null && totalPrevValue > 0 ? (totalDayGain / totalPrevValue) * 100 : null;
+
   // Shared inline input style
   const inp = "border border-gray-300 rounded px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-blue-500";
 
@@ -280,6 +296,42 @@ function HoldingsTable({
         </div>
       )}
 
+      {/* P&L summary strip */}
+      {holdings.length > 0 && (totalGain !== null || totalDayGain !== null) && (
+        <div className="px-4 py-3 grid grid-cols-2 gap-3 border-b border-gray-100 bg-gray-50/60">
+          {totalDayGain !== null && (
+            <div>
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Today&apos;s P&amp;L</p>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-base font-bold tabular-nums ${totalDayGain >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                  {totalDayGain >= 0 ? "+" : ""}{fmt(totalDayGain, 2)}
+                </span>
+                {totalDayPct !== null && (
+                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${totalDayGain >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"}`}>
+                    {totalDayGain >= 0 ? "+" : ""}{totalDayPct.toFixed(2)}%
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+          {totalGain !== null && (
+            <div>
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Total P&amp;L</p>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-base font-bold tabular-nums ${totalGain >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                  {totalGain >= 0 ? "+" : ""}{fmt(totalGain, 2)}
+                </span>
+                {totalCost && totalCost > 0 && (
+                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${totalGain >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"}`}>
+                    {totalGain >= 0 ? "+" : ""}{((totalGain / totalCost) * 100).toFixed(2)}%
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {(holdings.length > 0 || showAddForm) && (
         <table className="w-full text-sm">
           <thead>
@@ -288,8 +340,9 @@ function HoldingsTable({
               <th className="px-4 py-2 text-left font-medium">Name</th>
               <th className="px-4 py-2 text-right font-medium">Shares</th>
               <th className="px-4 py-2 text-right font-medium">Current Value</th>
+              <th className="px-4 py-2 text-right font-medium">Day P&amp;L</th>
               <th className="px-4 py-2 text-right font-medium">Cost Basis</th>
-              <th className="px-4 py-2 text-right font-medium">Gain / Loss</th>
+              <th className="px-4 py-2 text-right font-medium">Total Gain / Loss</th>
               {isManual && <th className="px-4 py-2 w-16" />}
             </tr>
           </thead>
@@ -300,7 +353,20 @@ function HoldingsTable({
                 return (
                   <tr key={h.id} className="border-t border-blue-100 bg-blue-50/40">
                     <td className="px-4 py-2">
-                      <input className={inp} placeholder={isCryptoAccount ? "BTC" : "AAPL"} value={editForm.ticker_symbol ?? ""} onChange={(e) => { const val = e.target.value.toUpperCase(); setEditForm((p) => ({ ...p, ticker_symbol: val })); scheduleLookup(val, false); }} />
+                      <input className={inp} placeholder={editIsCrypto ? "BTC" : "AAPL"} value={editForm.ticker_symbol ?? ""} onChange={(e) => { const val = e.target.value.toUpperCase(); setEditForm((p) => ({ ...p, ticker_symbol: val })); scheduleLookup(val, false); }} />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !editIsCrypto;
+                          setEditIsCrypto(next);
+                          setEditForm((p) => ({ ...p, asset_class: next ? "crypto" : null, coingecko_id: next ? p.coingecko_id : null }));
+                          if (editForm.ticker_symbol) scheduleLookup(editForm.ticker_symbol, false, next);
+                        }}
+                        className={`mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border transition ${editIsCrypto ? "bg-yellow-100 text-yellow-700 border-yellow-300" : "bg-gray-100 text-gray-400 border-gray-200 hover:border-yellow-300 hover:text-yellow-600"}`}
+                        title="Toggle crypto (CoinGecko) lookup"
+                      >
+                        ₿ Crypto
+                      </button>
                     </td>
                     <td className="px-4 py-2">
                       <input className={inp} placeholder={lookingUpTicker ? "Looking up…" : "Apple Inc."} value={editForm.name ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))} />
@@ -311,6 +377,7 @@ function HoldingsTable({
                     <td className="px-4 py-2">
                       <input className={`${inp} text-right`} type="number" step="any" placeholder="0.00" value={editForm.current_value ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, current_value: e.target.value }))} />
                     </td>
+                    <td className="px-4 py-2 text-xs text-gray-400 text-right">auto</td>
                     <td className="px-4 py-2">
                       <input className={`${inp} text-right`} type="number" step="any" placeholder="0.00" value={editForm.cost_basis ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, cost_basis: e.target.value }))} />
                     </td>
@@ -327,14 +394,25 @@ function HoldingsTable({
 
               // ── Read-only row ──────────────────────────────────────────
               const value = Number(h.current_value ?? 0);
+              const qty = Number(h.quantity);
               const cost = Number(h.cost_basis ?? 0);
               const hasCost = h.cost_basis !== null && cost > 0;
               const gain = hasCost ? value - cost : null;
               const gainPct = hasCost ? ((value - cost) / cost) * 100 : null;
               const gainPositive = gain !== null && gain >= 0;
 
+              // Daily P&L: (currentPrice - prevClose) * shares
+              const prevClose = h.previous_close ? Number(h.previous_close) : null;
+              const currentPrice = qty > 0 ? value / qty : null;
+              const dayGain = prevClose && currentPrice && qty > 0
+                ? (currentPrice - prevClose) * qty
+                : null;
+              const dayGainPct = prevClose && currentPrice && prevClose > 0
+                ? ((currentPrice - prevClose) / prevClose) * 100
+                : null;
+
               return (
-                <tr key={h.id} className="border-t border-gray-100 hover:bg-gray-50">
+                <tr key={h.id} className="border-t border-gray-100 hover:bg-gray-50/80 transition">
                   <td className="px-4 py-2.5 font-mono font-semibold text-gray-800">
                     {h.ticker_symbol ? (
                       <a
@@ -359,24 +437,44 @@ function HoldingsTable({
                   <td className="px-4 py-2.5 text-gray-700 max-w-[200px] truncate">{h.name ?? "—"}</td>
                   <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums">{fmtQty(h.quantity)}</td>
                   <td className="px-4 py-2.5 text-right font-semibold text-gray-900 tabular-nums">{fmt(h.current_value, 2)}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {dayGain !== null ? (
+                      <div>
+                        <span className={`font-semibold ${dayGain >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                          {dayGain >= 0 ? "+" : ""}{fmt(dayGain, 2)}
+                        </span>
+                        {dayGainPct !== null && (
+                          <div className={`text-[10px] font-medium mt-0.5 ${dayGain >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                            {dayGain >= 0 ? "▲" : "▼"} {Math.abs(dayGainPct).toFixed(2)}%
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-right text-gray-500 tabular-nums">{hasCost ? fmt(h.cost_basis, 2) : "—"}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums">
                     {gain !== null ? (
-                      <span className={gainPositive ? "text-green-600" : "text-red-600"}>
-                        {gainPositive ? "+" : ""}{fmt(gain, 2)}
-                        <span className="ml-1 text-xs opacity-75">({gainPositive ? "+" : ""}{gainPct!.toFixed(1)}%)</span>
-                      </span>
+                      <div>
+                        <span className={`font-semibold ${gainPositive ? "text-emerald-600" : "text-red-600"}`}>
+                          {gainPositive ? "+" : ""}{fmt(gain, 2)}
+                        </span>
+                        <div className={`text-[10px] font-medium mt-0.5 ${gainPositive ? "text-emerald-500" : "text-red-500"}`}>
+                          {gainPositive ? "▲" : "▼"} {Math.abs(gainPct!).toFixed(2)}%
+                        </div>
+                      </div>
                     ) : (
-                      <span className="text-gray-400">—</span>
+                      <span className="text-gray-300">—</span>
                     )}
                   </td>
                   {isManual && (
                     <td className="px-4 py-2.5">
                       <div className="flex gap-1 justify-end">
-                        <button onClick={() => startEdit(h)} title="Edit" className="p-1 text-gray-400 hover:text-blue-600 transition rounded hover:bg-blue-50">
+                        <button type="button" onClick={() => startEdit(h)} title="Edit" className="p-1 text-gray-400 hover:text-blue-600 transition rounded hover:bg-blue-50">
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-2.828 0L9 15v-2z" /></svg>
                         </button>
-                        <button onClick={() => handleDelete(h.id)} disabled={saving} title="Delete" className="p-1 text-gray-400 hover:text-red-600 transition rounded hover:bg-red-50 disabled:opacity-50">
+                        <button type="button" onClick={() => handleDelete(h.id)} disabled={saving} title="Delete" className="p-1 text-gray-400 hover:text-red-600 transition rounded hover:bg-red-50 disabled:opacity-50">
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
                         </button>
                       </div>
@@ -401,14 +499,15 @@ function HoldingsTable({
                 <td className="px-4 py-2">
                   <input className={`${inp} text-right`} type="number" step="any" placeholder="Auto from price × qty" value={addForm.current_value ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, current_value: e.target.value }))} />
                 </td>
+                <td className="px-4 py-2 text-xs text-gray-400 text-center">—</td>
                 <td className="px-4 py-2">
                   <input className={`${inp} text-right`} type="number" step="any" placeholder="Total cost" value={addForm.cost_basis ?? ""} onChange={(e) => setAddForm((p) => ({ ...p, cost_basis: e.target.value }))} />
                 </td>
                 <td className="px-4 py-2 text-xs text-gray-400 text-right">auto</td>
                 <td className="px-4 py-2">
                   <div className="flex gap-1 justify-end">
-                    <button onClick={handleSaveAdd} disabled={saving} className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50">Add</button>
-                    <button onClick={() => { setShowAddForm(false); setAddForm(BLANK_ADD); setRowError(""); addLastPrice.current = null; }} className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs hover:bg-gray-200">Cancel</button>
+                    <button type="button" onClick={handleSaveAdd} disabled={saving} className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50">Add</button>
+                    <button type="button" onClick={() => { setShowAddForm(false); setAddForm(BLANK_ADD); setRowError(""); addLastPrice.current = null; }} className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs hover:bg-gray-200">Cancel</button>
                   </div>
                 </td>
               </tr>
@@ -417,16 +516,29 @@ function HoldingsTable({
 
           {holdings.length > 0 && (
             <tfoot>
-              <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold text-xs text-gray-600">
-                <td colSpan={3} className="px-4 py-2">{holdings.length} position{holdings.length !== 1 ? "s" : ""}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{fmt(totalValue, 2)}</td>
-                <td className="px-4 py-2 text-right tabular-nums text-gray-500">{totalCost !== null ? fmt(totalCost, 2) : "—"}</td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  {totalGain !== null ? (
-                    <span className={totalGain >= 0 ? "text-green-600" : "text-red-600"}>
-                      {totalGain >= 0 ? "+" : ""}{fmt(totalGain, 2)}
+              <tr className="border-t-2 border-gray-200 bg-gray-50/80 font-semibold text-xs text-gray-600">
+                <td colSpan={3} className="px-4 py-2.5">{holdings.length} position{holdings.length !== 1 ? "s" : ""}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums">{fmt(totalValue, 2)}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums">
+                  {totalDayGain !== null ? (
+                    <span className={totalDayGain >= 0 ? "text-emerald-600" : "text-red-600"}>
+                      {totalDayGain >= 0 ? "+" : ""}{fmt(totalDayGain, 2)}
+                      {totalDayPct !== null && (
+                        <span className="ml-1 font-normal opacity-75">({totalDayGain >= 0 ? "+" : ""}{totalDayPct.toFixed(2)}%)</span>
+                      )}
                     </span>
-                  ) : <span className="text-gray-400">—</span>}
+                  ) : <span className="text-gray-300">—</span>}
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-gray-500">{totalCost !== null ? fmt(totalCost, 2) : "—"}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums">
+                  {totalGain !== null ? (
+                    <span className={totalGain >= 0 ? "text-emerald-600" : "text-red-600"}>
+                      {totalGain >= 0 ? "+" : ""}{fmt(totalGain, 2)}
+                      {totalCost && totalCost > 0 && (
+                        <span className="ml-1 font-normal opacity-75">({totalGain >= 0 ? "+" : ""}{((totalGain / totalCost) * 100).toFixed(2)}%)</span>
+                      )}
+                    </span>
+                  ) : <span className="text-gray-300">—</span>}
                 </td>
                 {isManual && <td />}
               </tr>
@@ -1417,28 +1529,98 @@ export default function InvestmentsPage() {
       )}
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white rounded-xl shadow p-5 border border-gray-100">
-          <p className="text-sm text-gray-500 mb-1">Total Investments</p>
-          <p className="text-2xl font-bold text-gray-900">{loading ? "…" : fmt(totalAll)}</p>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Total Portfolio</p>
+          <p className="text-2xl font-bold text-gray-900 tabular-nums">{loading ? "…" : fmt(totalAll)}</p>
           <p className="text-xs text-gray-400 mt-1">{filtered.length} account{filtered.length !== 1 ? "s" : ""}</p>
         </div>
         <div className="bg-white rounded-xl shadow p-5 border border-gray-100">
-          <p className="text-sm text-gray-500 mb-1">Brokerage / Taxable</p>
-          <p className="text-2xl font-bold text-orange-600">{loading ? "…" : fmt(totalBrokerage)}</p>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Brokerage / Taxable</p>
+          <p className="text-2xl font-bold text-orange-600 tabular-nums">{loading ? "…" : fmt(totalBrokerage)}</p>
           <p className="text-xs text-gray-400 mt-1">{brokerage.length} account{brokerage.length !== 1 ? "s" : ""}</p>
         </div>
         <div className="bg-white rounded-xl shadow p-5 border border-gray-100">
-          <p className="text-sm text-gray-500 mb-1">Retirement / Tax-Advantaged</p>
-          <p className="text-2xl font-bold text-purple-600">{loading ? "…" : fmt(totalRetirement)}</p>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Retirement / Tax-Adv.</p>
+          <p className="text-2xl font-bold text-purple-600 tabular-nums">{loading ? "…" : fmt(totalRetirement)}</p>
           <p className="text-xs text-gray-400 mt-1">{retirement.length} account{retirement.length !== 1 ? "s" : ""}</p>
         </div>
         <div className="bg-white rounded-xl shadow p-5 border border-gray-100">
-          <p className="text-sm text-gray-500 mb-1">Crypto & Digital Assets</p>
-          <p className="text-2xl font-bold text-yellow-600">{loading ? "…" : fmt(totalCrypto)}</p>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Crypto & Digital</p>
+          <p className="text-2xl font-bold text-yellow-600 tabular-nums">{loading ? "…" : fmt(totalCrypto)}</p>
           <p className="text-xs text-gray-400 mt-1">{crypto.length} account{crypto.length !== 1 ? "s" : ""}</p>
         </div>
       </div>
+
+      {/* Portfolio-wide P&L strip — computed from loaded holdings */}
+      {!loading && (() => {
+        const allHoldings = Object.values(holdingsMap).flat();
+        const withPrev = allHoldings.filter((h) => h.previous_close && Number(h.previous_close) > 0 && Number(h.quantity) > 0);
+        const withCost = allHoldings.filter((h) => h.cost_basis && Number(h.cost_basis) > 0);
+        if (withPrev.length === 0 && withCost.length === 0) return null;
+
+        const dayGainTotal = withPrev.reduce((s, h) => {
+          const qty = Number(h.quantity);
+          const cur = Number(h.current_value ?? 0) / (qty || 1);
+          return s + (cur - Number(h.previous_close)) * qty;
+        }, 0);
+        const prevTotal = withPrev.reduce((s, h) => s + Number(h.previous_close) * Number(h.quantity), 0);
+        const dayPct = prevTotal > 0 ? (dayGainTotal / prevTotal) * 100 : null;
+
+        const totalCurrentAll = withCost.reduce((s, h) => s + Number(h.current_value ?? 0), 0);
+        const totalCostAll = withCost.reduce((s, h) => s + Number(h.cost_basis), 0);
+        const totalGainAll = totalCurrentAll - totalCostAll;
+        const totalGainPct = totalCostAll > 0 ? (totalGainAll / totalCostAll) * 100 : null;
+
+        return (
+          <div className="flex flex-wrap gap-4 mb-5 bg-white rounded-xl border border-gray-100 shadow px-5 py-4">
+            {withPrev.length > 0 && (
+              <div className="flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${dayGainTotal >= 0 ? "bg-emerald-50" : "bg-red-50"}`}>
+                  <svg className={`w-4 h-4 ${dayGainTotal >= 0 ? "text-emerald-500" : "text-red-500"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d={dayGainTotal >= 0 ? "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" : "M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"} /></svg>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Today&apos;s P&amp;L</p>
+                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                    <span className={`text-lg font-bold tabular-nums ${dayGainTotal >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      {dayGainTotal >= 0 ? "+" : ""}{fmt(dayGainTotal, 2)}
+                    </span>
+                    {dayPct !== null && (
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${dayGainTotal >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"}`}>
+                        {dayGainTotal >= 0 ? "+" : ""}{dayPct.toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {withPrev.length > 0 && withCost.length > 0 && <div className="w-px bg-gray-100 self-stretch" />}
+            {withCost.length > 0 && (
+              <div className="flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${totalGainAll >= 0 ? "bg-indigo-50" : "bg-red-50"}`}>
+                  <svg className={`w-4 h-4 ${totalGainAll >= 0 ? "text-indigo-500" : "text-red-500"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total P&amp;L (All-Time)</p>
+                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                    <span className={`text-lg font-bold tabular-nums ${totalGainAll >= 0 ? "text-indigo-600" : "text-red-600"}`}>
+                      {totalGainAll >= 0 ? "+" : ""}{fmt(totalGainAll, 2)}
+                    </span>
+                    {totalGainPct !== null && (
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${totalGainAll >= 0 ? "bg-indigo-50 text-indigo-600" : "bg-red-50 text-red-600"}`}>
+                        {totalGainAll >= 0 ? "+" : ""}{totalGainPct.toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="ml-auto self-center">
+              <p className="text-[10px] text-gray-400">{withPrev.length > 0 ? `${withPrev.length} position${withPrev.length !== 1 ? "s" : ""} with live prices` : "Expand accounts to load P&L"}</p>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Price refresh status bar */}
       <div className="flex flex-wrap items-center gap-3 mb-5 bg-white rounded-xl shadow border border-gray-100 px-4 py-3">

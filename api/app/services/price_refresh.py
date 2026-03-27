@@ -36,8 +36,11 @@ _YF_HEADERS = {
 }
 
 
-def _fetch_price(sym: str) -> Decimal | None:
-    """Fetch last market price for a single ticker via Yahoo Finance chart API."""
+def _fetch_price(sym: str) -> tuple[Decimal | None, Decimal | None]:
+    """Fetch last market price and previous close for a single ticker via Yahoo Finance.
+
+    Returns (current_price, previous_close). Both may be None on failure.
+    """
     try:
         r = http_requests.get(
             f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1d&interval=1d",
@@ -45,14 +48,16 @@ def _fetch_price(sym: str) -> Decimal | None:
             timeout=8,
         )
         if r.status_code != 200:
-            return None
+            return None, None
         meta = r.json()["chart"]["result"][0]["meta"]
         price = meta.get("regularMarketPrice") or meta.get("previousClose")
-        if price and price > 0:
-            return Decimal(str(round(float(price), 4)))
+        prev = meta.get("previousClose") or meta.get("chartPreviousClose")
+        price_dec = Decimal(str(round(float(price), 4))) if price and price > 0 else None
+        prev_dec = Decimal(str(round(float(prev), 4))) if prev and prev > 0 else None
+        return price_dec, prev_dec
     except Exception as exc:
         logger.debug("Price fetch failed for %s: %s", sym, exc)
-    return None
+    return None, None
 
 # ─── NYSE market holidays 2025-2027 ───────────────────────────────────────────
 # Source: NYSE holiday schedule (observed dates)
@@ -135,24 +140,42 @@ def next_market_open() -> datetime | None:
 _CG_BASE = "https://api.coingecko.com/api/v3"
 
 
-def _fetch_crypto_prices(coingecko_ids: list[str]) -> dict[str, Decimal]:
-    """Batch-fetch USD prices for a list of CoinGecko IDs. Returns {id: price}."""
+def _fetch_crypto_prices(coingecko_ids: list[str]) -> dict[str, tuple[Decimal, Decimal | None]]:
+    """Batch-fetch USD prices and 24h previous price for a list of CoinGecko IDs.
+
+    Returns {id: (current_price, previous_close_approx)}.
+    previous_close_approx is computed as current / (1 + change_24h/100).
+    """
     if not coingecko_ids:
         return {}
     try:
         r = http_requests.get(
             f"{_CG_BASE}/simple/price",
-            params={"ids": ",".join(coingecko_ids), "vs_currencies": "usd"},
+            params={
+                "ids": ",".join(coingecko_ids),
+                "vs_currencies": "usd",
+                "include_24hr_change": "true",
+            },
             timeout=8,
         )
         if r.status_code != 200:
             logger.warning("CoinGecko price fetch returned %s", r.status_code)
             return {}
-        result: dict[str, Decimal] = {}
+        result: dict[str, tuple[Decimal, Decimal | None]] = {}
         for coin_id, data in r.json().items():
             usd = data.get("usd")
+            change_24h = data.get("usd_24h_change")
             if usd and usd > 0:
-                result[coin_id] = Decimal(str(round(float(usd), 8)))
+                price_dec = Decimal(str(round(float(usd), 8)))
+                prev_dec: Decimal | None = None
+                if change_24h is not None:
+                    try:
+                        factor = 1 + float(change_24h) / 100
+                        if factor > 0:
+                            prev_dec = Decimal(str(round(float(usd) / factor, 8)))
+                    except (ZeroDivisionError, ValueError):
+                        pass
+                result[coin_id] = (price_dec, prev_dec)
         return result
     except Exception as exc:
         logger.warning("CoinGecko price fetch failed: %s", exc)
@@ -192,12 +215,13 @@ def refresh_prices_for_household(household_id: uuid.UUID, session: Session) -> i
         ticker_to_holdings.setdefault(sym, []).append(h)
 
     for sym, h_list in ticker_to_holdings.items():
-        price_dec = _fetch_price(sym)
+        price_dec, prev_dec = _fetch_price(sym)
         if price_dec is None:
             logger.debug("No price available for %s", sym)
             continue
         for h in h_list:
             h.current_value = price_dec * h.quantity
+            h.previous_close = prev_dec
             h.as_of_date = now_utc
             if h.account_id:
                 account_ids.add(h.account_id)
@@ -210,9 +234,10 @@ def refresh_prices_for_household(household_id: uuid.UUID, session: Session) -> i
 
     if id_to_holdings:
         crypto_prices = _fetch_crypto_prices(list(id_to_holdings.keys()))
-        for coin_id, price_dec in crypto_prices.items():
+        for coin_id, (price_dec, prev_dec) in crypto_prices.items():
             for h in id_to_holdings[coin_id]:
                 h.current_value = price_dec * h.quantity
+                h.previous_close = prev_dec
                 h.as_of_date = now_utc
                 if h.account_id:
                     account_ids.add(h.account_id)

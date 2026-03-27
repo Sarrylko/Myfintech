@@ -117,6 +117,7 @@ class HoldingResponse(BaseModel):
     currency_code: str
     asset_class: str | None = None
     coingecko_id: str | None = None
+    previous_close: Decimal | None = None
     as_of_date: datetime | None
     created_at: datetime
 

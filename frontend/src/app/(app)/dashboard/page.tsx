@@ -97,6 +97,7 @@ function NetWorthCard({
   color = "text-gray-900",
   icon,
   breakdown,
+  accent = "slate",
 }: {
   label: string;
   value: number;
@@ -104,37 +105,54 @@ function NetWorthCard({
   color?: string;
   icon: React.ReactNode;
   breakdown?: { label: string; amount: string }[];
+  accent?: "indigo" | "green" | "blue" | "amber" | "red" | "slate";
 }) {
   const { fmt } = useCurrency();
+  const cardStyles: Record<string, string> = {
+    indigo: "bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-950/40 dark:to-slate-800 border-indigo-100 dark:border-indigo-800/30",
+    green:  "bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/40 dark:to-slate-800 border-emerald-100 dark:border-emerald-800/30",
+    blue:   "bg-gradient-to-br from-blue-50 to-white dark:from-blue-950/40 dark:to-slate-800 border-blue-100 dark:border-blue-800/30",
+    amber:  "bg-gradient-to-br from-amber-50 to-white dark:from-amber-950/40 dark:to-slate-800 border-amber-100 dark:border-amber-800/30",
+    red:    "bg-gradient-to-br from-red-50 to-white dark:from-red-950/40 dark:to-slate-800 border-red-100 dark:border-red-800/30",
+    slate:  "bg-white dark:bg-slate-800 border-gray-100 dark:border-slate-700",
+  };
+  const iconStyles: Record<string, string> = {
+    indigo: "bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400",
+    green:  "bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400",
+    blue:   "bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400",
+    amber:  "bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400",
+    red:    "bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400",
+    slate:  "bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-gray-400",
+  };
   return (
-    <Card>
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-gray-400 dark:text-gray-500">{icon}</span>
-        <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">{label}</p>
+    <div className={`rounded-xl border p-4 ${cardStyles[accent]}`}>
+      <div className="flex items-center gap-2.5 mb-3">
+        <span className={`p-1.5 rounded-lg ${iconStyles[accent]}`}>{icon}</span>
+        <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wider">{label}</p>
       </div>
-      <p className={`text-2xl font-bold ${color} dark:text-white`}>{fmt(value)}</p>
+      <p className={`text-2xl font-bold ${color} dark:text-white tabular-nums`}>{fmt(value)}</p>
       {breakdown && breakdown.length > 0 && (
-        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5">
           {breakdown.map((b) => (
-            <span key={b.label} className="text-xs text-gray-400">
+            <span key={b.label} className="text-xs text-gray-400 dark:text-gray-500">
               {b.label} {b.amount}
             </span>
           ))}
         </div>
       )}
-      {subtext && <p className="text-xs text-gray-400 mt-1">{subtext}</p>}
-    </Card>
+      {subtext && <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">{subtext}</p>}
+    </div>
   );
 }
 
 function MiniProgressBar({ pct, alertThreshold }: { pct: number; alertThreshold: number }) {
   const clamped = Math.min(pct, 100);
-  let color = "bg-green-500";
-  if (pct >= 100) color = "bg-red-500";
-  else if (pct >= alertThreshold) color = "bg-yellow-400";
+  let color = "bg-gradient-to-r from-emerald-400 to-emerald-500";
+  if (pct >= 100) color = "bg-gradient-to-r from-red-400 to-rose-500";
+  else if (pct >= alertThreshold) color = "bg-gradient-to-r from-amber-400 to-orange-400";
   return (
-    <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-      <div className={`h-full rounded-full ${color}`} style={{ width: `${clamped}%` }} />
+    <div className="w-full h-2 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden">
+      <div className={`h-full rounded-full ${color} transition-all duration-700 ease-out`} style={{ width: `${clamped}%` }} />
     </div>
   );
 }
@@ -285,6 +303,23 @@ function LongTermBudgetSection({ budgets }: { budgets: BudgetWithActual[] }) {
 
 // ─── Recent Transactions ──────────────────────────────────────────────────────
 
+const CAT_COLORS: Record<string, string> = {
+  housing: "#f59e0b", food: "#ef4444", transport: "#3b82f6",
+  health: "#10b981", shopping: "#8b5cf6", entertainment: "#f97316",
+  income: "#22c55e", savings: "#06b6d4", financial: "#6366f1",
+  travel: "#0ea5e9", education: "#a855f7", insurance: "#64748b",
+  utilities: "#14b8a6", taxes: "#dc2626", personal: "#ec4899",
+};
+
+function catColor(raw: string | null): string {
+  if (!raw) return "#94a3b8";
+  const lower = raw.toLowerCase();
+  for (const [key, color] of Object.entries(CAT_COLORS)) {
+    if (lower.includes(key)) return color;
+  }
+  return "#94a3b8";
+}
+
 function RecentTransactionsSection({ transactions }: { transactions: Transaction[] }) {
   const { fmt, locale } = useCurrency();
   if (transactions.length === 0) {
@@ -299,19 +334,30 @@ function RecentTransactionsSection({ transactions }: { transactions: Transaction
   }
 
   return (
-    <div className="divide-y divide-gray-50">
+    <div className="space-y-0.5">
       {transactions.slice(0, 8).map((t) => {
         const amount = parseFloat(t.amount);
         const isIncome = amount < 0;
+        const label = t.merchant_name ?? t.name;
+        const color = catColor(t.plaid_category);
+        const catShort = t.plaid_category?.split(" > ")[0] ?? "";
         return (
-          <div key={t.id} className="flex items-center justify-between py-2.5">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm text-gray-800 font-medium truncate">
-                {t.merchant_name ?? t.name}
-              </p>
-              <p className="text-xs text-gray-400">{new Date(t.date + "T00:00:00").toLocaleDateString(locale, { month: "short", day: "numeric" })}</p>
+          <div key={t.id} className="flex items-center gap-3 py-2 px-2 rounded-lg hover:bg-gray-50/80 dark:hover:bg-slate-700/40 transition">
+            <div
+              className="w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold shrink-0"
+              style={{ backgroundColor: color + "18", color }}
+            >
+              {label.charAt(0).toUpperCase()}
             </div>
-            <span className={`text-sm font-semibold ml-3 shrink-0 ${isIncome ? "text-green-600" : "text-gray-800"}`}>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-gray-800 dark:text-gray-200 font-medium truncate">{label}</p>
+              <p className="text-xs text-gray-400">
+                {new Date(t.date + "T00:00:00").toLocaleDateString(locale, { month: "short", day: "numeric" })}
+                {catShort && <span className="ml-1.5 text-gray-300 dark:text-gray-600">·</span>}
+                {catShort && <span className="ml-1.5">{catShort}</span>}
+              </p>
+            </div>
+            <span className={`text-sm font-semibold ml-2 shrink-0 tabular-nums ${isIncome ? "text-emerald-600 dark:text-emerald-400" : "text-gray-800 dark:text-gray-200"}`}>
               {isIncome ? "+" : ""}{fmt(Math.abs(amount))}
             </span>
           </div>
@@ -435,12 +481,15 @@ function HistoryTooltip({ active, payload, label }: { active?: boolean; payload?
   const { fmtCompact } = useCurrency();
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-white border border-gray-100 rounded-lg shadow-lg p-3 text-xs min-w-[160px]">
-      <p className="text-gray-500 font-medium mb-2">{label}</p>
+    <div className="bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 rounded-xl shadow-xl p-3.5 text-xs min-w-[170px]">
+      <p className="text-gray-400 dark:text-gray-500 font-medium mb-2.5 pb-2 border-b border-gray-50 dark:border-slate-700">{label}</p>
       {payload.map((entry) => (
-        <div key={entry.name} className="flex justify-between gap-4 mb-0.5">
-          <span style={{ color: entry.color }}>{entry.name}</span>
-          <span className="font-semibold text-gray-800">{fmtCompact(entry.value)}</span>
+        <div key={entry.name} className="flex justify-between items-center gap-4 mb-1.5">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+            <span className="text-gray-600 dark:text-gray-400">{entry.name}</span>
+          </div>
+          <span className="font-bold text-gray-900 dark:text-white tabular-nums">{fmtCompact(entry.value)}</span>
         </div>
       ))}
     </div>
@@ -558,8 +607,16 @@ function FinancialHistorySection({
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={260}>
-          <LineChart data={filtered} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <AreaChart data={filtered} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+            <defs>
+              {METRICS.map(({ key, color }) => (
+                <linearGradient key={key} id={`grad-hist-${key}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={color} stopOpacity={0.12} />
+                  <stop offset="95%" stopColor={color} stopOpacity={0} />
+                </linearGradient>
+              ))}
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
             <XAxis
               dataKey="date"
               tick={{ fontSize: 10, fill: "#9ca3af" }}
@@ -576,18 +633,19 @@ function FinancialHistorySection({
             />
             <Tooltip content={<HistoryTooltip />} />
             {METRICS.filter(({ key }) => visible.has(key)).map(({ key, label, color }) => (
-              <Line
+              <Area
                 key={key}
                 type="monotone"
                 dataKey={key}
                 name={label}
                 stroke={color}
-                strokeWidth={2}
+                strokeWidth={2.5}
+                fill={`url(#grad-hist-${key})`}
                 dot={filtered.length <= 30}
-                activeDot={{ r: 4 }}
+                activeDot={{ r: 4, strokeWidth: 2 }}
               />
             ))}
-          </LineChart>
+          </AreaChart>
         </ResponsiveContainer>
       )}
     </Card>
@@ -1081,18 +1139,21 @@ export default function Dashboard() {
           color={netWorth >= 0 ? "text-gray-900" : "text-red-600"}
           icon={ICONS.networth}
           subtext={`${visibleAccounts.length} account${visibleAccounts.length !== 1 ? "s" : ""}`}
+          accent="indigo"
         />
         <NetWorthCard
           label="Cash & Banking"
           value={cash}
           icon={ICONS.cash}
           subtext={`${visibleAccounts.filter((a) => a.type === "depository").length} account${visibleAccounts.filter((a) => a.type === "depository").length !== 1 ? "s" : ""}`}
+          accent="green"
         />
         <NetWorthCard
           label="Investments"
           value={investments}
           icon={ICONS.invest}
           subtext={`${visibleAccounts.filter((a) => ["investment","brokerage"].includes(a.type)).length} account${visibleAccounts.filter((a) => ["investment","brokerage"].includes(a.type)).length !== 1 ? "s" : ""}`}
+          accent="blue"
         />
         <NetWorthCard
           label="Real Estate"
@@ -1100,6 +1161,7 @@ export default function Dashboard() {
           icon={ICONS.realestate}
           subtext={`${properties.length} propert${properties.length !== 1 ? "ies" : "y"}`}
           breakdown={reBreakdown}
+          accent="amber"
         />
         <NetWorthCard
           label="Liabilities"
@@ -1107,6 +1169,7 @@ export default function Dashboard() {
           color="text-red-600"
           icon={ICONS.liabilities}
           subtext={`${creditAccounts.length} card${creditAccounts.length !== 1 ? "s" : ""} · ${loans.length} loan${loans.length !== 1 ? "s" : ""}`}
+          accent="red"
         />
       </div>
 
@@ -1187,22 +1250,24 @@ export default function Dashboard() {
           <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Quick Links</h3>
           <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { href: "/settings?tab=accounts", label: "Accounts", desc: `${visibleAccounts.length} connected`, emoji: "🏦" },
-              { href: "/budgets", label: "Budgets", desc: `${monthlyBudgets.length} this month`, emoji: "📊" },
-              { href: "/transactions", label: "Transactions", desc: "View & categorize", emoji: "💳" },
-              { href: "/investments", label: "Investments", desc: "Portfolio tracker", emoji: "📈" },
-              { href: "/properties", label: "Real Estate", desc: `${properties.length} propert${properties.length !== 1 ? "ies" : "y"}`, emoji: "🏠" },
-              { href: "/settings", label: "Settings", desc: "Manage your account", emoji: "⚙️" },
-            ].map(({ href, label, desc, emoji }) => (
+              { href: "/settings?tab=accounts", label: "Accounts", desc: `${visibleAccounts.length} connected`, emoji: "🏦", bg: "from-blue-50 to-indigo-50 dark:from-blue-900/30 dark:to-indigo-900/20" },
+              { href: "/budgets", label: "Budgets", desc: `${monthlyBudgets.length} this month`, emoji: "📊", bg: "from-emerald-50 to-green-50 dark:from-emerald-900/30 dark:to-green-900/20" },
+              { href: "/transactions", label: "Transactions", desc: "View & categorize", emoji: "💳", bg: "from-violet-50 to-purple-50 dark:from-violet-900/30 dark:to-purple-900/20" },
+              { href: "/investments", label: "Investments", desc: "Portfolio tracker", emoji: "📈", bg: "from-cyan-50 to-sky-50 dark:from-cyan-900/30 dark:to-sky-900/20" },
+              { href: "/properties", label: "Real Estate", desc: `${properties.length} propert${properties.length !== 1 ? "ies" : "y"}`, emoji: "🏠", bg: "from-amber-50 to-yellow-50 dark:from-amber-900/30 dark:to-yellow-900/20" },
+              { href: "/settings", label: "Settings", desc: "Manage your account", emoji: "⚙️", bg: "from-slate-50 to-gray-50 dark:from-slate-700/40 dark:to-gray-700/20" },
+            ].map(({ href, label, desc, emoji, bg }) => (
               <Link
                 key={href}
                 href={href}
-                className="flex items-start gap-3 p-3 rounded-xl border border-gray-100 hover:border-blue-200 hover:bg-blue-50/40 transition group"
+                className="flex flex-col items-center gap-2 p-3.5 rounded-xl border border-gray-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-700 hover:shadow-md transition group bg-white dark:bg-slate-800"
               >
-                <span className="text-xl leading-none mt-0.5">{emoji}</span>
-                <div>
-                  <p className="text-sm font-medium text-gray-800 group-hover:text-blue-700">{label}</p>
-                  <p className="text-xs text-gray-400">{desc}</p>
+                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${bg} flex items-center justify-center text-xl leading-none`}>
+                  {emoji}
+                </div>
+                <div className="text-center">
+                  <p className="text-xs font-semibold text-gray-800 dark:text-gray-200 group-hover:text-blue-700 dark:group-hover:text-blue-400">{label}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">{desc}</p>
                 </div>
               </Link>
             ))}

@@ -1064,6 +1064,7 @@ export interface Holding {
   currency_code: string;
   asset_class: string | null;
   coingecko_id: string | null;
+  previous_close: string | null;   // price per share at prior close — for daily P&L
   as_of_date: string | null;
   created_at: string;
 }

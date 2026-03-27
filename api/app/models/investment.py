@@ -30,6 +30,7 @@ class Holding(Base):
     currency_code: Mapped[str] = mapped_column(String(3), default="USD")
     asset_class: Mapped[str | None] = mapped_column(String(20), index=True)
     coingecko_id: Mapped[str | None] = mapped_column(String(100))
+    previous_close: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
     as_of_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
