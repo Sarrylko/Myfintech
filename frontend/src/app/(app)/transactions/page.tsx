@@ -14,10 +14,22 @@ import {
   setTransactionSplits,
   clearTransactionSplits,
   createRule,
+  listProperties,
+  listUnits,
+  listLeases,
+  listUnitLeases,
+  linkRentalPayment,
+  unlinkRentalPayment,
+  linkPropertyExpense,
+  unlinkPropertyExpense,
   Account,
   Transaction,
   TransactionSplit,
   CustomCategory,
+  Property,
+  Unit,
+  Lease,
+  PropertyExpenseLink,
 } from "@/lib/api";
 import { useCurrency } from "@/lib/currency";
 
@@ -164,10 +176,42 @@ function CategorySelect({ group, item, taxonomy, onGroupChange, onItemChange }: 
   );
 }
 
-function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
+interface RentalLinkLine {
+  id: string;
+  propertyId: string;
+  leaseId: string;
+  amount: string;
+}
+
+interface PropertyExpLinkLine {
+  id: string;
+  propertyId: string;
+  expenseCategory: string;
+  amount: string;
+  isCapex: boolean;
+  notes: string;
+}
+
+// Categories that trigger the property expense link panel
+const PROPERTY_EXPENSE_ITEMS = new Set([
+  "Property Tax", "HOA Fees", "Home Insurance", "Maintenance & Repairs",
+  "Home Improvement", "Lawn / Snow Care", "Cleaning Services",
+]);
+
+function isPropertyExpenseCategory(group: string, item: string): boolean {
+  return PROPERTY_EXPENSE_ITEMS.has(item) ||
+    group.toLowerCase() === "rental" ||
+    (group === "Housing" && item !== "Mortgage / Rent" && item !== "Furnishings" && item !== "Security Systems") ||
+    false;
+}
+
+function EditModal({ txn, accounts, customTaxonomy, properties, units, leases, onSave, onClose }: {
   txn: Transaction;
   accounts: Account[];
   customTaxonomy: { category: string; subcategories: string[] }[];
+  properties: Property[];
+  units: Unit[];
+  leases: Lease[];
   onSave: (updated: Transaction, newCategory: string | undefined, prevCategory: string | null) => void;
   onClose: () => void;
 }) {
@@ -184,6 +228,76 @@ function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // ── Rental link state ────────────────────────────────────────────────────────
+  const isRentalIncomeCategory = (group: string, item: string) =>
+    (group === "Income" && item === "Rental Income") ||
+    group.toLowerCase() === "rental income";
+
+  const initRentalLines = (): RentalLinkLine[] => {
+    const abs = Math.abs(parseFloat(txn.amount));
+    return [{ id: "rl-1", propertyId: "", leaseId: "", amount: abs.toFixed(2) }];
+  };
+  const [rentalLinks, setRentalLinks] = useState<RentalLinkLine[]>(initRentalLines);
+
+  const rentalActive = isRentalIncomeCategory(form.categoryGroup, form.categoryItem) || txn.is_rental_income;
+  const rentalTotal = rentalLinks.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+  const txnAbs2 = Math.abs(parseFloat(form.amount) || 0);
+  const rentalRemaining = parseFloat((txnAbs2 - rentalTotal).toFixed(2));
+
+  function updateRentalLine(id: string, field: keyof RentalLinkLine, value: string) {
+    setRentalLinks((prev) => prev.map((l) =>
+      l.id === id ? { ...l, [field]: value, ...(field === "propertyId" ? { leaseId: "" } : {}) } : l
+    ));
+  }
+
+  function addRentalLine() {
+    const rem = parseFloat((txnAbs2 - rentalTotal).toFixed(2));
+    setRentalLinks((prev) => [...prev, {
+      id: `rl-${Date.now()}`,
+      propertyId: "", leaseId: "",
+      amount: rem > 0 ? rem.toFixed(2) : "0.00",
+    }]);
+  }
+
+  function removeRentalLine(id: string) {
+    setRentalLinks((prev) => prev.filter((l) => l.id !== id));
+  }
+
+  // Filter leases for a given property (via unit)
+  function leasesForProperty(propertyId: string): Lease[] {
+    const unitIds = units.filter((u) => u.property_id === propertyId).map((u) => u.id);
+    return leases.filter((l) => unitIds.includes(l.unit_id) && l.status === "active");
+  }
+
+  // ── Property expense link state ──────────────────────────────────────────────
+  const initPropExpLines = (): PropertyExpLinkLine[] => {
+    const abs = Math.abs(parseFloat(txn.amount));
+    return [{ id: "pe-1", propertyId: properties.length === 1 ? properties[0].id : "", expenseCategory: "repair", amount: abs.toFixed(2), isCapex: false, notes: "" }];
+  };
+  const [propExpLinks, setPropExpLinks] = useState<PropertyExpLinkLine[]>(initPropExpLines);
+
+  const propExpActive = isPropertyExpenseCategory(form.categoryGroup, form.categoryItem) || txn.is_property_expense;
+  const propExpTotal = propExpLinks.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+  const propExpRemaining = parseFloat((Math.abs(parseFloat(form.amount) || 0) - propExpTotal).toFixed(2));
+
+  function updatePropExpLine(id: string, field: keyof PropertyExpLinkLine, value: string | boolean) {
+    setPropExpLinks((prev) => prev.map((l) => l.id === id ? { ...l, [field]: value } : l));
+  }
+
+  function addPropExpLine() {
+    const rem = parseFloat((Math.abs(parseFloat(form.amount) || 0) - propExpTotal).toFixed(2));
+    setPropExpLinks((prev) => [...prev, {
+      id: `pe-${Date.now()}`,
+      propertyId: "", expenseCategory: "repair",
+      amount: rem > 0 ? rem.toFixed(2) : "0.00",
+      isCapex: false, notes: "",
+    }]);
+  }
+
+  function removePropExpLine(id: string) {
+    setPropExpLinks((prev) => prev.filter((l) => l.id !== id));
+  }
 
   // ── Split state ──────────────────────────────────────────────────────────────
   const [splitActive, setSplitActive] = useState(txn.has_splits);
@@ -267,6 +381,32 @@ function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
       }
     }
 
+    // Validate property expense links if applicable
+    const savingPropExpLinks = propExpActive && !splitActive;
+    if (savingPropExpLinks) {
+      for (const l of propExpLinks) {
+        if (!l.propertyId) { setError("All property expense assignments need a property selected"); return; }
+        if (!(parseFloat(l.amount) > 0)) { setError("All property expense amounts must be greater than 0"); return; }
+      }
+      if (Math.abs(propExpRemaining) > 0.01) {
+        setError(`Property expense amounts must total $${Math.abs(parseFloat(form.amount) || 0).toFixed(2)}`);
+        return;
+      }
+    }
+
+    // Validate rental links if applicable
+    const savingRentalLinks = rentalActive && !splitActive;
+    if (savingRentalLinks) {
+      for (const l of rentalLinks) {
+        if (!l.leaseId) { setError("All rental assignments need a lease selected"); return; }
+        if (!(parseFloat(l.amount) > 0)) { setError("All rental amounts must be greater than 0"); return; }
+      }
+      if (Math.abs(rentalRemaining) > 0.01) {
+        setError(`Rental amounts must total $${txnAbs2.toFixed(2)}`);
+        return;
+      }
+    }
+
     setSaving(true); setError("");
     try {
       // Always save core transaction fields
@@ -287,9 +427,35 @@ function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
           category: l.categoryGroup && l.categoryItem ? `${l.categoryGroup} > ${l.categoryItem}` : l.categoryGroup,
           notes: l.notes || undefined,
         })));
-        // Patch local state to reflect splits
+        // If was rental income or property expense, unlink (split takes over)
+        if (txn.is_rental_income) await unlinkRentalPayment(txn.id).catch(() => {});
+        if (txn.is_property_expense) await unlinkPropertyExpense(txn.id).catch(() => {});
         onSave({ ...updated, has_splits: true, splits: [] }, undefined, txn.plaid_category);
       } else {
+        // Handle rental link save/remove
+        if (savingRentalLinks && rentalLinks.some((l) => l.leaseId)) {
+          await linkRentalPayment(txn.id, rentalLinks.map((l) => ({
+            lease_id: l.leaseId,
+            amount: parseFloat(l.amount),
+          })));
+        } else if (!rentalActive && txn.is_rental_income) {
+          // Category was changed away from rental income — remove links
+          await unlinkRentalPayment(txn.id).catch(() => {});
+        }
+
+        // Property expense links
+        if (savingPropExpLinks && propExpLinks.some((l) => l.propertyId)) {
+          await linkPropertyExpense(txn.id, propExpLinks.map((l) => ({
+            property_id: l.propertyId,
+            expense_category: l.expenseCategory,
+            amount: parseFloat(l.amount),
+            is_capex: l.isCapex,
+            notes: l.notes || undefined,
+          } as PropertyExpenseLink)));
+        } else if (!propExpActive && txn.is_property_expense) {
+          await unlinkPropertyExpense(txn.id).catch(() => {});
+        }
+
         onSave(updated, plaid_category, txn.plaid_category);
       }
     } catch (e) {
@@ -475,6 +641,199 @@ function EditModal({ txn, accounts, customTaxonomy, onSave, onClose }: {
             )}
           </div>
 
+          {/* ── Rental Income Link section ──────────────────────────── */}
+          {rentalActive && !splitActive && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-amber-600 text-sm">🏘️</span>
+                <p className="text-sm font-semibold text-amber-800">Link to Rental Property</p>
+                <span className="text-xs text-amber-600 ml-auto">Excluded from personal income</span>
+              </div>
+              <p className="text-xs text-amber-700">Assign this payment to a lease — it will appear in the Rentals page as a received payment.</p>
+
+              {rentalLinks.map((line, idx) => {
+                const propLeases = leasesForProperty(line.propertyId);
+                const leaseUnit = (leaseId: string) => {
+                  const lease = leases.find((l) => l.id === leaseId);
+                  if (!lease) return "";
+                  const unit = units.find((u) => u.id === lease.unit_id);
+                  return unit ? unit.unit_label : "";
+                };
+                return (
+                  <div key={line.id} className="flex flex-col gap-1.5">
+                    {rentalLinks.length > 1 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-amber-700">Property {idx + 1}</span>
+                        <button type="button" onClick={() => removeRentalLine(line.id)}
+                          className="text-xs text-amber-400 hover:text-red-500">✕ Remove</button>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs text-amber-700 mb-0.5">Property</label>
+                        <select
+                          title="Property"
+                          value={line.propertyId}
+                          onChange={(e) => updateRentalLine(line.id, "propertyId", e.target.value)}
+                          className="border border-amber-200 rounded-lg px-2 py-1.5 w-full text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+                        >
+                          <option value="">— Select property —</option>
+                          {properties.map((p) => (
+                            <option key={p.id} value={p.id}>{p.address}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-amber-700 mb-0.5">Lease / Unit</label>
+                        <select
+                          title="Lease"
+                          value={line.leaseId}
+                          onChange={(e) => updateRentalLine(line.id, "leaseId", e.target.value)}
+                          disabled={!line.propertyId || propLeases.length === 0}
+                          className="border border-amber-200 rounded-lg px-2 py-1.5 w-full text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:opacity-50"
+                        >
+                          <option value="">— Select lease —</option>
+                          {propLeases.map((l) => (
+                            <option key={l.id} value={l.id}>
+                              {leaseUnit(l.id)} — ${parseFloat(l.monthly_rent).toFixed(0)}/mo
+                            </option>
+                          ))}
+                        </select>
+                        {line.propertyId && propLeases.length === 0 && (
+                          <p className="text-[10px] text-amber-600 mt-0.5">No active leases for this property</p>
+                        )}
+                      </div>
+                    </div>
+                    {rentalLinks.length > 1 && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-amber-700 shrink-0">Amount ($)</label>
+                        <div className="relative w-32">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
+                          <input type="number" step="0.01" min="0.01"
+                            title="Amount"
+                            value={line.amount}
+                            onChange={(e) => updateRentalLine(line.id, "amount", e.target.value)}
+                            className="border border-amber-200 rounded px-2 pl-5 py-1.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-amber-400"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {rentalLinks.length > 1 && (
+                <div className={`text-xs font-medium ${Math.abs(rentalRemaining) <= 0.01 ? "text-green-600" : "text-red-500"}`}>
+                  {Math.abs(rentalRemaining) <= 0.01 ? "✓ Balanced" : `$${Math.abs(rentalRemaining).toFixed(2)} ${rentalRemaining > 0 ? "remaining" : "over"}`}
+                </div>
+              )}
+
+              <button type="button" onClick={addRentalLine}
+                className="text-xs text-amber-700 hover:text-amber-900 font-medium">
+                + Split across another property
+              </button>
+            </div>
+          )}
+
+          {/* ── Property Expense Link section ──────────────────────────── */}
+          {propExpActive && !splitActive && !rentalActive && (
+            <div className="rounded-lg border border-teal-200 bg-teal-50/40 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-teal-600 text-sm">🏠</span>
+                <p className="text-sm font-semibold text-teal-800">Link to Property Expense</p>
+                <span className="text-xs text-teal-600 ml-auto">Excluded from personal expenses</span>
+              </div>
+              <p className="text-xs text-teal-700">Assign this expense to a property — it will appear in the property&apos;s maintenance records.</p>
+
+              {propExpLinks.map((line, idx) => (
+                <div key={line.id} className="flex flex-col gap-1.5">
+                  {propExpLinks.length > 1 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-teal-700">Property {idx + 1}</span>
+                      <button type="button" onClick={() => removePropExpLine(line.id)}
+                        className="text-xs text-teal-400 hover:text-red-500">✕ Remove</button>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-teal-700 mb-0.5">Property</label>
+                      <select
+                        title="Property"
+                        value={line.propertyId}
+                        onChange={(e) => updatePropExpLine(line.id, "propertyId", e.target.value)}
+                        className="border border-teal-200 rounded-lg px-2 py-1.5 w-full text-xs bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"
+                      >
+                        <option value="">— Select property —</option>
+                        {properties.map((p) => (
+                          <option key={p.id} value={p.id}>{p.address}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-teal-700 mb-0.5">Expense Type</label>
+                      <select
+                        title="Expense category"
+                        value={line.expenseCategory}
+                        onChange={(e) => updatePropExpLine(line.id, "expenseCategory", e.target.value)}
+                        className="border border-teal-200 rounded-lg px-2 py-1.5 w-full text-xs bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"
+                      >
+                        <option value="repair">Repair / Maintenance</option>
+                        <option value="property_tax">Property Tax</option>
+                        <option value="hoa">HOA</option>
+                        <option value="insurance">Insurance</option>
+                        <option value="utility">Utility</option>
+                        <option value="appliance">Appliance</option>
+                        <option value="landscaping">Landscaping / Lawn</option>
+                        <option value="cleaning">Cleaning</option>
+                        <option value="inspection">Inspection</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {propExpLinks.length > 1 && (
+                      <div className="relative w-28 shrink-0">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
+                        <input type="number" step="0.01" min="0.01"
+                          title="Amount"
+                          value={line.amount}
+                          onChange={(e) => updatePropExpLine(line.id, "amount", e.target.value)}
+                          className="border border-teal-200 rounded px-2 pl-5 py-1.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-teal-400"
+                        />
+                      </div>
+                    )}
+                    {!["property_tax", "hoa", "insurance"].includes(line.expenseCategory) && (
+                      <label className="flex items-center gap-1.5 text-xs text-teal-700 cursor-pointer">
+                        <input type="checkbox" checked={line.isCapex}
+                          onChange={(e) => updatePropExpLine(line.id, "isCapex", e.target.checked)}
+                          className="rounded border-teal-300" />
+                        Capital improvement (CapEx)
+                      </label>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={line.notes}
+                    onChange={(e) => updatePropExpLine(line.id, "notes", e.target.value)}
+                    placeholder="Vendor / notes (optional)"
+                    className="border border-teal-200 rounded-lg px-2 py-1.5 w-full text-xs bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"
+                  />
+                </div>
+              ))}
+
+              {propExpLinks.length > 1 && (
+                <div className={`text-xs font-medium ${Math.abs(propExpRemaining) <= 0.01 ? "text-green-600" : "text-red-500"}`}>
+                  {Math.abs(propExpRemaining) <= 0.01 ? "✓ Balanced" : `$${Math.abs(propExpRemaining).toFixed(2)} ${propExpRemaining > 0 ? "remaining" : "over"}`}
+                </div>
+              )}
+
+              <button type="button" onClick={addPropExpLine}
+                className="text-xs text-teal-700 hover:text-teal-900 font-medium">
+                + Split across another property
+              </button>
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
             <textarea rows={2} value={form.notes}
@@ -657,10 +1016,15 @@ export default function TransactionsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
+  const [sortField, setSortField] = useState<"date" | "amount">("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [showCharts, setShowCharts] = useState(true);
   const [showIgnored, setShowIgnored] = useState(false);
   const [editTxn, setEditTxn] = useState<Transaction | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [rentalProperties, setRentalProperties] = useState<Property[]>([]);
+  const [rentalUnits, setRentalUnits] = useState<Unit[]>([]);
+  const [rentalLeases, setRentalLeases] = useState<Lease[]>([]);
   // "Save as Rule" prompt state
   const [rulePrompt, setRulePrompt] = useState<{
     category: string; merchantHint: string; nameHint: string;
@@ -685,6 +1049,21 @@ export default function TransactionsPage() {
   }, [router]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Load rental properties/units/leases whenever the edit modal opens (needed for rental income + property expense panels)
+  useEffect(() => {
+    if (!editTxn || rentalProperties.length > 0) return;
+    (async () => {
+      try {
+        const props = await listProperties();
+        setRentalProperties(props);
+        const allUnits = (await Promise.all(props.map((p) => listUnits(p.id)))).flat();
+        setRentalUnits(allUnits);
+        const allLeases = (await Promise.all(allUnits.map((u) => listUnitLeases(u.id).catch(() => [])))).flat();
+        setRentalLeases(allLeases);
+      } catch { /* silent — user will just see empty dropdowns */ }
+    })();
+  }, [editTxn]);
 
   // Build custom taxonomy from DB categories (parent → children)
   const customTaxonomy: { category: string; subcategories: string[] }[] = [];
@@ -724,15 +1103,15 @@ export default function TransactionsPage() {
     return matchAccount && matchCategory && matchSearch && matchDate;
   });
 
-  const totalExpenses = filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending).reduce((s, t) => s + parseFloat(t.amount), 0);
-  const totalIncome = filtered.filter((t) => parseFloat(t.amount) < 0 && !t.pending).reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0);
+  const totalExpenses = filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending && !t.is_transfer && !t.is_property_expense && !t.is_business).reduce((s, t) => s + parseFloat(t.amount), 0);
+  const totalIncome = filtered.filter((t) => parseFloat(t.amount) < 0 && !t.pending && !t.is_transfer && !t.is_rental_income && !t.is_business).reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0);
   const netCashFlow = totalIncome - totalExpenses;
 
   // ── Chart data ──────────────────────────────────────────────────────────────
   const monthlyTrend = useMemo(() => {
     const months: Record<string, { key: string; label: string; expenses: number; income: number }> = {};
     for (const t of filtered) {
-      if (t.pending) continue;
+      if (t.pending || t.is_transfer || t.is_rental_income || t.is_property_expense || t.is_business) continue;
       const d = new Date(t.date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const label = d.toLocaleDateString(locale, { month: "short", year: "2-digit" });
@@ -750,7 +1129,7 @@ export default function TransactionsPage() {
     const spend: Record<string, number> = {};
     for (const t of filtered) {
       const amt = parseFloat(t.amount);
-      if (amt <= 0 || t.pending) continue;
+      if (amt <= 0 || t.pending || t.is_transfer || t.is_business) continue;
       if (t.has_splits && t.splits.length > 0) {
         // Distribute per split line
         for (const s of t.splits) {
@@ -770,9 +1149,15 @@ export default function TransactionsPage() {
       .map(([name, amount]) => ({ name, amount }));
   }, [filtered]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const sorted = [...filtered].sort((a, b) => {
+    const mul = sortDir === "asc" ? 1 : -1;
+    if (sortField === "date") return mul * (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+    return mul * (parseFloat(a.amount) - parseFloat(b.amount));
+  });
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
-  const paginatedTxns = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const paginatedTxns = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   // Reset to page 1 whenever any filter changes
   useEffect(() => { setPage(1); }, [search, selectedAccount, selectedCategory, datePreset, dateFrom, dateTo, showIgnored]);
@@ -857,6 +1242,9 @@ export default function TransactionsPage() {
           txn={editTxn}
           accounts={accounts}
           customTaxonomy={customTaxonomy}
+          properties={rentalProperties}
+          units={rentalUnits}
+          leases={rentalLeases}
           onSave={onTransactionSaved}
           onClose={() => setEditTxn(null)}
         />
@@ -896,6 +1284,7 @@ export default function TransactionsPage() {
               <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Expenses</p>
             </div>
             <p className="text-xl font-bold text-red-600 dark:text-red-400 tabular-nums">-{fmt(totalExpenses)}</p>
+            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Transfers & property expenses excluded</p>
           </div>
           <div className="bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/40 dark:to-slate-800 rounded-xl border border-emerald-100 dark:border-emerald-900/30 p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -905,6 +1294,7 @@ export default function TransactionsPage() {
               <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Income</p>
             </div>
             <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">+{fmt(totalIncome)}</p>
+            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Transfers excluded</p>
           </div>
           <div className={`bg-gradient-to-br ${netCashFlow >= 0 ? "from-blue-50 to-white dark:from-blue-950/40 dark:to-slate-800 border-blue-100 dark:border-blue-900/30" : "from-orange-50 to-white dark:from-orange-950/40 dark:to-slate-800 border-orange-100 dark:border-orange-900/30"} rounded-xl border p-4`}>
             <div className="flex items-center gap-2 mb-2">
@@ -1132,11 +1522,21 @@ export default function TransactionsPage() {
         <table className="w-full">
           <thead>
             <tr className="border-b border-gray-100 dark:border-slate-700 bg-gray-50/60 dark:bg-slate-800/80 text-left">
-              <th className="px-5 py-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Date</th>
+              <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider">
+                <button type="button" onClick={() => { if (sortField === "date") setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortField("date"); setSortDir("desc"); } setPage(1); }}
+                  className="flex items-center gap-1 text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition">
+                  Date {sortField === "date" ? (sortDir === "desc" ? "↓" : "↑") : <span className="opacity-30">↕</span>}
+                </button>
+              </th>
               <th className="px-5 py-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Description</th>
               <th className="px-5 py-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider hidden md:table-cell">Category</th>
               <th className="px-5 py-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider hidden lg:table-cell">Account</th>
-              <th className="px-5 py-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider text-right">Amount</th>
+              <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-right">
+                <button type="button" onClick={() => { if (sortField === "amount") setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortField("amount"); setSortDir("desc"); } setPage(1); }}
+                  className="flex items-center gap-1 ml-auto text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition">
+                  Amount {sortField === "amount" ? (sortDir === "desc" ? "↓" : "↑") : <span className="opacity-30">↕</span>}
+                </button>
+              </th>
               <th className="px-5 py-3 w-16"></th>
             </tr>
           </thead>
@@ -1163,6 +1563,18 @@ export default function TransactionsPage() {
                     <span className="text-sm text-gray-600 dark:text-gray-400">{fmtDate(txn.date)}</span>
                     {txn.pending && (
                       <span className="ml-1.5 text-[10px] bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded-full font-medium">Pending</span>
+                    )}
+                    {txn.is_transfer && (
+                      <span className="ml-1.5 text-[10px] bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-1.5 py-0.5 rounded-full font-medium">Transfer</span>
+                    )}
+                    {txn.is_rental_income && (
+                      <span className="ml-1.5 text-[10px] bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded-full font-medium">🏘️ Rental</span>
+                    )}
+                    {txn.is_property_expense && (
+                      <span className="ml-1.5 text-[10px] bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-400 px-1.5 py-0.5 rounded-full font-medium">🏠 Property</span>
+                    )}
+                    {txn.is_business && (
+                      <span className="ml-1.5 text-[10px] bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 px-1.5 py-0.5 rounded-full font-medium">🏢 Business</span>
                     )}
                     {txn.is_ignored && (
                       <span className="ml-1.5 text-[10px] bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded-full font-medium">Ignored</span>

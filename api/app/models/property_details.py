@@ -99,6 +99,9 @@ class MaintenanceExpense(Base):
     is_capex: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=sa.text("false")
     )  # True = capital expenditure (excluded from NOI), False = operating expense
+    transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")

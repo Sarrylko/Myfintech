@@ -51,6 +51,14 @@ _PLAID_PREFIXES: dict[str, list[str]] = {
     "other income":      ["income"],
 }
 
+# Plaid category prefixes that represent transfers (excluded from all calculations)
+_TRANSFER_PLAID_PREFIXES = [
+    "transfer",
+    "payment > credit card",
+    "payment > credit",
+    "payment > loan",
+]
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -82,8 +90,11 @@ async def _actual_spent(
 
     Expense categories: sums positive-amount transactions (Plaid convention: spending = positive).
     Income categories: sums abs(negative-amount) transactions (Plaid convention: deposits = negative).
-    Excludes ignored transactions; includes pending for a real-time view.
+    Excludes ignored transactions, pending transactions, and transfer-categorized transactions.
+    Transfers (credit card payments, internal account moves) are excluded to prevent double-counting.
     """
+    from sqlalchemy import and_, not_
+
     if is_income:
         amount_filter = Transaction.amount < 0
         amount_expr = func.coalesce(func.sum(func.abs(Transaction.amount)), 0)
@@ -102,14 +113,50 @@ async def _actual_spent(
         *plaid_conditions,
     )
 
+    # Exclude transactions whose plaid_category looks like a transfer or rental income
+    transfer_conditions = [
+        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
+        for p in _TRANSFER_PLAID_PREFIXES
+    ]
+    not_a_transfer = not_(or_(*transfer_conditions))
+
+    rental_conditions = [
+        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
+        for p in ["income > rental", "rental income"]
+    ]
+    not_rental_income = not_(or_(*rental_conditions))
+
+    property_expense_conditions = [
+        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
+        for p in ["home improvement", "home services", "property tax", "home insurance"]
+    ]
+    not_property_expense = not_(or_(*property_expense_conditions))
+
+    from app.models.account import Category as Cat, Account as Acct
     result = await db.execute(
-        select(amount_expr).where(
+        select(amount_expr)
+        .outerjoin(Cat, Cat.id == Transaction.custom_category_id)
+        .outerjoin(Acct, Acct.id == Transaction.account_id)
+        .where(
             Transaction.household_id == household_id,
             category_match,
             Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,  # noqa: E712
             Transaction.date >= start_date,
             Transaction.date <= end_date,
             amount_filter,
+            # exclude transfer-tagged custom categories
+            or_(Cat.id.is_(None), Cat.is_transfer == False),  # noqa: E712
+            # exclude rental income custom categories (tracked separately in rental P&L)
+            or_(Cat.id.is_(None), Cat.is_rental_income == False),  # noqa: E712
+            # exclude property expense custom categories (tracked separately in property P&L)
+            or_(Cat.id.is_(None), Cat.is_property_expense == False),  # noqa: E712
+            # exclude plaid-category transfers, rental income, and property expenses
+            not_a_transfer,
+            not_rental_income,
+            not_property_expense,
+            # exclude transactions from business-entity accounts
+            or_(Acct.id.is_(None), and_(Acct.entity_id.is_(None), Acct.account_scope != "business")),
         )
     )
     return Decimal(str(result.scalar() or 0))

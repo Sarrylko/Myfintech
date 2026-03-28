@@ -126,8 +126,8 @@ class Transaction(Base):
         DateTime(timezone=True), server_default=text("now()")
     )
 
-    account: Mapped["Account | None"] = relationship(back_populates="transactions")
-    category: Mapped["Category | None"] = relationship()
+    account: Mapped["Account | None"] = relationship(back_populates="transactions", lazy="selectin")
+    category: Mapped["Category | None"] = relationship(lazy="selectin")
     splits: Mapped[list["TransactionSplit"]] = relationship(
         back_populates="transaction", cascade="all, delete-orphan", lazy="selectin"
     )
@@ -149,6 +149,9 @@ class Category(Base):
         UUID(as_uuid=True), ForeignKey("categories.id")
     )
     is_income: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_transfer: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_rental_income: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_property_expense: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

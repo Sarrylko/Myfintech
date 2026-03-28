@@ -2162,15 +2162,26 @@ function MaintenanceTab({
                       CapEx
                     </span>
                   )}
+                  {e.transaction_id && (
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full shrink-0 bg-amber-100 text-amber-700" title="Sourced from a bank transaction — edit from the Transactions page">
+                      🔗 From bank
+                    </span>
+                  )}
                   <span className="text-sm text-gray-700 truncate">{e.description}</span>
                   {e.vendor && <span className="text-xs text-gray-400 truncate">· {e.vendor}</span>}
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-sm font-semibold text-gray-900">{e.amount != null && e.amount !== "" ? fmt(Number(e.amount), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</span>
-                  <button onClick={() => { setEditId(e.id); setEditForm(expenseToForm(e)); }}
-                    className="text-xs text-gray-400 hover:text-primary-600 transition">Edit</button>
-                  <button onClick={() => handleDelete(e.id)} disabled={deletingId === e.id}
-                    className="text-xs text-gray-400 hover:text-red-500 transition disabled:opacity-40">Delete</button>
+                  {e.transaction_id ? (
+                    <span className="text-xs text-amber-500 italic" title="Linked from Transactions page — unlink there to edit">Linked</span>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => { setEditId(e.id); setEditForm(expenseToForm(e)); }}
+                        className="text-xs text-gray-400 hover:text-primary-600 transition">Edit</button>
+                      <button type="button" onClick={() => handleDelete(e.id)} disabled={deletingId === e.id}
+                        className="text-xs text-gray-400 hover:text-red-500 transition disabled:opacity-40">Delete</button>
+                    </>
+                  )}
                 </div>
               </div>
             )}

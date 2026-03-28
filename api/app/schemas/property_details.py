@@ -136,6 +136,7 @@ class MaintenanceExpenseResponse(BaseModel):
     description: str
     vendor: str | None
     is_capex: bool
+    transaction_id: uuid.UUID | None = None
     notes: str | None
     created_at: datetime
 

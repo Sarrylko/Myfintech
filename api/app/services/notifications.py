@@ -22,11 +22,11 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import create_engine, desc, func, or_, select
+from sqlalchemy import and_, create_engine, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.account import Category, Transaction
+from app.models.account import Account, Category, Transaction
 from app.models.budget import Budget
 from app.models.networth import NetWorthSnapshot
 from app.models.property import Property
@@ -112,13 +112,17 @@ def send_daily_summary():
             rows = db.execute(
                 select(Category.name, func.sum(Transaction.amount).label("total"))
                 .join(Transaction, Transaction.custom_category_id == Category.id)
+                .outerjoin(Account, Account.id == Transaction.account_id)
                 .where(
                     Transaction.household_id == hid,
                     Transaction.date >= month_start,
-                    Transaction.is_ignored == False,  # noqa: E712
-                    Transaction.pending == False,       # noqa: E712
-                    Category.is_income == False,        # noqa: E712
+                    Transaction.is_ignored == False,       # noqa: E712
+                    Transaction.pending == False,          # noqa: E712
+                    Category.is_income == False,           # noqa: E712
+                    Category.is_transfer == False,         # noqa: E712
+                    Category.is_property_expense == False, # noqa: E712
                     Transaction.amount > 0,
+                    or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
                 )
                 .group_by(Category.name)
                 .order_by(func.sum(Transaction.amount).desc())
@@ -368,14 +372,18 @@ def _send_monthly_report_for_household(
     total_spend: Decimal = db.execute(
         select(func.sum(Transaction.amount))
         .join(Category, Transaction.custom_category_id == Category.id)
+        .outerjoin(Account, Account.id == Transaction.account_id)
         .where(
             Transaction.household_id == hh_id,
             Transaction.date >= month_start,
             Transaction.date < month_end,
-            Transaction.is_ignored == False,  # noqa: E712
-            Transaction.pending == False,      # noqa: E712
+            Transaction.is_ignored == False,       # noqa: E712
+            Transaction.pending == False,          # noqa: E712
             Transaction.amount > 0,
-            Category.is_income == False,       # noqa: E712
+            Category.is_income == False,           # noqa: E712
+            Category.is_transfer == False,         # noqa: E712
+            Category.is_property_expense == False, # noqa: E712
+            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
         )
     ).scalar() or Decimal(0)
 
@@ -390,7 +398,8 @@ def _send_monthly_report_for_household(
             Transaction.is_ignored == False,  # noqa: E712
             Transaction.pending == False,      # noqa: E712
             Transaction.amount > 0,
-            Category.is_income == True,        # noqa: E712
+            Category.is_income == True,           # noqa: E712
+            Category.is_rental_income == False,   # noqa: E712 — rental income tracked in rental P&L
         )
     ).scalar() or Decimal(0)
 
@@ -402,14 +411,18 @@ def _send_monthly_report_for_household(
             func.sum(Transaction.amount).label("total"),
         )
         .join(Category, Transaction.custom_category_id == Category.id)
+        .outerjoin(Account, Account.id == Transaction.account_id)
         .where(
             Transaction.household_id == hh_id,
             Transaction.date >= history_start,
             Transaction.date < month_start,
-            Transaction.is_ignored == False,  # noqa: E712
-            Transaction.pending == False,      # noqa: E712
+            Transaction.is_ignored == False,       # noqa: E712
+            Transaction.pending == False,          # noqa: E712
             Transaction.amount > 0,
-            Category.is_income == False,       # noqa: E712
+            Category.is_income == False,           # noqa: E712
+            Category.is_transfer == False,         # noqa: E712
+            Category.is_property_expense == False, # noqa: E712
+            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
         )
         .group_by("yr", "mo")
     ).all()
@@ -422,14 +435,18 @@ def _send_monthly_report_for_household(
     top_cats = db.execute(
         select(Category.name, func.sum(Transaction.amount).label("total"))
         .join(Transaction, Transaction.custom_category_id == Category.id)
+        .outerjoin(Account, Account.id == Transaction.account_id)
         .where(
             Transaction.household_id == hh_id,
             Transaction.date >= month_start,
             Transaction.date < month_end,
-            Transaction.is_ignored == False,  # noqa: E712
-            Transaction.pending == False,      # noqa: E712
+            Transaction.is_ignored == False,       # noqa: E712
+            Transaction.pending == False,          # noqa: E712
             Transaction.amount > 0,
-            Category.is_income == False,       # noqa: E712
+            Category.is_income == False,           # noqa: E712
+            Category.is_transfer == False,         # noqa: E712
+            Category.is_property_expense == False, # noqa: E712
+            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
         )
         .group_by(Category.name)
         .order_by(desc("total"))
@@ -445,14 +462,18 @@ def _send_monthly_report_for_household(
             func.sum(Transaction.amount).label("total"),
         )
         .join(Transaction, Transaction.custom_category_id == Category.id)
+        .outerjoin(Account, Account.id == Transaction.account_id)
         .where(
             Transaction.household_id == hh_id,
             Transaction.date >= history_start,
             Transaction.date < month_start,
-            Transaction.is_ignored == False,  # noqa: E712
-            Transaction.pending == False,      # noqa: E712
+            Transaction.is_ignored == False,       # noqa: E712
+            Transaction.pending == False,          # noqa: E712
             Transaction.amount > 0,
-            Category.is_income == False,       # noqa: E712
+            Category.is_income == False,           # noqa: E712
+            Category.is_transfer == False,         # noqa: E712
+            Category.is_property_expense == False, # noqa: E712
+            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
         )
         .group_by(Category.name, "yr", "mo")
     ).all()
@@ -465,14 +486,18 @@ def _send_monthly_report_for_household(
     all_prev_cats = db.execute(
         select(Category.name, func.sum(Transaction.amount).label("total"))
         .join(Transaction, Transaction.custom_category_id == Category.id)
+        .outerjoin(Account, Account.id == Transaction.account_id)
         .where(
             Transaction.household_id == hh_id,
             Transaction.date >= month_start,
             Transaction.date < month_end,
-            Transaction.is_ignored == False,  # noqa: E712
-            Transaction.pending == False,      # noqa: E712
+            Transaction.is_ignored == False,       # noqa: E712
+            Transaction.pending == False,          # noqa: E712
             Transaction.amount > 0,
-            Category.is_income == False,       # noqa: E712
+            Category.is_income == False,           # noqa: E712
+            Category.is_transfer == False,         # noqa: E712
+            Category.is_property_expense == False, # noqa: E712
+            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
         )
         .group_by(Category.name)
     ).all()

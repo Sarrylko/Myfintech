@@ -234,13 +234,22 @@ async def _sync_item(item: PlaidItem, client, db: AsyncSession) -> dict:
                 plaid_category_id=pt.category_id,
             )
 
+            # Normalize known Plaid transfer categories so they are consistently
+            # excluded from income/expense calculations regardless of user rules.
+            if plaid_cat and plaid_cat.lower().startswith("transfer"):
+                txn.plaid_category = plaid_cat  # preserve original e.g. "Transfer > Credit Card"
+            elif plaid_cat and plaid_cat.lower().startswith("payment > credit"):
+                txn.plaid_category = "Transfer > Credit Card Payment"
+            elif plaid_cat and plaid_cat.lower().startswith("payment > loan"):
+                txn.plaid_category = "Transfer > Loan Payment"
+
             # Apply household categorization rules (same as CSV import)
             matched = False
             if rules:
                 account_type = account_type_map.get(pt.account_id, acct.type)
                 matched = apply_rules_to_txn(txn, account_type, rules)
 
-            if not matched:
+            if not matched and not txn.plaid_category:
                 txn.plaid_category = "Uncategorized"
 
             db.add(txn)

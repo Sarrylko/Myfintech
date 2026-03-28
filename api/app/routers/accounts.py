@@ -519,6 +519,309 @@ async def clear_transaction_splits(
     await db.commit()
 
 
+# ─── Rental income linking ────────────────────────────────────────────────────
+
+from pydantic import BaseModel as _BaseModel  # local import to avoid top-level clutter
+
+
+class _RentalLink(_BaseModel):
+    lease_id: uuid.UUID
+    amount: float
+
+
+@router.post("/transactions/{transaction_id}/link-rental", status_code=204)
+async def link_transaction_to_rental(
+    transaction_id: uuid.UUID,
+    payload: list[_RentalLink],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Link a rental income transaction to one or more leases.
+
+    Creates Payment records for each lease assignment. If the transaction was
+    previously linked, all prior links are replaced (atomic).
+    Amounts must sum to the absolute transaction amount (±$0.01).
+    """
+    from decimal import Decimal
+    from app.models.rental import Lease as _Lease, Payment as _Payment, Unit as _Unit
+    from app.models.property import Property as _Property
+
+    if not payload:
+        raise HTTPException(status_code=422, detail="At least one lease assignment required")
+
+    # Verify transaction
+    txn_result = await db.execute(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.household_id == user.household_id,
+        )
+    )
+    txn = txn_result.scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Validate amounts sum to transaction amount
+    total_assigned = sum(Decimal(str(link.amount)) for link in payload)
+    if abs(total_assigned - abs(txn.amount)) > Decimal("0.01"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Assigned amounts ({total_assigned}) must equal transaction amount ({abs(txn.amount)})",
+        )
+
+    # Verify all leases belong to this household
+    for link in payload:
+        lease_result = await db.execute(
+            select(_Lease)
+            .join(_Unit, _Lease.unit_id == _Unit.id)
+            .join(_Property, _Unit.property_id == _Property.id)
+            .where(
+                _Lease.id == link.lease_id,
+                _Property.household_id == user.household_id,
+            )
+        )
+        if lease_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail=f"Lease {link.lease_id} not found")
+
+    # Remove existing payment records for this transaction (atomic replace)
+    existing_payments = await db.execute(
+        select(_Payment).where(_Payment.transaction_id == transaction_id)
+    )
+    for p in existing_payments.scalars().all():
+        await db.delete(p)
+
+    # Create new payment records
+    txn_date = txn.date.date() if hasattr(txn.date, "date") else txn.date
+    for link in payload:
+        payment = _Payment(
+            lease_id=link.lease_id,
+            payment_date=txn_date,
+            amount=Decimal(str(link.amount)),
+            method="bank",
+            transaction_id=transaction_id,
+            notes="Linked from bank transaction",
+        )
+        db.add(payment)
+
+    # Auto-categorize as rental income if not already
+    if txn.plaid_category is None or txn.plaid_category.lower() not in ("income > rental", "rental income"):
+        if not txn.is_manual_category:
+            txn.plaid_category = "Income > Rental"
+
+    await db.commit()
+
+
+@router.delete("/transactions/{transaction_id}/link-rental", status_code=204)
+async def unlink_transaction_from_rental(
+    transaction_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove all rental payment links for a transaction."""
+    from app.models.rental import Payment as _Payment
+
+    # Verify transaction ownership
+    txn_result = await db.execute(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.household_id == user.household_id,
+        )
+    )
+    if txn_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    existing_payments = await db.execute(
+        select(_Payment).where(_Payment.transaction_id == transaction_id)
+    )
+    for p in existing_payments.scalars().all():
+        await db.delete(p)
+
+    await db.commit()
+
+
+# ─── Property expense linking ─────────────────────────────────────────────────
+
+class _PropertyExpenseLink(_BaseModel):
+    property_id: uuid.UUID
+    expense_category: str  # repair | appliance | property_tax | hoa | insurance | utility | other
+    amount: float
+    is_capex: bool = False
+    notes: str | None = None
+
+
+# Maintenance expense categories that map to PropertyCostStatus categories
+_PROPERTY_COST_STATUS_CATEGORIES = {"property_tax", "hoa", "insurance"}
+
+
+@router.post("/transactions/{transaction_id}/link-property-expense", status_code=204)
+async def link_transaction_to_property_expense(
+    transaction_id: uuid.UUID,
+    payload: list[_PropertyExpenseLink],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Link a property expense transaction to one or more properties.
+
+    Creates MaintenanceExpense records for each property assignment.
+    For property_tax/hoa/insurance categories, also marks PropertyCostStatus as paid.
+    If the transaction was previously linked, all prior links are replaced (atomic).
+    Amounts must sum to the absolute transaction amount (±$0.01).
+    """
+    from decimal import Decimal
+    from app.models.property_details import MaintenanceExpense as _MaintenanceExpense
+    from app.models.property import Property as _Property
+    from app.models.property_cost_status import PropertyCostStatus as _PropertyCostStatus
+
+    if not payload:
+        raise HTTPException(status_code=422, detail="At least one property assignment required")
+
+    # Verify transaction
+    txn_result = await db.execute(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.household_id == user.household_id,
+        )
+    )
+    txn = txn_result.scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Validate amounts sum to transaction amount
+    total_assigned = sum(Decimal(str(link.amount)) for link in payload)
+    if abs(total_assigned - abs(txn.amount)) > Decimal("0.01"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Assigned amounts ({total_assigned}) must equal transaction amount ({abs(txn.amount)})",
+        )
+
+    # Verify all properties belong to this household
+    for link in payload:
+        prop_result = await db.execute(
+            select(_Property).where(
+                _Property.id == link.property_id,
+                _Property.household_id == user.household_id,
+            )
+        )
+        if prop_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail=f"Property {link.property_id} not found")
+
+    # Remove existing maintenance expense records for this transaction (atomic replace)
+    existing_expenses = await db.execute(
+        select(_MaintenanceExpense).where(_MaintenanceExpense.transaction_id == transaction_id)
+    )
+    old_expenses = existing_expenses.scalars().all()
+    # Track which property+category combos need PropertyCostStatus revert
+    old_status_keys = {
+        (e.property_id, e.category)
+        for e in old_expenses
+        if e.category in _PROPERTY_COST_STATUS_CATEGORIES
+    }
+    for e in old_expenses:
+        await db.delete(e)
+
+    # Revert PropertyCostStatus for removed links that aren't being re-linked
+    txn_date = txn.date.date() if hasattr(txn.date, "date") else txn.date
+    new_status_keys = {
+        (link.property_id, link.expense_category)
+        for link in payload
+        if link.expense_category in _PROPERTY_COST_STATUS_CATEGORIES
+    }
+    for prop_id, cat in old_status_keys - new_status_keys:
+        status_result = await db.execute(
+            select(_PropertyCostStatus).where(
+                _PropertyCostStatus.property_id == prop_id,
+                _PropertyCostStatus.year == txn_date.year,
+                _PropertyCostStatus.category == cat,
+            )
+        )
+        status = status_result.scalar_one_or_none()
+        if status:
+            status.is_paid = False
+            status.paid_date = None
+
+    # Create new maintenance expense records
+    for link in payload:
+        expense = _MaintenanceExpense(
+            property_id=link.property_id,
+            expense_date=txn_date,
+            amount=Decimal(str(link.amount)),
+            category=link.expense_category,
+            description=txn.name,
+            vendor=link.notes,
+            is_capex=link.is_capex,
+            transaction_id=transaction_id,
+        )
+        db.add(expense)
+
+        # Auto-mark PropertyCostStatus as paid for tax/hoa/insurance
+        if link.expense_category in _PROPERTY_COST_STATUS_CATEGORIES:
+            status_result = await db.execute(
+                select(_PropertyCostStatus).where(
+                    _PropertyCostStatus.property_id == link.property_id,
+                    _PropertyCostStatus.year == txn_date.year,
+                    _PropertyCostStatus.category == link.expense_category,
+                )
+            )
+            status = status_result.scalar_one_or_none()
+            if status:
+                status.is_paid = True
+                status.paid_date = txn_date
+            else:
+                db.add(_PropertyCostStatus(
+                    property_id=link.property_id,
+                    household_id=user.household_id,
+                    year=txn_date.year,
+                    category=link.expense_category,
+                    is_paid=True,
+                    paid_date=txn_date,
+                ))
+
+    await db.commit()
+
+
+@router.delete("/transactions/{transaction_id}/link-property-expense", status_code=204)
+async def unlink_transaction_from_property_expense(
+    transaction_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove all property expense links for a transaction and revert paid statuses."""
+    from app.models.property_details import MaintenanceExpense as _MaintenanceExpense
+    from app.models.property_cost_status import PropertyCostStatus as _PropertyCostStatus
+
+    txn_result = await db.execute(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.household_id == user.household_id,
+        )
+    )
+    txn = txn_result.scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    txn_date = txn.date.date() if hasattr(txn.date, "date") else txn.date
+
+    existing_expenses = await db.execute(
+        select(_MaintenanceExpense).where(_MaintenanceExpense.transaction_id == transaction_id)
+    )
+    for e in existing_expenses.scalars().all():
+        # Revert PropertyCostStatus for recurring cost categories
+        if e.category in _PROPERTY_COST_STATUS_CATEGORIES:
+            status_result = await db.execute(
+                select(_PropertyCostStatus).where(
+                    _PropertyCostStatus.property_id == e.property_id,
+                    _PropertyCostStatus.year == txn_date.year,
+                    _PropertyCostStatus.category == e.category,
+                )
+            )
+            status = status_result.scalar_one_or_none()
+            if status:
+                status.is_paid = False
+                status.paid_date = None
+        await db.delete(e)
+
+    await db.commit()
+
+
 # ─── Holdings CRUD (manual accounts only) ────────────────────────────────────
 
 async def _sync_account_balance(account_id: uuid.UUID, db: AsyncSession) -> None:

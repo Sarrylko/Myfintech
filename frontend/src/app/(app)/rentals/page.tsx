@@ -2301,7 +2301,17 @@ function PaymentsTab({
                   /* ── Read row ── */
                   <div className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition group">
                     <div>
-                      <p className="text-sm font-semibold text-gray-800">{fmt(p.amount)}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-gray-800">{fmt(p.amount)}</p>
+                        {p.transaction_id && (
+                          <span
+                            className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                            title="Sourced from a bank transaction — edit the link in Transactions"
+                          >
+                            🔗 From bank
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-gray-400">
                         {fmtDate(p.payment_date)}
                         {p.method ? ` · ${p.method}` : ""}
@@ -2310,20 +2320,31 @@ function PaymentsTab({
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Received</span>
-                      <button
-                        onClick={() => openEdit(p)}
-                        className="text-xs text-primary-600 hover:text-primary-700 font-medium opacity-0 group-hover:opacity-100 transition"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(p.id)}
-                        disabled={deletingId === p.id}
-                        className="text-xs text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition disabled:opacity-50"
-                        title="Delete payment"
-                      >
-                        {deletingId === p.id ? "..." : "Delete"}
-                      </button>
+                      {!p.transaction_id && (
+                        <button
+                          onClick={() => openEdit(p)}
+                          className="text-xs text-primary-600 hover:text-primary-700 font-medium opacity-0 group-hover:opacity-100 transition"
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {p.transaction_id ? (
+                        <span
+                          className="text-xs text-gray-300 opacity-0 group-hover:opacity-100 transition cursor-help"
+                          title="To remove this payment, unlink it from the Transactions page"
+                        >
+                          Linked
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleDelete(p.id)}
+                          disabled={deletingId === p.id}
+                          className="text-xs text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition disabled:opacity-50"
+                          title="Delete payment"
+                        >
+                          {deletingId === p.id ? "..." : "Delete"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}

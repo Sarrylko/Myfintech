@@ -1,9 +1,15 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from app.schemas.transaction_split import TransactionSplitResponse
+
+# Plaid category prefixes that represent transfers (excluded from income/expense)
+_TRANSFER_PLAID_PREFIXES = ("transfer", "payment > credit card", "payment > credit", "payment > loan")
+_RENTAL_PLAID_PREFIXES = ("income > rental", "rental income")
+_PROPERTY_EXPENSE_PLAID_PREFIXES = ("home improvement", "home services", "property tax", "home insurance")
 
 
 class AccountResponse(BaseModel):
@@ -69,8 +75,54 @@ class TransactionResponse(BaseModel):
     splits: list[TransactionSplitResponse] = []
     notes: str | None
     created_at: datetime
+    is_transfer: bool = False          # True if this transaction is a transfer (CC payment, internal move)
+    is_rental_income: bool = False     # True if this transaction is rental income (excluded from personal income)
+    is_property_expense: bool = False  # True if this transaction is a property/business expense
+    is_business: bool = False          # True if the account is linked to a business entity
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def compute_flags(cls, data: Any) -> Any:
+        # When building from ORM object, compute is_transfer and is_rental_income
+        if hasattr(data, "__dict__"):  # ORM model instance
+            cat = getattr(data, "category", None)
+            plaid_cat = (getattr(data, "plaid_category", None) or "").lower()
+
+            # is_transfer
+            if cat is not None and getattr(cat, "is_transfer", False):
+                data.__dict__["is_transfer"] = True
+            elif plaid_cat.startswith(_TRANSFER_PLAID_PREFIXES):
+                data.__dict__["is_transfer"] = True
+            else:
+                data.__dict__["is_transfer"] = False
+
+            # is_rental_income
+            if cat is not None and getattr(cat, "is_rental_income", False):
+                data.__dict__["is_rental_income"] = True
+            elif plaid_cat.startswith(_RENTAL_PLAID_PREFIXES):
+                data.__dict__["is_rental_income"] = True
+            else:
+                data.__dict__["is_rental_income"] = False
+
+            # is_property_expense
+            if cat is not None and getattr(cat, "is_property_expense", False):
+                data.__dict__["is_property_expense"] = True
+            elif plaid_cat.startswith(_PROPERTY_EXPENSE_PLAID_PREFIXES):
+                data.__dict__["is_property_expense"] = True
+            else:
+                data.__dict__["is_property_expense"] = False
+
+            # is_business — true when the account belongs to a business entity
+            acc = getattr(data, "account", None)
+            data.__dict__["is_business"] = (
+                acc is not None and (
+                    getattr(acc, "entity_id", None) is not None or
+                    getattr(acc, "account_scope", "personal") == "business"
+                )
+            )
+        return data
 
 
 class TransactionUpdate(BaseModel):
@@ -91,6 +143,9 @@ class CategoryCreate(BaseModel):
     color: str | None = None
     parent_id: uuid.UUID | None = None
     is_income: bool = False
+    is_transfer: bool = False
+    is_rental_income: bool = False
+    is_property_expense: bool = False
 
 
 class CategoryResponse(BaseModel):
@@ -100,6 +155,9 @@ class CategoryResponse(BaseModel):
     color: str | None
     parent_id: uuid.UUID | None
     is_income: bool
+    is_transfer: bool
+    is_rental_income: bool
+    is_property_expense: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}

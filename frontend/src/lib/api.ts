@@ -289,6 +289,10 @@ export interface Transaction {
   pending: boolean;
   plaid_category: string | null;
   is_ignored: boolean;
+  is_transfer: boolean;
+  is_rental_income: boolean;
+  is_property_expense: boolean;
+  is_business: boolean;
   has_splits: boolean;
   splits: TransactionSplit[];
   notes: string | null;
@@ -711,6 +715,7 @@ export interface Payment {
   amount: string;
   method: string | null;
   applied_to_charge_id: string | null;
+  transaction_id: string | null;
   notes: string | null;
   created_at: string;
 }
@@ -789,6 +794,45 @@ export async function updatePayment(id: string, data: Partial<PaymentCreate>): P
 }
 export async function deletePayment(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/payments/${id}`, { method: "DELETE" });
+}
+
+export interface RentalLink {
+  lease_id: string;
+  amount: number;
+}
+
+export async function linkRentalPayment(transactionId: string, links: RentalLink[]): Promise<void> {
+  return apiFetch<void>(`/api/v1/accounts/transactions/${transactionId}/link-rental`, {
+    method: "POST",
+    body: JSON.stringify(links),
+  });
+}
+
+export async function unlinkRentalPayment(transactionId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/accounts/transactions/${transactionId}/link-rental`, {
+    method: "DELETE",
+  });
+}
+
+export interface PropertyExpenseLink {
+  property_id: string;
+  expense_category: string;
+  amount: number;
+  is_capex?: boolean;
+  notes?: string;
+}
+
+export async function linkPropertyExpense(transactionId: string, links: PropertyExpenseLink[]): Promise<void> {
+  return apiFetch<void>(`/api/v1/accounts/transactions/${transactionId}/link-property-expense`, {
+    method: "POST",
+    body: JSON.stringify(links),
+  });
+}
+
+export async function unlinkPropertyExpense(transactionId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/accounts/transactions/${transactionId}/link-property-expense`, {
+    method: "DELETE",
+  });
 }
 
 export interface PaymentImportResult {
@@ -918,6 +962,7 @@ export interface MaintenanceExpense {
   description: string;
   vendor: string | null;
   is_capex: boolean;
+  transaction_id: string | null;
   notes: string | null;
   created_at: string;
 }

@@ -161,5 +161,6 @@ class PaymentResponse(BaseModel):
     amount: Decimal
     method: str | None
     applied_to_charge_id: uuid.UUID | None
+    transaction_id: uuid.UUID | None = None
     notes: str | None
     created_at: datetime
