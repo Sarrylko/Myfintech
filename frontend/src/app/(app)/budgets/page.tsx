@@ -10,10 +10,13 @@ import {
   copyBudgetsFromLastMonth,
   listCustomCategories,
   seedDefaultCategories,
+  getBudgetTransactions,
+  updateCustomCategory,
   BudgetType,
   BudgetWithActual,
   BudgetUpdate,
   CustomCategory,
+  Transaction,
 } from "@/lib/api";
 import { useCurrency } from "@/lib/currency";
 
@@ -141,74 +144,160 @@ function BudgetRow({
   const isOver = remaining < 0;
   const isAtAlert = pct >= budget.alert_threshold && !isOver;
 
+  const [open, setOpen] = useState(false);
+  const [txns, setTxns] = useState<Transaction[] | null>(null);
+  const [loadingTxns, setLoadingTxns] = useState(false);
+
+  async function toggleDrillDown() {
+    if (!open && txns === null) {
+      setLoadingTxns(true);
+      try {
+        const data = await getBudgetTransactions(budget.id);
+        setTxns(data);
+      } catch {
+        setTxns([]);
+      } finally {
+        setLoadingTxns(false);
+      }
+    }
+    setOpen((v) => !v);
+  }
+
   return (
-    <div className={`flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-0 ${isOver ? "bg-red-50/40" : ""}`}>
-      {/* Category icon + name */}
-      <div className="flex items-center gap-3 w-44 shrink-0">
-        <div
-          className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium text-white shrink-0"
-          style={{ backgroundColor: budget.category.color ?? "#94a3b8" }}
-        >
-          {budget.category.icon ? budget.category.icon : budget.category.name.charAt(0).toUpperCase()}
+    <div className={`border-b border-gray-50 last:border-0 ${isOver ? "bg-red-50/40" : ""}`}>
+      {/* Main row */}
+      <div className="flex items-center gap-4 px-5 py-4">
+        {/* Category icon + name */}
+        <div className="flex items-center gap-3 w-44 shrink-0">
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium text-white shrink-0"
+            style={{ backgroundColor: budget.category.color ?? "#94a3b8" }}
+          >
+            {budget.category.icon ? budget.category.icon : budget.category.name.charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-900 truncate">{budget.category.name}</p>
+            {showPeriod && (
+              <p className="text-xs text-gray-400">{formatBudgetPeriod(budget, locale)}</p>
+            )}
+            {isAtAlert && (
+              <p className="text-xs text-yellow-600 flex items-center gap-1">⚠ {budget.alert_threshold}% threshold</p>
+            )}
+            {budget.rollover_enabled && (
+              <p className="text-xs text-blue-500">↻ Rollover on</p>
+            )}
+          </div>
         </div>
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">{budget.category.name}</p>
-          {showPeriod && (
-            <p className="text-xs text-gray-400">{formatBudgetPeriod(budget, locale)}</p>
-          )}
-          {isAtAlert && (
-            <p className="text-xs text-yellow-600 flex items-center gap-1">⚠ {budget.alert_threshold}% threshold</p>
-          )}
-          {budget.rollover_enabled && (
-            <p className="text-xs text-blue-500">↻ Rollover on</p>
-          )}
+
+        {/* Progress bar */}
+        <div className="flex-1 min-w-0">
+          <ProgressBar pct={pct} alertThreshold={budget.alert_threshold} />
+        </div>
+
+        {/* Amounts */}
+        <div className="text-right w-40 shrink-0">
+          <p className="text-sm font-semibold text-gray-900">
+            {fmt(budget.actual_spent)}{" "}
+            <span className="font-normal text-gray-400">/ {fmt(budget.amount)}</span>
+          </p>
+          <p className={`text-xs ${isOver ? "text-red-600 font-medium" : "text-gray-400"}`}>
+            {isOver ? `${fmt(Math.abs(remaining))} over budget` : `${fmt(remaining)} remaining`}
+          </p>
+        </div>
+
+        {/* Percent */}
+        <div className="w-12 text-right shrink-0">
+          <span className={`text-sm font-semibold ${isOver ? "text-red-600" : pct >= budget.alert_threshold ? "text-yellow-600" : "text-gray-500"}`}>
+            {Math.round(pct)}%
+          </span>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Drill-down toggle */}
+          <button
+            type="button"
+            onClick={toggleDrillDown}
+            className={`p-1.5 rounded hover:bg-gray-100 transition ${open ? "text-blue-500" : "text-gray-400 hover:text-gray-600"}`}
+            title={open ? "Hide transactions" : "Show transactions"}
+          >
+            <svg
+              className={`w-4 h-4 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => onEdit(budget)}
+            className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition"
+            title="Edit budget"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(budget.id)}
+            className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-red-500 transition"
+            title="Delete budget"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
         </div>
       </div>
 
-      {/* Progress bar */}
-      <div className="flex-1 min-w-0">
-        <ProgressBar pct={pct} alertThreshold={budget.alert_threshold} />
-      </div>
-
-      {/* Amounts */}
-      <div className="text-right w-40 shrink-0">
-        <p className="text-sm font-semibold text-gray-900">
-          {fmt(budget.actual_spent)}{" "}
-          <span className="font-normal text-gray-400">/ {fmt(budget.amount)}</span>
-        </p>
-        <p className={`text-xs ${isOver ? "text-red-600 font-medium" : "text-gray-400"}`}>
-          {isOver ? `${fmt(Math.abs(remaining))} over budget` : `${fmt(remaining)} remaining`}
-        </p>
-      </div>
-
-      {/* Percent */}
-      <div className="w-12 text-right shrink-0">
-        <span className={`text-sm font-semibold ${isOver ? "text-red-600" : pct >= budget.alert_threshold ? "text-yellow-600" : "text-gray-500"}`}>
-          {Math.round(pct)}%
-        </span>
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-1 shrink-0">
-        <button
-          onClick={() => onEdit(budget)}
-          className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition"
-          title="Edit budget"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-          </svg>
-        </button>
-        <button
-          onClick={() => onDelete(budget.id)}
-          className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-red-500 transition"
-          title="Delete budget"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-        </button>
-      </div>
+      {/* Drill-down transaction panel */}
+      {open && (
+        <div className="mx-5 mb-4 rounded-lg border border-gray-100 bg-gray-50/60 overflow-hidden">
+          {loadingTxns ? (
+            <div className="flex items-center justify-center py-6 text-sm text-gray-400">
+              <svg className="animate-spin w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Loading transactions…
+            </div>
+          ) : txns && txns.length === 0 ? (
+            <p className="py-6 text-center text-sm text-gray-400">No transactions found for this period.</p>
+          ) : (
+            <div className="max-h-64 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-xs text-gray-500 uppercase tracking-wide">
+                    <th className="px-4 py-2 text-left font-medium">Date</th>
+                    <th className="px-4 py-2 text-left font-medium">Description</th>
+                    <th className="px-4 py-2 text-right font-medium">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(txns ?? []).map((t) => {
+                    const amt = parseFloat(t.amount);
+                    const isIncome = amt < 0;
+                    return (
+                      <tr key={t.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-100/50">
+                        <td className="px-4 py-2 text-gray-500 whitespace-nowrap">
+                          {new Date(t.date).toLocaleDateString()}
+                        </td>
+                        <td className="px-4 py-2 text-gray-800 truncate max-w-xs">
+                          {t.merchant_name ?? t.name}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-medium whitespace-nowrap ${isIncome ? "text-green-600" : "text-gray-900"}`}>
+                          {isIncome ? `+${fmt(Math.abs(amt))}` : fmt(amt)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -802,9 +891,10 @@ function EditModal({
   budget: BudgetWithActual;
   saving: boolean;
   onClose: () => void;
-  onSave: (data: BudgetUpdate) => void;
+  onSave: (data: BudgetUpdate, newName: string) => void;
 }) {
   const { locale } = useCurrency();
+  const [name, setName] = useState(budget.category.name);
   const [amount, setAmount] = useState(parseFloat(budget.amount).toString());
   const [rollover, setRollover] = useState(budget.rollover_enabled);
   const [threshold, setThreshold] = useState(budget.alert_threshold);
@@ -817,6 +907,15 @@ function EditModal({
         {periodLabel && (
           <p className="text-xs text-gray-400 -mt-1">{periodLabel}</p>
         )}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Budget Name</label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Budget Amount</label>
           <div className="flex items-center gap-2">
@@ -862,10 +961,11 @@ function EditModal({
           </div>
         </div>
         <div className="flex justify-end gap-3 pt-2">
-          <button onClick={onClose} className="text-sm text-gray-500 hover:text-gray-700 px-4 py-2">Cancel</button>
+          <button type="button" onClick={onClose} className="text-sm text-gray-500 hover:text-gray-700 px-4 py-2">Cancel</button>
           <button
-            onClick={() => onSave({ amount: parseFloat(amount), rollover_enabled: rollover, alert_threshold: threshold })}
-            disabled={saving || !parseFloat(amount)}
+            type="button"
+            onClick={() => onSave({ amount: parseFloat(amount), rollover_enabled: rollover, alert_threshold: threshold }, name.trim())}
+            disabled={saving || !parseFloat(amount) || !name.trim()}
             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-5 py-2 rounded-lg transition"
           >
             {saving ? "Saving…" : "Save Changes"}
@@ -1105,12 +1205,19 @@ export default function BudgetsPage() {
     }
   }
 
-  async function handleEditSave(data: BudgetUpdate) {
+  async function handleEditSave(data: BudgetUpdate, newName: string) {
     if (!editingBudget) return;
     setSaving(true);
     try {
-      const updated = await updateBudget(editingBudget.id, data);
-      setBudgets((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
+      const nameChanged = newName !== editingBudget.category.name;
+      const [updated] = await Promise.all([
+        updateBudget(editingBudget.id, data),
+        nameChanged ? updateCustomCategory(editingBudget.category_id, { name: newName }) : Promise.resolve(null),
+      ]);
+      setBudgets((prev) => prev.map((b) => {
+        if (b.id !== updated.id) return b;
+        return nameChanged ? { ...updated, category: { ...updated.category, name: newName } } : updated;
+      }));
       setEditingBudget(null);
       showSuccess("Budget updated.");
     } catch (e) {

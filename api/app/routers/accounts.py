@@ -1,7 +1,7 @@
 import csv
 import io
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
@@ -87,14 +87,22 @@ async def create_manual_account(
 
 @router.get("/transactions", response_model=list[TransactionResponse])
 async def list_all_transactions(
-    limit: int = 200,
-    offset: int = 0,
+    limit: int = Query(default=500, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    from sqlalchemy import and_
+    conditions = [Transaction.household_id == user.household_id]
+    if start_date:
+        conditions.append(Transaction.date >= start_date)
+    if end_date:
+        conditions.append(Transaction.date <= end_date)
     result = await db.execute(
         select(Transaction)
-        .where(Transaction.household_id == user.household_id)
+        .where(and_(*conditions))
         .order_by(Transaction.date.desc())
         .limit(limit)
         .offset(offset)

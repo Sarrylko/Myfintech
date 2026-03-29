@@ -12,6 +12,7 @@ from app.core.deps import get_current_user
 from app.models.account import Category, Transaction
 from app.models.budget import Budget
 from app.models.user import User
+from app.schemas.account import TransactionResponse
 from app.schemas.budget import (
     BudgetBulkCreate,
     BudgetCreate,
@@ -434,3 +435,89 @@ async def delete_budget(
     if not budget:
         raise HTTPException(status_code=404, detail="Budget not found")
     await db.delete(budget)
+
+
+# ─── GET /budgets/{id}/transactions ───────────────────────────────────────────
+
+@router.get("/{budget_id}/transactions", response_model=list[TransactionResponse])
+async def get_budget_transactions(
+    budget_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the transactions that count toward this budget's actual_spent."""
+    from sqlalchemy import and_, not_
+    from app.models.account import Account as Acct, Category as Cat
+
+    result = await db.execute(
+        select(Budget).where(
+            Budget.id == budget_id,
+            Budget.household_id == user.household_id,
+        )
+    )
+    budget = result.scalar_one_or_none()
+    if not budget:
+        raise HTTPException(status_code=404, detail="Budget not found")
+
+    await db.refresh(budget, attribute_names=["category"])
+    start, end = _date_range(budget)
+    category_name = budget.category.name
+    category_id = budget.category_id
+    is_income = budget.category.is_income
+
+    if is_income:
+        amount_filter = Transaction.amount < 0
+    else:
+        amount_filter = Transaction.amount > 0
+
+    prefixes = _PLAID_PREFIXES.get(category_name.lower(), [category_name.lower()])
+    plaid_conditions = [
+        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
+        for p in prefixes
+    ]
+    category_match = or_(
+        Transaction.custom_category_id == category_id,
+        *plaid_conditions,
+    )
+
+    transfer_conditions = [
+        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
+        for p in _TRANSFER_PLAID_PREFIXES
+    ]
+    not_a_transfer = not_(or_(*transfer_conditions))
+
+    rental_conditions = [
+        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
+        for p in ["income > rental", "rental income"]
+    ]
+    not_rental_income = not_(or_(*rental_conditions))
+
+    property_expense_conditions = [
+        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
+        for p in ["home improvement", "home services", "property tax", "home insurance"]
+    ]
+    not_property_expense = not_(or_(*property_expense_conditions))
+
+    txn_result = await db.execute(
+        select(Transaction)
+        .outerjoin(Cat, Cat.id == Transaction.custom_category_id)
+        .outerjoin(Acct, Acct.id == Transaction.account_id)
+        .where(
+            Transaction.household_id == user.household_id,
+            category_match,
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,  # noqa: E712
+            Transaction.date >= start,
+            Transaction.date <= end,
+            amount_filter,
+            or_(Cat.id.is_(None), Cat.is_transfer == False),  # noqa: E712
+            or_(Cat.id.is_(None), Cat.is_rental_income == False),  # noqa: E712
+            or_(Cat.id.is_(None), Cat.is_property_expense == False),  # noqa: E712
+            not_a_transfer,
+            not_rental_income,
+            not_property_expense,
+            or_(Acct.id.is_(None), and_(Acct.entity_id.is_(None), Acct.account_scope != "business")),
+        )
+        .order_by(Transaction.date.desc())
+    )
+    return txn_result.scalars().all()

@@ -108,6 +108,29 @@ async def seed_default_categories(
     return created
 
 
+@router.patch("/{category_id}", response_model=CategoryResponse)
+async def update_category(
+    category_id: uuid.UUID,
+    payload: CategoryCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Category).where(
+            Category.id == category_id,
+            Category.household_id == user.household_id,
+        )
+    )
+    category = result.scalar_one_or_none()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(category, field, value)
+    await db.flush()
+    await db.refresh(category)
+    return category
+
+
 @router.delete("/{category_id}", status_code=204)
 async def delete_category(
     category_id: uuid.UUID,

@@ -22,6 +22,11 @@ import {
   unlinkRentalPayment,
   linkPropertyExpense,
   unlinkPropertyExpense,
+  listRecurring,
+  logRecurringPayment,
+  createRecurring,
+  getRecurringByTransaction,
+  unlinkTransactionFromRecurring,
   Account,
   Transaction,
   TransactionSplit,
@@ -30,6 +35,7 @@ import {
   Unit,
   Lease,
   PropertyExpenseLink,
+  RecurringTransaction,
 } from "@/lib/api";
 import { useCurrency } from "@/lib/currency";
 
@@ -228,6 +234,104 @@ function EditModal({ txn, accounts, customTaxonomy, properties, units, leases, o
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // ── Recurring link state ──────────────────────────────────────────────────────
+  const [recurringLink, setRecurringLink] = useState<RecurringTransaction | null | undefined>(undefined); // undefined = not loaded yet
+  const [recurringItems, setRecurringItems] = useState<RecurringTransaction[]>([]);
+  const [showRecurring, setShowRecurring] = useState(false);
+  const [recurringMode, setRecurringMode] = useState<"select" | "create">("select");
+  const [selectedRecurringId, setSelectedRecurringId] = useState("");
+  const [newRecurringFreq, setNewRecurringFreq] = useState("monthly");
+  const [newRecurringTag, setNewRecurringTag] = useState("other");
+  const [newRecurringType, setNewRecurringType] = useState("want");
+  const [recurringLoading, setRecurringLoading] = useState(false);
+  const [recurringError, setRecurringError] = useState("");
+
+  const FREQ_OPTIONS_REC = [
+    { v: "weekly", l: "Weekly" }, { v: "biweekly", l: "Bi-weekly" },
+    { v: "monthly", l: "Monthly" }, { v: "quarterly", l: "Quarterly" }, { v: "annual", l: "Annual" },
+  ];
+  const TAG_OPTIONS_REC = [
+    { v: "home", l: "🏠 Home" }, { v: "personal", l: "👤 Personal" }, { v: "food", l: "🍔 Food" },
+    { v: "transport", l: "🚗 Transport" }, { v: "health", l: "💊 Health" }, { v: "subscriptions", l: "📱 Subscriptions" },
+    { v: "savings", l: "💰 Savings" }, { v: "insurance", l: "🛡️ Insurance" }, { v: "education", l: "🎓 Education" }, { v: "other", l: "🔖 Other" },
+  ];
+  const TYPE_OPTIONS_REC = [
+    { v: "need", l: "🔵 Need", d: "Non-negotiable" },
+    { v: "want", l: "🟡 Want", d: "Discretionary" },
+    { v: "saving", l: "💚 Saving", d: "Wealth-building" },
+  ];
+
+  async function loadRecurringState() {
+    if (recurringLink !== undefined) return; // already loaded
+    setRecurringLoading(true);
+    try {
+      const [link, items] = await Promise.all([
+        getRecurringByTransaction(txn.id),
+        listRecurring(),
+      ]);
+      setRecurringLink(link);
+      setRecurringItems(items);
+      if (link) setShowRecurring(true);
+    } catch { /* silent */ }
+    finally { setRecurringLoading(false); }
+  }
+
+  async function handleLinkRecurring() {
+    if (!selectedRecurringId) return;
+    setRecurringLoading(true);
+    setRecurringError("");
+    try {
+      await logRecurringPayment(selectedRecurringId, {
+        amount: Math.abs(parseFloat(form.amount)),
+        paid_date: form.date,
+        create_transaction: false,
+        existing_transaction_id: txn.id,
+      });
+      const link = recurringItems.find((r) => r.id === selectedRecurringId) ?? null;
+      setRecurringLink(link);
+      setShowRecurring(false);
+    } catch (e) {
+      setRecurringError(e instanceof Error ? e.message : "Failed to link");
+    } finally {
+      setRecurringLoading(false);
+    }
+  }
+
+  async function handleCreateAndLink() {
+    setRecurringLoading(true);
+    setRecurringError("");
+    try {
+      const rec = await createRecurring({
+        name: form.name || form.merchant_name || txn.name,
+        amount: Math.abs(parseFloat(form.amount)),
+        frequency: newRecurringFreq,
+        tag: newRecurringTag,
+        spending_type: newRecurringType,
+      });
+      await logRecurringPayment(rec.id, {
+        amount: Math.abs(parseFloat(form.amount)),
+        paid_date: form.date,
+        create_transaction: false,
+        existing_transaction_id: txn.id,
+      });
+      setRecurringLink(rec);
+      setShowRecurring(false);
+    } catch (e) {
+      setRecurringError(e instanceof Error ? e.message : "Failed to create");
+    } finally {
+      setRecurringLoading(false);
+    }
+  }
+
+  async function handleUnlinkRecurring() {
+    setRecurringLoading(true);
+    try {
+      await unlinkTransactionFromRecurring(txn.id);
+      setRecurringLink(null);
+    } catch { /* silent */ }
+    finally { setRecurringLoading(false); }
+  }
 
   // ── Rental link state ────────────────────────────────────────────────────────
   const isRentalIncomeCategory = (group: string, item: string) =>
@@ -842,6 +946,168 @@ function EditModal({ txn, accounts, customTaxonomy, properties, units, leases, o
               className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
           </div>
 
+          {/* ── Recurring section ─────────────────────────────────────────── */}
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            {/* Header row — always visible */}
+            <button
+              type="button"
+              onClick={() => {
+                loadRecurringState();
+                setShowRecurring((v) => !v);
+              }}
+              className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition text-left"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-700">↻ Recurring</span>
+                {recurringLink && (
+                  <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
+                    {recurringLink.name}
+                  </span>
+                )}
+              </div>
+              <svg className={`w-4 h-4 text-gray-400 transition-transform ${showRecurring ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {showRecurring && (
+              <div className="px-4 py-4 border-t border-gray-100 space-y-3">
+                {recurringLoading ? (
+                  <p className="text-xs text-gray-400 text-center py-2">Loading…</p>
+                ) : recurringLink ? (
+                  /* Already linked */
+                  <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-emerald-800">↻ {recurringLink.name}</p>
+                      <p className="text-xs text-emerald-600 mt-0.5 capitalize">{recurringLink.frequency} · {recurringLink.spending_type}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleUnlinkRecurring}
+                      className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50 transition"
+                    >
+                      Unlink ×
+                    </button>
+                  </div>
+                ) : (
+                  /* Not yet linked */
+                  <>
+                    {/* Mode toggle */}
+                    <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                      <button
+                        type="button"
+                        onClick={() => setRecurringMode("select")}
+                        className={`flex-1 text-xs font-medium py-1.5 rounded-md transition ${recurringMode === "select" ? "bg-white shadow-sm text-gray-800" : "text-gray-500 hover:text-gray-700"}`}
+                      >
+                        Link existing
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRecurringMode("create")}
+                        className={`flex-1 text-xs font-medium py-1.5 rounded-md transition ${recurringMode === "create" ? "bg-white shadow-sm text-gray-800" : "text-gray-500 hover:text-gray-700"}`}
+                      >
+                        Create new
+                      </button>
+                    </div>
+
+                    {recurringMode === "select" ? (
+                      /* Select existing */
+                      <div className="space-y-2">
+                        <select
+                          title="Select recurring item"
+                          value={selectedRecurringId}
+                          onChange={(e) => setSelectedRecurringId(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="">— choose a recurring item —</option>
+                          {recurringItems.map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.name} · {r.frequency.charAt(0).toUpperCase() + r.frequency.slice(1)}
+                            </option>
+                          ))}
+                        </select>
+                        {recurringItems.length === 0 && (
+                          <p className="text-xs text-gray-400 text-center">No recurring items yet — use "Create new" to add one.</p>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleLinkRecurring}
+                          disabled={!selectedRecurringId || recurringLoading}
+                          className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-medium py-2 rounded-lg transition"
+                        >
+                          Link to this transaction
+                        </button>
+                      </div>
+                    ) : (
+                      /* Create new */
+                      <div className="space-y-3">
+                        {/* Frequency */}
+                        <div>
+                          <p className="text-xs font-medium text-gray-600 mb-1.5">Frequency</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {FREQ_OPTIONS_REC.map((f) => (
+                              <button
+                                key={f.v} type="button"
+                                onClick={() => setNewRecurringFreq(f.v)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition ${newRecurringFreq === f.v ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"}`}
+                              >
+                                {f.l}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {/* Tag */}
+                        <div>
+                          <p className="text-xs font-medium text-gray-600 mb-1.5">Life Area</p>
+                          <div className="grid grid-cols-5 gap-1">
+                            {TAG_OPTIONS_REC.map((t) => (
+                              <button
+                                key={t.v} type="button"
+                                onClick={() => setNewRecurringTag(t.v)}
+                                title={t.l}
+                                className={`p-1.5 rounded-lg text-xs border-2 transition text-center ${newRecurringTag === t.v ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}
+                              >
+                                {t.l.split(" ")[0]}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {/* Spending type */}
+                        <div>
+                          <p className="text-xs font-medium text-gray-600 mb-1.5">Type</p>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {TYPE_OPTIONS_REC.map((t) => (
+                              <button
+                                key={t.v} type="button"
+                                onClick={() => setNewRecurringType(t.v)}
+                                className={`py-2 rounded-lg text-xs font-medium border-2 transition text-center ${newRecurringType === t.v ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}
+                              >
+                                <div>{t.l}</div>
+                                <div className="text-[10px] font-normal text-gray-400">{t.d}</div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleCreateAndLink}
+                          disabled={recurringLoading}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs font-medium py-2 rounded-lg transition"
+                        >
+                          {recurringLoading ? "Creating…" : "Create recurring & link"}
+                        </button>
+                      </div>
+                    )}
+
+                    {recurringError && (
+                      <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{recurringError}</p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center gap-2">
             <input type="checkbox" id="pending" checked={form.pending}
               onChange={(e) => setForm((p) => ({ ...p, pending: e.target.checked }))}
@@ -1033,12 +1299,18 @@ export default function TransactionsPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [txns, accts, customCats] = await Promise.all([
-        listAllTransactions(300),
-        listAccounts(),
-        listCustomCategories(),
-      ]);
-      setTransactions(txns);
+      // Fetch all transactions by paginating until we get everything
+      const PAGE = 500;
+      let all: Transaction[] = [];
+      let offset = 0;
+      while (true) {
+        const batch = await listAllTransactions(PAGE, offset);
+        all = all.concat(batch);
+        if (batch.length < PAGE) break;
+        offset += PAGE;
+      }
+      const [accts, customCats] = await Promise.all([listAccounts(), listCustomCategories()]);
+      setTransactions(all);
       setAccounts(accts);
       setCustomCategories(customCats);
     } catch (e) {

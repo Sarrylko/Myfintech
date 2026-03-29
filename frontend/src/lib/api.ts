@@ -417,10 +417,15 @@ export async function clearTransactionSplits(txnId: string): Promise<void> {
 }
 
 export async function listAllTransactions(
-  limit = 100,
-  offset = 0
+  limit = 500,
+  offset = 0,
+  startDate?: string,
+  endDate?: string
 ): Promise<Transaction[]> {
-  return apiFetch(`/api/v1/accounts/transactions?limit=${limit}&offset=${offset}`, {});
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (startDate) params.set("start_date", startDate);
+  if (endDate) params.set("end_date", endDate);
+  return apiFetch(`/api/v1/accounts/transactions?${params}`, {});
 }
 
 export async function listAccountTransactions(
@@ -1052,6 +1057,17 @@ export interface RecurringCandidate {
   transaction_ids: string[];
 }
 
+export interface RecurringPayment {
+  id: string;
+  recurring_id: string;
+  household_id: string;
+  amount: string;
+  paid_date: string;
+  notes: string | null;
+  transaction_id: string | null;
+  created_at: string;
+}
+
 export interface RecurringTransaction {
   id: string;
   household_id: string;
@@ -1059,9 +1075,14 @@ export interface RecurringTransaction {
   merchant_name: string | null;
   amount: string;
   frequency: string;
+  tag: string;           // home | personal | food | transport | health | subscriptions | savings | insurance | education | other
+  spending_type: string; // need | want | saving
+  next_due_date: string | null;
+  start_date: string | null;
   is_active: boolean;
   notes: string | null;
   created_at: string;
+  payments: RecurringPayment[];
 }
 
 export async function detectRecurring(): Promise<RecurringCandidate[]> {
@@ -1081,9 +1102,22 @@ export async function listRecurring(): Promise<RecurringTransaction[]> {
   return apiFetch<RecurringTransaction[]>("/api/v1/recurring/", {});
 }
 
+export async function createRecurring(data: {
+  name: string; amount: number; frequency: string; tag: string; spending_type: string;
+  merchant_name?: string; next_due_date?: string; start_date?: string; notes?: string;
+}): Promise<RecurringTransaction> {
+  return apiFetch<RecurringTransaction>("/api/v1/recurring/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 export async function updateRecurring(
   id: string,
-  data: { name?: string; is_active?: boolean; notes?: string; frequency?: string }
+  data: {
+    name?: string; amount?: number; is_active?: boolean; notes?: string; frequency?: string;
+    tag?: string; spending_type?: string; next_due_date?: string | null; start_date?: string | null;
+  }
 ): Promise<RecurringTransaction> {
   return apiFetch<RecurringTransaction>(`/api/v1/recurring/${id}`, {
     method: "PATCH",
@@ -1093,6 +1127,37 @@ export async function updateRecurring(
 
 export async function deleteRecurring(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/recurring/${id}`, { method: "DELETE" });
+}
+
+export async function logRecurringPayment(
+  recurringId: string,
+  data: { amount: number; paid_date: string; notes?: string; create_transaction?: boolean; existing_transaction_id?: string }
+): Promise<RecurringPayment> {
+  return apiFetch<RecurringPayment>(`/api/v1/recurring/${recurringId}/payments`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteRecurringPayment(
+  recurringId: string,
+  paymentId: string
+): Promise<void> {
+  return apiFetch<void>(`/api/v1/recurring/${recurringId}/payments/${paymentId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getRecurringByTransaction(txnId: string): Promise<RecurringTransaction | null> {
+  try {
+    return await apiFetch<RecurringTransaction>(`/api/v1/recurring/by-transaction/${txnId}`, {});
+  } catch {
+    return null;
+  }
+}
+
+export async function unlinkTransactionFromRecurring(txnId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/recurring/unlink-transaction/${txnId}`, { method: "DELETE" });
 }
 
 // ─── Investment Holdings ─────────────────────────────────────────────────────
@@ -1350,6 +1415,16 @@ export async function createCustomCategory(
 ): Promise<CustomCategory> {
   return apiFetch<CustomCategory>("/api/v1/categories/", {
     method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateCustomCategory(
+  id: string,
+  data: { name: string }
+): Promise<CustomCategory> {
+  return apiFetch<CustomCategory>(`/api/v1/categories/${id}`, {
+    method: "PATCH",
     body: JSON.stringify(data),
   });
 }
@@ -1754,6 +1829,12 @@ export async function deleteBudget(id: string): Promise<void> {
   await apiFetch<void>(`/api/v1/budgets/${id}`, {
     method: "DELETE",
   });
+}
+
+export async function getBudgetTransactions(
+  budgetId: string
+): Promise<Transaction[]> {
+  return apiFetch<Transaction[]>(`/api/v1/budgets/${budgetId}/transactions`, {});
 }
 
 export async function copyBudgetsFromLastMonth(

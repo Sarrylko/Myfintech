@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel
@@ -7,21 +7,33 @@ from pydantic import BaseModel
 
 class RecurringCandidate(BaseModel):
     """A detected recurring pattern — not yet saved to DB."""
-    key: str                        # unique key for dedup (name+amount+frequency)
-    name: str                       # best display name
+    key: str
+    name: str
     merchant_name: str | None
     amount: Decimal
-    frequency: str                  # weekly | biweekly | monthly | quarterly | annual
-    last_date: str                  # ISO date of most recent occurrence
-    next_expected: str              # ISO date of predicted next occurrence
+    frequency: str
+    last_date: str
+    next_expected: str
     occurrences: int
-    confidence: float               # 0–1
-    transaction_ids: list[str]      # IDs of matching transactions
+    confidence: float
+    transaction_ids: list[str]
 
 
 class RecurringConfirmRequest(BaseModel):
-    """Body for confirming selected candidates."""
     candidates: list[RecurringCandidate]
+
+
+class RecurringPaymentResponse(BaseModel):
+    id: uuid.UUID
+    recurring_id: uuid.UUID
+    household_id: uuid.UUID
+    amount: Decimal
+    paid_date: date
+    notes: str | None
+    transaction_id: uuid.UUID | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class RecurringTransactionResponse(BaseModel):
@@ -31,15 +43,45 @@ class RecurringTransactionResponse(BaseModel):
     merchant_name: str | None
     amount: Decimal
     frequency: str
+    tag: str
+    spending_type: str
+    next_due_date: date | None
+    start_date: date | None
     is_active: bool
     notes: str | None
     created_at: datetime
+    payments: list[RecurringPaymentResponse] = []
 
     model_config = {"from_attributes": True}
 
 
+class RecurringTransactionCreate(BaseModel):
+    name: str
+    amount: Decimal
+    frequency: str
+    tag: str = "other"
+    spending_type: str = "want"
+    merchant_name: str | None = None
+    next_due_date: date | None = None
+    start_date: date | None = None
+    notes: str | None = None
+
+
 class RecurringTransactionUpdate(BaseModel):
     name: str | None = None
+    amount: Decimal | None = None
     is_active: bool | None = None
     notes: str | None = None
     frequency: str | None = None
+    tag: str | None = None
+    spending_type: str | None = None
+    next_due_date: date | None = None
+    start_date: date | None = None
+
+
+class RecurringPaymentCreate(BaseModel):
+    amount: Decimal
+    paid_date: date
+    notes: str | None = None
+    create_transaction: bool = True
+    existing_transaction_id: uuid.UUID | None = None  # link to an existing transaction instead of creating new
