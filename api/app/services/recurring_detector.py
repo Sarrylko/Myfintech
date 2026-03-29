@@ -144,6 +144,16 @@ def detect_recurring(transactions: list) -> list[dict]:
         amounts = sorted([float(t.amount) for t in sorted_txns])
         typical_amount = Decimal(str(median(amounts))).quantize(Decimal("0.01"))
 
+        # Flag variable-amount items: std dev > 10% of mean
+        amount_varies = False
+        if len(amounts) > 2:
+            try:
+                amount_mean = sum(amounts) / len(amounts)
+                amt_sd = stdev(amounts)
+                amount_varies = (amt_sd / amount_mean) > 0.10
+            except Exception:
+                pass
+
         candidates.append({
             "key": f"{norm_name}|{float(typical_amount)}|{frequency}",
             "name": best_name,
@@ -155,6 +165,7 @@ def detect_recurring(transactions: list) -> list[dict]:
             "occurrences": len(txns),
             "confidence": confidence,
             "transaction_ids": [str(t.id) for t in sorted_txns],
+            "amount_varies": amount_varies,
         })
 
     # Sort: highest confidence first, then most occurrences

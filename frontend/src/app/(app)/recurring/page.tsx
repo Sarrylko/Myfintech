@@ -66,6 +66,30 @@ function toMonthly(rec: RecurringTransaction): number {
   }
 }
 
+function paymentStats(payments: { amount: string }[]) {
+  if (!payments.length) return null;
+  const amounts = payments.slice(0, 6).map((p) => parseFloat(p.amount));
+  const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
+  return { avg, min: Math.min(...amounts), max: Math.max(...amounts), count: amounts.length };
+}
+
+function effectiveMonthlyAmount(rec: RecurringTransaction): number {
+  if (rec.amount_type === "variable") {
+    const stats = paymentStats(rec.payments);
+    const base = stats ? stats.avg : parseFloat(rec.amount);
+    return toMonthly({ ...rec, amount: String(base) });
+  }
+  return toMonthly(rec);
+}
+
+function VariableBadge() {
+  return (
+    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+      ≈ VAR
+    </span>
+  );
+}
+
 function daysUntil(isoDate: string | null): number | null {
   if (!isoDate) return null;
   const diff = new Date(isoDate + "T00:00:00").getTime() - new Date().setHours(0,0,0,0);
@@ -172,15 +196,28 @@ function LogPaymentModal({
           {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
           <div>
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Amount Paid</label>
+            {rec.amount_type === "variable" && rec.payments.length > 0 && (
+              <p className="text-xs text-slate-500 mb-1.5">
+                Last {Math.min(3, rec.payments.length)}:{" "}
+                {rec.payments.slice(0, 3).map((p) => fmt(parseFloat(p.amount))).join(", ")}
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <span className="text-gray-400 text-sm">$</span>
               <input
                 type="number" step="0.01" min="0"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                className={`flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-white border ${
+                  rec.amount_type === "variable"
+                    ? "border-amber-400 dark:border-amber-600 ring-1 ring-amber-100 dark:ring-amber-900/30"
+                    : "border-gray-300 dark:border-gray-700"
+                }`}
               />
             </div>
+            {rec.amount_type === "variable" && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">This is a variable bill — enter the actual amount for this period.</p>
+            )}
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Payment Date</label>
@@ -238,6 +275,7 @@ function RecurringFormModal({
   const [name, setName] = useState(initial?.name ?? "");
   const [amount, setAmount] = useState(initial?.amount ?? "");
   const [frequency, setFrequency] = useState(initial?.frequency ?? "monthly");
+  const [amountType, setAmountType] = useState<"fixed" | "variable">((initial?.amount_type as "fixed" | "variable") ?? "fixed");
   const [tag, setTag] = useState(initial?.tag ?? "other");
   const [spendingType, setSpendingType] = useState(initial?.spending_type ?? "want");
   const [nextDue, setNextDue] = useState(initial?.next_due_date ?? "");
@@ -262,6 +300,7 @@ function RecurringFormModal({
         start_date: startDate || undefined,
         notes: notes.trim() || undefined,
         is_active: isActive,
+        amount_type: amountType,
       };
       let rec: RecurringTransaction;
       if (isEdit && initial) {
@@ -304,7 +343,9 @@ function RecurringFormModal({
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Amount</label>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                {amountType === "variable" ? "Estimated / Typical Amount" : "Amount"}
+              </label>
               <div className="flex items-center gap-2">
                 <span className="text-gray-400 text-sm">$</span>
                 <input
@@ -335,6 +376,31 @@ function RecurringFormModal({
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Amount Type */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Amount Type</label>
+            <div className="flex gap-2">
+              {(["fixed", "variable"] as const).map((t) => (
+                <button
+                  key={t} type="button"
+                  onClick={() => setAmountType(t)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
+                    amountType === t
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "bg-white text-gray-600 border-gray-300 hover:border-blue-400 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700"
+                  }`}
+                >
+                  {t === "fixed" ? "Fixed" : "≈ Variable"}
+                </button>
+              ))}
+            </div>
+            {amountType === "variable" && (
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">
+                Amount varies each period (e.g. utilities, phone). We&apos;ll use your payment history average for totals.
+              </p>
+            )}
           </div>
 
           {/* Life Area Tag */}
@@ -462,7 +528,12 @@ function CandidateRow({
       </div>
       <div className="shrink-0 text-right flex flex-col items-end gap-1">
         <p className="text-sm font-semibold text-gray-900">{fmt(parseFloat(candidate.amount as string))}</p>
-        <ConfidenceBar value={candidate.confidence} />
+        <div className="flex items-center gap-2">
+          <ConfidenceBar value={candidate.confidence} />
+          {candidate.amount_varies && (
+            <span className="text-[10px] text-slate-400">(amounts vary)</span>
+          )}
+        </div>
       </div>
     </label>
   );
@@ -505,13 +576,29 @@ function SavedRow({
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           <FreqBadge freq={rec.frequency} />
           {spendMeta && <SpendingPill type={rec.spending_type} />}
+          {rec.amount_type === "variable" && <VariableBadge />}
           <DueBadge isoDate={rec.next_due_date} />
         </div>
       </div>
 
       {/* Amount */}
       <div className="text-right shrink-0 mr-2">
-        <p className="text-sm font-semibold text-gray-900 dark:text-white">{fmt(parseFloat(rec.amount))}</p>
+        {rec.amount_type === "variable" ? (() => {
+          const stats = paymentStats(rec.payments);
+          const display = stats ? stats.avg : parseFloat(rec.amount);
+          return (
+            <>
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">~{fmt(display)}</p>
+              {stats ? (
+                <p className="text-xs text-slate-400 mt-0.5">Avg {fmt(stats.avg)} · {fmt(stats.min)}–{fmt(stats.max)}</p>
+              ) : (
+                <p className="text-xs text-slate-400 mt-0.5">Est. · no history yet</p>
+              )}
+            </>
+          );
+        })() : (
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{fmt(parseFloat(rec.amount))}</p>
+        )}
         <p className="text-xs text-gray-400">{FREQ_LABEL[rec.frequency]}</p>
       </div>
 
@@ -671,10 +758,11 @@ export default function RecurringPage() {
   // ── Summary ──
 
   const active = saved.filter((r) => r.is_active);
-  const monthlyCommitted = active.reduce((s, r) => s + toMonthly(r), 0);
+  const hasVariable = active.some((r) => r.amount_type === "variable");
+  const monthlyCommitted = active.reduce((s, r) => s + effectiveMonthlyAmount(r), 0);
   const annualProjected = monthlyCommitted * 12;
-  const needsMonthly = active.filter((r) => r.spending_type === "need").reduce((s, r) => s + toMonthly(r), 0);
-  const wantsMonthly = active.filter((r) => r.spending_type === "want").reduce((s, r) => s + toMonthly(r), 0);
+  const needsMonthly = active.filter((r) => r.spending_type === "need").reduce((s, r) => s + effectiveMonthlyAmount(r), 0);
+  const wantsMonthly = active.filter((r) => r.spending_type === "want").reduce((s, r) => s + effectiveMonthlyAmount(r), 0);
   const dueThisWeek = active.filter((r) => {
     const d = daysUntil(r.next_due_date);
     return d !== null && d >= 0 && d <= 7;
@@ -748,7 +836,12 @@ export default function RecurringPage() {
         <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm p-5">
           <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-1">Monthly Committed</p>
           <p className="text-2xl font-bold text-gray-900 dark:text-white">{fmt(monthlyCommitted)}</p>
-          <p className="text-xs text-gray-400 mt-1">{active.length} active items</p>
+          <p className="text-xs text-gray-400 mt-1">
+            {active.length} active items
+            {hasVariable && (
+              <span className="ml-1 text-slate-400" title="Variable items use payment history average">*</span>
+            )}
+          </p>
         </div>
         <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm p-5">
           <p className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-1">Annual Projected</p>
@@ -838,7 +931,7 @@ export default function RecurringPage() {
         ) : (
           groups.map((group) => {
             const groupActive = group.items.filter((r) => r.is_active);
-            const groupMonthly = groupActive.reduce((s, r) => s + toMonthly(r), 0);
+            const groupMonthly = groupActive.reduce((s, r) => s + effectiveMonthlyAmount(r), 0);
             return (
               <div key={group.key}>
                 <div className="px-5 py-2.5 bg-gray-50 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">

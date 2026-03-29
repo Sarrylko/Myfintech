@@ -1055,6 +1055,7 @@ export interface RecurringCandidate {
   occurrences: number;
   confidence: number;      // 0–1
   transaction_ids: string[];
+  amount_varies: boolean;
 }
 
 export interface RecurringPayment {
@@ -1080,6 +1081,7 @@ export interface RecurringTransaction {
   next_due_date: string | null;
   start_date: string | null;
   is_active: boolean;
+  amount_type: string;   // "fixed" | "variable"
   notes: string | null;
   created_at: string;
   payments: RecurringPayment[];

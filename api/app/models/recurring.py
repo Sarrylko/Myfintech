@@ -28,6 +28,7 @@ class RecurringTransaction(Base):
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    amount_type: Mapped[str] = mapped_column(String(10), default="fixed")  # fixed | variable
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

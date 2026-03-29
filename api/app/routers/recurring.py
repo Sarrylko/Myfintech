@@ -89,6 +89,7 @@ async def confirm_recurring(
             merchant_name=c.merchant_name,
             amount=c.amount,
             frequency=c.frequency,
+            amount_type="variable" if getattr(c, "amount_varies", False) else "fixed",
             is_active=True,
         )
         db.add(rec)
@@ -119,6 +120,7 @@ async def create_recurring(
         next_due_date=payload.next_due_date,
         start_date=payload.start_date,
         notes=payload.notes,
+        amount_type=payload.amount_type,
         is_active=True,
     )
     db.add(rec)

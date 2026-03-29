@@ -17,6 +17,7 @@ class RecurringCandidate(BaseModel):
     occurrences: int
     confidence: float
     transaction_ids: list[str]
+    amount_varies: bool = False
 
 
 class RecurringConfirmRequest(BaseModel):
@@ -48,6 +49,7 @@ class RecurringTransactionResponse(BaseModel):
     next_due_date: date | None
     start_date: date | None
     is_active: bool
+    amount_type: str
     notes: str | None
     created_at: datetime
     payments: list[RecurringPaymentResponse] = []
@@ -65,6 +67,7 @@ class RecurringTransactionCreate(BaseModel):
     next_due_date: date | None = None
     start_date: date | None = None
     notes: str | None = None
+    amount_type: str = "fixed"
 
 
 class RecurringTransactionUpdate(BaseModel):
@@ -77,6 +80,7 @@ class RecurringTransactionUpdate(BaseModel):
     spending_type: str | None = None
     next_due_date: date | None = None
     start_date: date | None = None
+    amount_type: str | None = None
 
 
 class RecurringPaymentCreate(BaseModel):
