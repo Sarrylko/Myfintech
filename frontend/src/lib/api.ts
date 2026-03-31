@@ -2406,8 +2406,22 @@ export interface RetirementProfile {
   spouse_yearly_income: string | null;
   monthly_essential_expenses: string | null;
   monthly_non_essential_expenses: string | null;
+  retirement_account_ids: string[] | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface RetirementAccountInfo {
+  id: string;
+  name: string;
+  institution_name: string | null;
+  type: string;
+  subtype: string | null;
+  current_balance: number;
+  tax_treatment: "tax_deferred" | "tax_exempt" | "taxable" | "non_investment";
+  is_auto_included: boolean;
+  is_selected: boolean;
+  is_manual_mode: boolean;
 }
 
 export interface YearlyProjection {
@@ -2488,4 +2502,38 @@ export async function upsertRetirementProfile(data: {
 
 export async function getRetirementProjection(): Promise<RetirementProjection> {
   return apiFetch<RetirementProjection>("/api/v1/retirement/projection");
+}
+
+export async function getRetirementAccounts(): Promise<RetirementAccountInfo[]> {
+  return apiFetch<RetirementAccountInfo[]>("/api/v1/retirement/accounts");
+}
+
+export async function updateRetirementAccountSelection(accountIds: string[] | null): Promise<RetirementProfile> {
+  return apiFetch<RetirementProfile>("/api/v1/retirement/accounts/selection", {
+    method: "PUT",
+    body: JSON.stringify({ account_ids: accountIds }),
+  });
+}
+
+export interface YearlyPlanRow {
+  year: number;
+  age: number;
+  spouse_age: number | null;
+  savings_start_of_year: number;
+  essential_expenses: number;
+  non_essential_expenses: number;
+  estimated_taxes: number;
+  total_expenses: number;
+  earned_income: number;
+  other_income: number;
+  total_income: number;
+  savings_withdrawals: number;
+  rmd_amount: number;
+  withdrawal_pct: number;
+  savings_end_of_year: number;
+  net_surplus_deficit: number;
+}
+
+export async function getRetirementYearlyPlan(): Promise<YearlyPlanRow[]> {
+  return apiFetch<YearlyPlanRow[]>("/api/v1/retirement/yearly-plan");
 }

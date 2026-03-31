@@ -1,6 +1,8 @@
+import json
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -89,10 +91,41 @@ class RetirementProfileResponse(BaseModel):
     spouse_yearly_income: Decimal | None
     monthly_essential_expenses: Decimal | None
     monthly_non_essential_expenses: Decimal | None
+    retirement_account_ids: list[str] | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("retirement_account_ids", mode="before")
+    @classmethod
+    def deserialize_account_ids(cls, v: Any) -> list[str] | None:
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return None
+        return v
+
+
+class RetirementAccountInfo(BaseModel):
+    """Account with retirement classification metadata for frontend account picker."""
+    id: str
+    name: str
+    institution_name: str | None
+    type: str
+    subtype: str | None
+    current_balance: float
+    tax_treatment: str  # tax_deferred | tax_exempt | taxable | non_investment
+    is_auto_included: bool  # whether this account is picked up by auto-detect
+    is_selected: bool  # whether explicitly selected (or included via auto)
+    is_manual_mode: bool  # true if profile has an explicit manual selection saved
+
+    model_config = ConfigDict(from_attributes=False)
+
+
+class RetirementAccountSelectionUpdate(BaseModel):
+    account_ids: list[str] | None  # null = revert to auto-detect
 
 
 class YearlyProjection(BaseModel):
@@ -140,3 +173,22 @@ class RetirementProjectionResponse(BaseModel):
     yearly_projections: list[YearlyProjection]
     scenario_projections: list[ScenarioProjection]
     insights: list[str]
+
+
+class YearlyPlanRow(BaseModel):
+    year: int
+    age: int
+    spouse_age: int | None
+    savings_start_of_year: float
+    essential_expenses: float
+    non_essential_expenses: float
+    estimated_taxes: float
+    total_expenses: float
+    earned_income: float
+    other_income: float
+    total_income: float
+    savings_withdrawals: float
+    rmd_amount: float
+    withdrawal_pct: float
+    savings_end_of_year: float
+    net_surplus_deficit: float

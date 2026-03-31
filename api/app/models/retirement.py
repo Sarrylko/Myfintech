@@ -38,6 +38,8 @@ class RetirementProfile(Base):
     spouse_yearly_income: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     monthly_essential_expenses: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     monthly_non_essential_expenses: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # JSON array of account UUID strings; null = auto-detect retirement accounts by subtype
+    retirement_account_ids: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

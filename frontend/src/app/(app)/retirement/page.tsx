@@ -9,10 +9,16 @@ import {
 import {
   getRetirementProfile,
   getRetirementProjection,
+  getRetirementAccounts,
+  getRetirementYearlyPlan,
+  updateRetirementAccountSelection,
   upsertRetirementProfile,
+  getRefreshStatus,
   type RetirementProjection,
+  type RetirementAccountInfo,
   type ScenarioProjection,
   type IncomeSource,
+  type YearlyPlanRow,
 } from "@/lib/api";
 
 // ─── Probability Gauge (donut) ───────────────────────────────────────────────
@@ -86,6 +92,236 @@ function IncomeCard({ source, total }: { source: IncomeSource; total: number }) 
     </div>
   );
 }
+
+// ─── Account Selection Panel ─────────────────────────────────────────────────
+
+const TAX_LABELS: Record<string, { label: string; color: string; bg: string }> = {
+  tax_deferred: { label: "Tax-Deferred", color: "text-blue-400", bg: "bg-blue-900/40 border-blue-800/60" },
+  tax_exempt:   { label: "Tax-Exempt (Roth)", color: "text-emerald-400", bg: "bg-emerald-900/40 border-emerald-800/60" },
+  taxable:      { label: "Taxable", color: "text-amber-400", bg: "bg-amber-900/30 border-amber-800/60" },
+  non_investment: { label: "Non-Investment", color: "text-slate-500", bg: "bg-slate-700/30 border-slate-700" },
+};
+
+function AccountSelectionPanel({
+  onSelectionChanged,
+}: {
+  onSelectionChanged: () => void;
+}) {
+  const { fmtCompact } = useCurrency();
+  const [accounts, setAccounts] = useState<RetirementAccountInfo[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [isAuto, setIsAuto] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    getRetirementAccounts().then((data) => {
+      setAccounts(data);
+      // is_manual_mode comes directly from the backend (true if profile has explicit selection saved)
+      const inManualMode = data.length > 0 && data[0].is_manual_mode;
+      setIsAuto(!inManualMode);
+      setSelected(new Set(data.filter((a) => a.is_selected).map((a) => a.id)));
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function save(ids: string[] | null) {
+    setSaving(true);
+    try {
+      await updateRetirementAccountSelection(ids);
+      onSelectionChanged();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function toggleAuto() {
+    if (!isAuto) {
+      // Switch to auto: clear manual selection
+      setIsAuto(true);
+      save(null);
+    } else {
+      // Switch to manual: pre-select what auto would pick
+      const autoIds = (accounts ?? []).filter((a) => a.is_auto_included).map((a) => a.id);
+      setIsAuto(false);
+      setSelected(new Set(autoIds));
+      save(autoIds);
+    }
+  }
+
+  function toggleAccount(id: string) {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+    save(Array.from(next));
+  }
+
+  if (loading) {
+    return (
+      <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6 flex items-center justify-center h-32">
+        <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!accounts) return null;
+
+  // Group by institution
+  const byInstitution: Record<string, RetirementAccountInfo[]> = {};
+  for (const acc of accounts) {
+    const inst = acc.institution_name || "Other";
+    if (!byInstitution[inst]) byInstitution[inst] = [];
+    byInstitution[inst].push(acc);
+  }
+
+  const selectedAccounts = accounts.filter((a) => isAuto ? a.is_auto_included : selected.has(a.id));
+  const selectedTotal = selectedAccounts.reduce((s, a) => s + a.current_balance, 0);
+  const investmentAccounts = accounts.filter((a) => a.tax_treatment !== "non_investment");
+
+  return (
+    <div className="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-white">Retirement Accounts</h2>
+          <p className="text-slate-400 text-xs mt-0.5">
+            Choose which accounts count toward your retirement projection
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {saving && <div className="w-3.5 h-3.5 border border-blue-400 border-t-transparent rounded-full animate-spin" />}
+          {/* Auto / Manual toggle */}
+          <div className="flex items-center gap-2 bg-slate-700/60 rounded-lg p-1">
+            <button
+              type="button"
+              onClick={() => !isAuto && toggleAuto()}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${isAuto ? "bg-blue-600 text-white shadow" : "text-slate-400 hover:text-white"}`}
+            >
+              Auto
+            </button>
+            <button
+              type="button"
+              onClick={() => isAuto && toggleAuto()}
+              className={`px-3 py-1 rounded text-xs font-medium transition ${!isAuto ? "bg-slate-600 text-white shadow" : "text-slate-400 hover:text-white"}`}
+            >
+              Manual
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-6">
+        {/* Mode description */}
+        {isAuto ? (
+          <div className="flex items-start gap-2 bg-blue-900/20 border border-blue-800/40 rounded-xl p-3 mb-5 text-xs text-blue-300">
+            <span className="mt-0.5">ℹ️</span>
+            <span>
+              Auto mode includes all 401k, IRA, Roth, and recognized retirement accounts.
+              Switch to <strong>Manual</strong> to hand-pick which accounts to include.
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2 bg-slate-700/40 border border-slate-600/50 rounded-xl p-3 mb-5 text-xs text-slate-300">
+            <span className="mt-0.5">✏️</span>
+            <span>
+              Manual mode — select exactly which accounts to include in your projection.
+              You can include taxable brokerage or bank accounts if you plan to use them in retirement.
+            </span>
+          </div>
+        )}
+
+        {investmentAccounts.length === 0 ? (
+          <p className="text-slate-500 text-sm text-center py-4">
+            No investment or brokerage accounts found. Connect your accounts to get started.
+          </p>
+        ) : (
+          <div className="space-y-5">
+            {Object.entries(byInstitution).map(([institution, accs]) => {
+              const investmentAccsInGroup = accs.filter((a) => a.tax_treatment !== "non_investment");
+              if (investmentAccsInGroup.length === 0) return null;
+              return (
+                <div key={institution}>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">{institution}</p>
+                  <div className="space-y-2">
+                    {accs.map((acc) => {
+                      const taxInfo = TAX_LABELS[acc.tax_treatment];
+                      const isChecked = isAuto ? acc.is_auto_included : selected.has(acc.id);
+                      const isDisabled = isAuto;
+                      return (
+                        <label
+                          key={acc.id}
+                          className={`flex items-center gap-4 rounded-xl border p-4 cursor-pointer transition
+                            ${isChecked
+                              ? `${taxInfo.bg} border-opacity-100`
+                              : "bg-slate-700/30 border-slate-700 opacity-50"}
+                            ${isDisabled ? "cursor-default" : "hover:border-slate-500"}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            disabled={isDisabled}
+                            onChange={() => !isDisabled && toggleAccount(acc.id)}
+                            className="w-4 h-4 rounded accent-blue-500 flex-shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-medium text-white truncate">{acc.name}</p>
+                              {acc.subtype && (
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${taxInfo.bg} ${taxInfo.color}`}>
+                                  {acc.subtype.toUpperCase()}
+                                </span>
+                              )}
+                              {acc.is_auto_included && !isAuto && (
+                                <span className="text-[10px] text-slate-500">auto</span>
+                              )}
+                            </div>
+                            <p className={`text-xs mt-0.5 ${taxInfo.color}`}>{taxInfo.label}</p>
+                          </div>
+                          <div className="text-right flex-shrink-0">
+                            <p className="text-white font-semibold text-sm">{fmtCompact(acc.current_balance)}</p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Summary footer */}
+        {selectedAccounts.length > 0 && (
+          <div className="mt-5 pt-4 border-t border-slate-700 flex items-center justify-between">
+            <div className="flex gap-4 text-xs">
+              <span className="text-slate-400">
+                {selectedAccounts.length} account{selectedAccounts.length !== 1 ? "s" : ""} selected
+              </span>
+              <span className="text-slate-600">·</span>
+              <div className="flex gap-2">
+                {["tax_deferred","tax_exempt","taxable"].map((t) => {
+                  const bal = selectedAccounts.filter((a) => a.tax_treatment === t).reduce((s, a) => s + a.current_balance, 0);
+                  if (bal === 0) return null;
+                  const info = TAX_LABELS[t];
+                  return (
+                    <span key={t} className={`${info.color}`}>{info.label.split(" ")[0]}: {fmtCompact(bal)}</span>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-slate-400">Total included</p>
+              <p className="text-white font-bold text-base">{fmtCompact(selectedTotal)}</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 // ─── Profile Form ────────────────────────────────────────────────────────────
 
@@ -381,6 +617,163 @@ function TaxBar({ label, amount, total, color }: { label: string; amount: number
   );
 }
 
+// ─── Year-by-Year Table ───────────────────────────────────────────────────────
+
+type RowDef =
+  | { kind: "data"; label: string; key: keyof YearlyPlanRow; indent?: boolean }
+  | { kind: "section"; label: string; totalKey: keyof YearlyPlanRow | null };
+
+const YEAR_BY_YEAR_ROWS: RowDef[] = [
+  { kind: "data",    label: "Your age",              key: "age" },
+  { kind: "data",    label: "Partner age",           key: "spouse_age" },
+  { kind: "data",    label: "Savings start of year", key: "savings_start_of_year" },
+  { kind: "section", label: "Total expenses",        totalKey: "total_expenses" },
+  { kind: "data",    label: "Essential",             key: "essential_expenses",     indent: true },
+  { kind: "data",    label: "Non-essential",         key: "non_essential_expenses", indent: true },
+  { kind: "data",    label: "Taxes",                 key: "estimated_taxes",        indent: true },
+  { kind: "section", label: "Total income",          totalKey: "total_income" },
+  { kind: "data",    label: "Earned",                key: "earned_income",          indent: true },
+  { kind: "data",    label: "Other (SS + rental)",   key: "other_income",           indent: true },
+  { kind: "section", label: "Savings withdrawals",   totalKey: "savings_withdrawals" },
+  { kind: "data",    label: "RMD",                   key: "rmd_amount",             indent: true },
+  { kind: "data",    label: "Withdrawal %",          key: "withdrawal_pct",         indent: true },
+  { kind: "data",    label: "Savings at year end",   key: "savings_end_of_year" },
+  { kind: "data",    label: "Net surplus / deficit", key: "net_surplus_deficit" },
+];
+
+function YearByYearTable({
+  rows,
+  loading,
+  isRefreshing,
+  onRefresh,
+  retirementAge,
+}: {
+  rows: YearlyPlanRow[] | null;
+  loading: boolean;
+  isRefreshing: boolean;
+  onRefresh: () => void;
+  retirementAge: number;
+}) {
+  const { fmt: fmtRaw } = useCurrency();
+
+  function cellText(row: YearlyPlanRow, def: RowDef & { kind: "data" }): string {
+    const v = row[def.key];
+    if (v === null || v === undefined) return "—";
+    if (def.key === "age" || def.key === "spouse_age") return String(v);
+    if (def.key === "withdrawal_pct") return `${(v as number).toFixed(1)}%`;
+    return fmtRaw(v as number);
+  }
+
+  function cellColor(row: YearlyPlanRow, def: RowDef & { kind: "data" }): string {
+    if (def.key === "net_surplus_deficit") {
+      return row.net_surplus_deficit >= 0 ? "text-emerald-400" : "text-red-400";
+    }
+    if (def.key === "savings_end_of_year") {
+      return row.savings_end_of_year <= 0 ? "text-red-400" : "text-slate-200";
+    }
+    if (def.key === "earned_income" || def.key === "other_income") return "text-emerald-300";
+    return "text-slate-200";
+  }
+
+  return (
+    <div className="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+        <div>
+          <h2 className="text-base font-semibold text-white">Year-by-Year Retirement Plan</h2>
+          <p className="text-slate-400 text-xs mt-0.5">Base scenario · inflation-adjusted · current dollars</p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={isRefreshing}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded-lg transition font-medium"
+        >
+          {isRefreshing ? (
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          )}
+          {isRefreshing ? "Refreshing…" : "Refresh All"}
+        </button>
+      </div>
+
+      {loading && (
+        <div className="flex items-center justify-center h-48">
+          <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      )}
+
+      {!loading && rows && rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="border-collapse text-xs min-w-max">
+            <thead>
+              <tr className="bg-slate-900/60">
+                <th scope="col" className="sticky left-0 z-10 bg-slate-900/95 px-4 py-3 text-left text-slate-400 font-medium border-r border-slate-700 min-w-[190px]">Category</th>
+                {rows.map((row) => (
+                  <th
+                    key={row.year}
+                    className={`px-3 py-3 text-center font-semibold min-w-[108px] border-l border-slate-700/40 ${
+                      row.age === retirementAge ? "bg-blue-900/30 text-blue-300" : "text-slate-300"
+                    }`}
+                  >
+                    <div>{row.year}</div>
+                    {row.age === retirementAge && (
+                      <div className="text-blue-400 text-[9px] font-normal mt-0.5 tracking-wide uppercase">Retirement</div>
+                    )}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {YEAR_BY_YEAR_ROWS.map((def, i) => {
+                if (def.kind === "section") {
+                  return (
+                    <tr key={i} className="bg-slate-700/60">
+                      <td className="sticky left-0 z-10 bg-slate-700/95 px-4 py-2.5 font-semibold text-white border-r border-slate-600 text-xs">
+                        {def.label}
+                      </td>
+                      {rows.map((row) => (
+                        <td key={row.year} className={`px-3 py-2.5 text-center font-semibold text-white border-l border-slate-600/40 ${
+                          row.age === retirementAge ? "bg-blue-900/10" : ""
+                        }`}>
+                          {def.totalKey ? fmtRaw(row[def.totalKey] as number) : ""}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                }
+                return (
+                  <tr key={i} className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors">
+                    <td className={`sticky left-0 z-10 bg-slate-800 py-2 text-slate-400 border-r border-slate-700/50 ${def.indent ? "pl-8 pr-4" : "px-4"}`}>
+                      {def.label}
+                    </td>
+                    {rows.map((row) => (
+                      <td key={row.year} className={`px-3 py-2 text-center border-l border-slate-700/20 ${cellColor(row, def)} ${
+                        row.age === retirementAge ? "bg-blue-900/10" : ""
+                      }`}>
+                        {cellText(row, def)}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!loading && (!rows || rows.length === 0) && (
+        <div className="flex items-center justify-center h-32 text-slate-500 text-sm">
+          Complete your retirement profile to generate the year-by-year plan.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function RetirementPage() {
@@ -391,7 +784,13 @@ export default function RetirementPage() {
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [showAccounts, setShowAccounts] = useState(false);
   const [projectionError, setProjectionError] = useState("");
+  const [lastPriceRefresh, setLastPriceRefresh] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"overview" | "year-by-year">("overview");
+  const [yearlyPlan, setYearlyPlan] = useState<YearlyPlanRow[] | null>(null);
+  const [yearlyLoading, setYearlyLoading] = useState(false);
+  const [planRefreshing, setPlanRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -423,6 +822,32 @@ export default function RetirementPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Auto-refresh projection when investment prices are updated (manual or scheduled)
+  useEffect(() => {
+    let cancelled = false;
+    async function pollRefreshStatus() {
+      try {
+        const status = await getRefreshStatus();
+        const ts = status.last_refresh ?? null;
+        if (ts && ts !== lastPriceRefresh) {
+          setLastPriceRefresh(ts);
+          if (lastPriceRefresh !== null) {
+            // A new price refresh occurred — silently reload projection
+            load();
+          }
+        }
+      } catch {
+        // ignore polling errors silently
+      }
+      if (!cancelled) {
+        setTimeout(pollRefreshStatus, 60_000); // check every 60 s
+      }
+    }
+    pollRefreshStatus();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastPriceRefresh, load]);
+
   async function handleSave(formData: ProfileFormData) {
     await upsertRetirementProfile({
       birth_year: parseInt(formData.birth_year),
@@ -445,6 +870,46 @@ export default function RetirementPage() {
     });
     setShowForm(false);
     await load();
+  }
+
+  async function loadYearlyPlan() {
+    setYearlyLoading(true);
+    try {
+      const data = await getRetirementYearlyPlan();
+      setYearlyPlan(data);
+    } catch {
+      // silently fail — empty state shown in table
+    } finally {
+      setYearlyLoading(false);
+    }
+  }
+
+  function handleTabChange(tab: "overview" | "year-by-year") {
+    setActiveTab(tab);
+    if (tab === "year-by-year" && yearlyPlan === null) {
+      loadYearlyPlan();
+    }
+  }
+
+  async function handlePlanRefresh() {
+    setPlanRefreshing(true);
+    try {
+      // Poll for a fresh price snapshot (max 30 s)
+      const initialStatus = await getRefreshStatus();
+      const initialTs = initialStatus.last_refresh;
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const status = await getRefreshStatus();
+        if (status.last_refresh && status.last_refresh !== initialTs) break;
+      }
+      await load();
+      setYearlyPlan(null);
+      await loadYearlyPlan();
+    } catch {
+      // ignore errors — data already refreshed as much as possible
+    } finally {
+      setPlanRefreshing(false);
+    }
   }
 
   // ── Loading ──────────────────────────────────────────────────────────
@@ -493,6 +958,9 @@ export default function RetirementPage() {
             <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700">
               <ProfileForm onSave={handleSave} onCancel={() => setShowForm(false)} />
             </div>
+          )}
+          {showAccounts && (
+            <AccountSelectionPanel onSelectionChanged={() => { load(); }} />
           )}
           <div className="bg-slate-800 rounded-2xl border border-red-800/50 p-8 text-center">
             <p className="text-red-400 mb-4">{projectionError || "Could not load projection."}</p>
@@ -560,10 +1028,16 @@ export default function RetirementPage() {
               )}
             </p>
           </div>
-          <button type="button" onClick={() => setShowForm(!showForm)}
-            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-sm rounded-lg transition">
-            {showForm ? "Close" : "Edit Profile"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => { setShowAccounts(!showAccounts); setShowForm(false); }}
+              className={`px-4 py-2 text-sm rounded-lg transition flex items-center gap-1.5 ${showAccounts ? "bg-blue-600 text-white" : "bg-slate-700 hover:bg-slate-600 text-slate-300"}`}>
+              <span>🏦</span> Accounts
+            </button>
+            <button type="button" onClick={() => { setShowForm(!showForm); setShowAccounts(false); }}
+              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-sm rounded-lg transition">
+              {showForm ? "Close" : "Edit Profile"}
+            </button>
+          </div>
         </div>
 
         {/* Edit form */}
@@ -574,7 +1048,49 @@ export default function RetirementPage() {
           </div>
         )}
 
-        {/* ── Asset Projection Chart ───────────────────────────────────── */}
+        {/* Account selection panel */}
+        {showAccounts && (
+          <AccountSelectionPanel onSelectionChanged={() => { load(); }} />
+        )}
+
+        {/* ── Tab switcher ─────────────────────────────────────────────── */}
+        <div className="flex items-center gap-1 bg-slate-800/60 border border-slate-700 rounded-xl p-1 w-fit">
+          <button
+            type="button"
+            onClick={() => handleTabChange("overview")}
+            className={`px-5 py-2 rounded-lg text-sm font-medium transition ${
+              activeTab === "overview"
+                ? "bg-slate-700 text-white shadow"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            Overview
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTabChange("year-by-year")}
+            className={`px-5 py-2 rounded-lg text-sm font-medium transition ${
+              activeTab === "year-by-year"
+                ? "bg-slate-700 text-white shadow"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            Year by Year
+          </button>
+        </div>
+
+        {/* ── Year-by-Year tab ─────────────────────────────────────────── */}
+        {activeTab === "year-by-year" && (
+          <YearByYearTable
+            rows={yearlyPlan}
+            loading={yearlyLoading}
+            isRefreshing={planRefreshing}
+            onRefresh={handlePlanRefresh}
+            retirementAge={prof.retirement_age}
+          />
+        )}
+
+        {activeTab === "overview" && (<>{/* ── Asset Projection Chart ───────────────────────────────────── */}
         <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6">
           <div className="flex items-start justify-between mb-4">
             <div>
@@ -1113,6 +1629,8 @@ export default function RetirementPage() {
           Key assumptions: all mortgages and children&apos;s education costs are assumed to be fully paid by retirement.
           Net worth: {fmt(p.total_net_worth, true)}
         </p>
+        </>)}
+
       </div>
     </div>
   );
