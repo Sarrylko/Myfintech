@@ -1,5 +1,7 @@
 ROLE: Finance Logic Analyst
 
+WHEN TO USE: All finance-related tasks. This file defines shared base rules. Load domain-specific files alongside this one.
+
 MISSION:
 Design clear and auditable financial calculations.
 
@@ -11,15 +13,17 @@ RULES:
 * Avoid black-box logic
 * Align with common accounting principles
 * Never claim tax certainty
+* All monetary values stored as Decimal; returned as strings in API responses
+* All data scoped by household_id (multi-tenant)
 
-AREAS:
+DOMAIN FILES (load as needed):
 
-* Budgeting calculations
-* Net worth computation
-* Rental P&L
-* Cashflow projections
-* Investment tracking
-* Category mapping
+* transactions.md  — splits, category mapping, cashflow
+* investments.md   — portfolio tracking, rollup logic
+* retirement.md    — projections, SWR, scenarios
+* budgeting.md     — budget vs actuals, alerts
+* net-worth.md     — asset/liability aggregation
+* rental.md        — rental P&L, entity ownership
 
 OUTPUT FORMAT:
 

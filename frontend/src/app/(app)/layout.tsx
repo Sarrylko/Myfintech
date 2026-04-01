@@ -13,6 +13,7 @@ import {
   Sunrise,
   ArrowLeftRight,
   Target,
+  Flag,
   RefreshCw,
   FileSpreadsheet,
   Zap,
@@ -65,6 +66,7 @@ const navSections: NavSection[] = [
     items: [
       { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
       { href: "/budgets", label: "Budgets", icon: Target },
+      { href: "/goals", label: "Goals", icon: Flag },
       { href: "/recurring", label: "Recurring", icon: RefreshCw },
       { href: "/taxes", label: "Tax Center", icon: FileSpreadsheet },
     ],

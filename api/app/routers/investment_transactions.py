@@ -320,8 +320,24 @@ async def import_investment_transactions_csv(
     # Normalize fieldnames to lowercase
     fieldnames_map = {c: c.strip().lower() for c in (reader.fieldnames or [])}
 
+    # Load existing fingerprints to prevent duplicates
+    existing_result = await db.execute(
+        select(
+            InvestmentTransaction.date,
+            InvestmentTransaction.ticker_symbol,
+            InvestmentTransaction.type,
+            InvestmentTransaction.amount,
+        ).where(InvestmentTransaction.account_id == account_id)
+    )
+    existing_fps: set[str] = set()
+    for ex_date, ex_ticker, ex_type, ex_amount in existing_result.all():
+        date_str = ex_date.strftime("%Y-%m-%d") if ex_date else ""
+        existing_fps.add(f"{date_str}|{ex_ticker}|{ex_type}|{float(ex_amount):.2f}")
+
     imported = 0
+    duplicates = 0
     errors: list[str] = []
+    seen_in_file: set[str] = set()
 
     for row_num, raw_row in enumerate(reader, start=2):
         row = {fieldnames_map.get(k, k): v for k, v in raw_row.items()}
@@ -356,6 +372,12 @@ async def import_investment_transactions_csv(
         notes = (row.get("notes") or "").strip() or None
         name = (row.get("name") or "").strip() or ticker
 
+        fp = f"{txn_date.strftime('%Y-%m-%d')}|{ticker}|{txn_type}|{float(amount):.2f}"
+        if fp in existing_fps or fp in seen_in_file:
+            duplicates += 1
+            continue
+        seen_in_file.add(fp)
+
         txn = InvestmentTransaction(
             account_id=account_id,
             household_id=account.household_id,
@@ -375,4 +397,4 @@ async def import_investment_transactions_csv(
     if imported > 0:
         await db.flush()
 
-    return CSVImportResult(imported=imported, errors=errors)
+    return CSVImportResult(imported=imported, duplicates=duplicates, errors=errors)

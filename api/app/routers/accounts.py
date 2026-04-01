@@ -297,15 +297,16 @@ async def import_csv_transactions(
     rules = rules_result.scalars().all()
 
     # Build fingerprint set from transactions already in this account
-    # Fingerprint: "YYYY-MM-DD|description_lower|amount_normalized"
+    # Fingerprint: "YYYY-MM-DD|merchant_or_name_lower|amount_normalized"
     existing_result = await db.execute(
-        select(Transaction.date, Transaction.name, Transaction.amount)
+        select(Transaction.date, Transaction.merchant_name, Transaction.name, Transaction.amount)
         .where(Transaction.account_id == account.id)
     )
     existing_fps: set[str] = set()
-    for ex_date, ex_name, ex_amount in existing_result.all():
+    for ex_date, ex_merchant, ex_name, ex_amount in existing_result.all():
         date_str = ex_date.strftime("%Y-%m-%d") if ex_date else ""
-        existing_fps.add(f"{date_str}|{(ex_name or '').lower().strip()}|{float(ex_amount):.2f}")
+        key = (ex_merchant or ex_name or "").lower().strip()
+        existing_fps.add(f"{date_str}|{key}|{float(ex_amount):.2f}")
 
     errors = []
     imported = 0
@@ -338,14 +339,16 @@ async def import_csv_transactions(
             errors.append({"row": i, "error": "Description is required"})
             continue
 
-        # Deduplication check (use original amount before rule sign-flip)
-        fp = f"{txn_date.strftime('%Y-%m-%d')}|{description.lower()}|{float(amount):.2f}"
+        merchant = row.get("merchant", "") or None
+
+        # Deduplication check — use merchant if present, else description
+        dedup_key = (merchant or description).lower().strip()
+        fp = f"{txn_date.strftime('%Y-%m-%d')}|{dedup_key}|{float(amount):.2f}"
         if fp in existing_fps or fp in seen_in_file:
             duplicates += 1
             continue
         seen_in_file.add(fp)
 
-        merchant = row.get("merchant", "") or None
         category = row.get("category", "") or None
         notes = row.get("notes", "") or None
 
@@ -383,6 +386,121 @@ async def import_csv_transactions(
         "errors": errors,
         "total_rows": i - 1 if imported + len(errors) + duplicates > 0 else 0,
     }
+
+
+@router.delete("/transactions/deduplicate", status_code=200)
+async def deduplicate_transactions(
+    account_id: uuid.UUID | None = Query(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove duplicate transactions (same date, merchant_name, amount, account).
+    Falls back to name when merchant_name is null. Keeps the oldest entry."""
+    from sqlalchemy import func, and_, delete, coalesce
+
+    q = select(
+        Transaction.date,
+        coalesce(Transaction.merchant_name, Transaction.name).label("merchant_key"),
+        Transaction.amount,
+        Transaction.account_id,
+        func.count().label("cnt"),
+        func.min(Transaction.id).label("keep_id"),
+    ).where(Transaction.household_id == user.household_id)
+
+    if account_id:
+        q = q.where(Transaction.account_id == account_id)
+
+    q = q.group_by(
+        Transaction.date,
+        coalesce(Transaction.merchant_name, Transaction.name),
+        Transaction.amount,
+        Transaction.account_id,
+    ).having(func.count() > 1)
+
+    result = await db.execute(q)
+    rows = result.all()
+
+    removed = 0
+    for row in rows:
+        dup_result = await db.execute(
+            select(Transaction.id).where(
+                and_(
+                    Transaction.date == row.date,
+                    coalesce(Transaction.merchant_name, Transaction.name) == row.merchant_key,
+                    Transaction.amount == row.amount,
+                    Transaction.account_id == row.account_id,
+                    Transaction.household_id == user.household_id,
+                    Transaction.id != row.keep_id,
+                )
+            )
+        )
+        dup_ids = [r[0] for r in dup_result.all()]
+        if dup_ids:
+            await db.execute(
+                delete(Transaction).where(Transaction.id.in_(dup_ids))
+            )
+            removed += len(dup_ids)
+
+    return {"removed": removed}
+
+
+@router.delete("/investment-transactions/deduplicate", status_code=200)
+async def deduplicate_investment_transactions(
+    account_id: uuid.UUID | None = Query(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove duplicate investment transactions (same date, ticker, type, amount, account).
+    Keeps the oldest entry."""
+    from sqlalchemy import func, and_, delete
+
+    q = select(
+        InvestmentTransaction.date,
+        InvestmentTransaction.ticker_symbol,
+        InvestmentTransaction.type,
+        InvestmentTransaction.amount,
+        InvestmentTransaction.account_id,
+        func.count().label("cnt"),
+        func.min(InvestmentTransaction.id).label("keep_id"),
+    ).where(InvestmentTransaction.household_id == user.household_id)
+
+    if account_id:
+        q = q.where(InvestmentTransaction.account_id == account_id)
+
+    q = q.group_by(
+        InvestmentTransaction.date,
+        InvestmentTransaction.ticker_symbol,
+        InvestmentTransaction.type,
+        InvestmentTransaction.amount,
+        InvestmentTransaction.account_id,
+    ).having(func.count() > 1)
+
+    result = await db.execute(q)
+    rows = result.all()
+
+    removed = 0
+    for row in rows:
+        dup_result = await db.execute(
+            select(InvestmentTransaction.id).where(
+                and_(
+                    InvestmentTransaction.date == row.date,
+                    InvestmentTransaction.ticker_symbol == row.ticker_symbol,
+                    InvestmentTransaction.type == row.type,
+                    InvestmentTransaction.amount == row.amount,
+                    InvestmentTransaction.account_id == row.account_id,
+                    InvestmentTransaction.household_id == user.household_id,
+                    InvestmentTransaction.id != row.keep_id,
+                )
+            )
+        )
+        dup_ids = [r[0] for r in dup_result.all()]
+        if dup_ids:
+            await db.execute(
+                delete(InvestmentTransaction).where(InvestmentTransaction.id.in_(dup_ids))
+            )
+            removed += len(dup_ids)
+
+    return {"removed": removed}
 
 
 @router.get("/{account_id}/holdings", response_model=list[HoldingResponse])

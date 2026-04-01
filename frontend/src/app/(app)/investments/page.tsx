@@ -115,6 +115,28 @@ function nullifyEmpty<T extends Record<string, unknown>>(form: T): T {
   return out as T;
 }
 
+type SortField = "ticker" | "name" | "shares" | "value" | "day_pl" | "cost" | "gain";
+type SortDir = "asc" | "desc";
+
+function SortableHeader({ label, field, sortField, sortDir, onSort, align = "right" }: {
+  label: string; field: SortField; sortField: SortField; sortDir: SortDir;
+  onSort: (f: SortField) => void; align?: "left" | "right";
+}) {
+  const active = sortField === field;
+  return (
+    <th
+      className={`px-4 py-2 font-medium cursor-pointer select-none hover:text-gray-700 transition-colors ${align === "right" ? "text-right" : "text-left"}`}
+      onClick={() => onSort(field)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {align === "right" && <span className="text-gray-400">{active ? (sortDir === "asc" ? "↑" : "↓") : "↕"}</span>}
+        {label}
+        {align === "left" && <span className="text-gray-400">{active ? (sortDir === "asc" ? "↑" : "↓") : "↕"}</span>}
+      </span>
+    </th>
+  );
+}
+
 function HoldingsTable({
   holdings, loading, isManual, accountId, onChanged, isCryptoAccount,
 }: {
@@ -130,6 +152,14 @@ function HoldingsTable({
     if (val === null || val === undefined || val === "") return "—";
     return fmtRaw(Number(val), { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
   };
+  const [sortField, setSortField] = useState<SortField>("value");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  function handleSort(field: SortField) {
+    if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortField(field); setSortDir("desc"); }
+  }
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<HoldingUpdate>({});
   const [editIsCrypto, setEditIsCrypto] = useState(false);
@@ -285,6 +315,35 @@ function HoldingsTable({
   const totalPrevValue = holdingsWithDaily.reduce((s, h) => s + Number(h.previous_close) * Number(h.quantity), 0);
   const totalDayPct = totalDayGain !== null && totalPrevValue > 0 ? (totalDayGain / totalPrevValue) * 100 : null;
 
+  // Sort holdings
+  const sortedHoldings = [...holdings].sort((a, b) => {
+    let aVal: number | string = 0;
+    let bVal: number | string = 0;
+    if (sortField === "ticker") { aVal = a.ticker_symbol ?? ""; bVal = b.ticker_symbol ?? ""; }
+    else if (sortField === "name") { aVal = a.name ?? ""; bVal = b.name ?? ""; }
+    else if (sortField === "shares") { aVal = Number(a.quantity ?? 0); bVal = Number(b.quantity ?? 0); }
+    else if (sortField === "value") { aVal = Number(a.current_value ?? 0); bVal = Number(b.current_value ?? 0); }
+    else if (sortField === "cost") { aVal = Number(a.cost_basis ?? 0); bVal = Number(b.cost_basis ?? 0); }
+    else if (sortField === "gain") {
+      aVal = a.cost_basis !== null ? Number(a.current_value ?? 0) - Number(a.cost_basis) : -Infinity;
+      bVal = b.cost_basis !== null ? Number(b.current_value ?? 0) - Number(b.cost_basis) : -Infinity;
+    } else if (sortField === "day_pl") {
+      const dayGainOf = (h: Holding) => {
+        const qty = Number(h.quantity); const val = Number(h.current_value ?? 0);
+        const prev = h.previous_close ? Number(h.previous_close) : null;
+        const price = qty > 0 ? val / qty : null;
+        return prev && price && qty > 0 ? (price - prev) * qty : null;
+      };
+      aVal = dayGainOf(a) ?? -Infinity;
+      bVal = dayGainOf(b) ?? -Infinity;
+    }
+    if (typeof aVal === "string") {
+      const cmp = aVal.localeCompare(bVal as string);
+      return sortDir === "asc" ? cmp : -cmp;
+    }
+    return sortDir === "asc" ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
+  });
+
   // Shared inline input style
   const inp = "border border-gray-300 rounded px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-blue-500";
 
@@ -336,18 +395,18 @@ function HoldingsTable({
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-              <th className="px-4 py-2 text-left font-medium">Ticker</th>
-              <th className="px-4 py-2 text-left font-medium">Name</th>
-              <th className="px-4 py-2 text-right font-medium">Shares</th>
-              <th className="px-4 py-2 text-right font-medium">Current Value</th>
-              <th className="px-4 py-2 text-right font-medium">Day P&amp;L</th>
-              <th className="px-4 py-2 text-right font-medium">Cost Basis</th>
-              <th className="px-4 py-2 text-right font-medium">Total Gain / Loss</th>
+              <SortableHeader label="Ticker" field="ticker" sortField={sortField} sortDir={sortDir} onSort={handleSort} align="left" />
+              <SortableHeader label="Name" field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} align="left" />
+              <SortableHeader label="Shares" field="shares" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Current Value" field="value" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Day P&L" field="day_pl" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Cost Basis" field="cost" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Total Gain / Loss" field="gain" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
               {isManual && <th className="px-4 py-2 w-16" />}
             </tr>
           </thead>
           <tbody>
-            {holdings.map((h) => {
+            {sortedHoldings.map((h) => {
               // ── Edit mode row ──────────────────────────────────────────
               if (editingId === h.id) {
                 return (

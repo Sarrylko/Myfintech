@@ -17,6 +17,10 @@ router = APIRouter(prefix="/rules", tags=["rules"])
 
 def _match_rule(rule: CategorizationRule, txn: Transaction, account_type: str) -> bool:
     """Return True if the rule condition matches this transaction."""
+    # If the rule is scoped to a specific account type, enforce that first
+    if rule.account_type_filter and account_type.lower() != rule.account_type_filter.lower():
+        return False
+
     field = rule.match_field
     mtype = rule.match_type
     val = rule.match_value.lower()
@@ -88,6 +92,7 @@ async def create_rule(
         category_string=payload.category_string,
         negate_amount=payload.negate_amount,
         priority=payload.priority,
+        account_type_filter=payload.account_type_filter,
         is_active=True,
     )
     db.add(rule)

@@ -1352,6 +1352,7 @@ export interface Rule {
   priority: number;
   is_active: boolean;
   created_at: string;
+  account_type_filter: string | null;  // e.g. "depository", "credit"
 }
 
 export interface RuleCreate {
@@ -1363,6 +1364,7 @@ export interface RuleCreate {
   category_string?: string;
   negate_amount?: boolean;
   priority?: number;
+  account_type_filter?: string | null;
 }
 
 export async function listRules(): Promise<Rule[]> {
@@ -1847,6 +1849,96 @@ export async function copyBudgetsFromLastMonth(
     `/api/v1/budgets/copy-from-last-month?month=${month}&year=${year}`,
     { method: "POST" }
   );
+}
+
+// ─── Goals ────────────────────────────────────────────────────────────────────
+
+export type GoalType = "savings" | "debt_payoff" | "investment" | "custom";
+
+export interface GoalCreate {
+  name: string;
+  description?: string;
+  goal_type: GoalType;
+  target_amount: string;
+  current_amount?: string;
+  currency_code?: string;
+  start_date: string; // YYYY-MM-DD
+  target_date: string; // YYYY-MM-DD
+  linked_account_id?: string;
+  linked_budget_id?: string;
+}
+
+export interface GoalUpdate {
+  name?: string;
+  description?: string;
+  goal_type?: GoalType;
+  target_amount?: string;
+  current_amount?: string;
+  currency_code?: string;
+  start_date?: string;
+  target_date?: string;
+  linked_account_id?: string | null;
+  linked_budget_id?: string | null;
+  is_completed?: boolean;
+}
+
+export interface GoalLinkedAccount {
+  id: string;
+  name: string;
+  type: string;
+  current_balance: string | null;
+}
+
+export interface GoalLinkedBudget {
+  id: string;
+  amount: string;
+  budget_type: string;
+  month: number | null;
+  year: number;
+}
+
+export interface Goal {
+  id: string;
+  household_id: string;
+  name: string;
+  description: string | null;
+  goal_type: GoalType;
+  target_amount: string;
+  current_amount: string | null;
+  currency_code: string;
+  start_date: string;
+  target_date: string;
+  linked_account_id: string | null;
+  linked_budget_id: string | null;
+  is_completed: boolean;
+  linked_account: GoalLinkedAccount | null;
+  linked_budget: GoalLinkedBudget | null;
+  progress_amount: string;
+  progress_percent: string;
+  days_remaining: number;
+  is_on_track: boolean;
+}
+
+export async function listGoals(): Promise<Goal[]> {
+  return apiFetch<Goal[]>("/api/v1/goals/", {});
+}
+
+export async function createGoal(data: GoalCreate): Promise<Goal> {
+  return apiFetch<Goal>("/api/v1/goals/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateGoal(id: string, data: GoalUpdate): Promise<Goal> {
+  return apiFetch<Goal>(`/api/v1/goals/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteGoal(id: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/goals/${id}`, { method: "DELETE" });
 }
 
 // ─── Net Worth Snapshots ──────────────────────────────────────────────────────

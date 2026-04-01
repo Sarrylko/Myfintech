@@ -13,6 +13,7 @@ class RuleCreate(BaseModel):
     category_string: str | None = None   # "Food & Dining > Groceries"
     negate_amount: bool = False
     priority: int = 0
+    account_type_filter: str | None = None  # e.g. "depository", "credit" — limits rule to that account type
 
 
 class RuleUpdate(BaseModel):
@@ -25,6 +26,7 @@ class RuleUpdate(BaseModel):
     match_field: str | None = None
     match_type: str | None = None
     match_value: str | None = None
+    account_type_filter: str | None = None
 
 
 class RuleResponse(BaseModel):
@@ -39,5 +41,6 @@ class RuleResponse(BaseModel):
     priority: int
     is_active: bool
     created_at: datetime
+    account_type_filter: str | None
 
     model_config = {"from_attributes": True}

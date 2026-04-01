@@ -36,6 +36,7 @@ const TAXONOMY: { category: string; subcategories: string[] }[] = [
 const EMPTY_FORM = {
   name: "", match_field: "name", match_type: "contains", match_value: "",
   action: "categorize", catGroup: "", catItem: "", negate_amount: false, priority: 0,
+  account_type_filter: "",
 };
 
 function RuleForm({
@@ -98,6 +99,24 @@ function RuleForm({
             className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
         </div>
       </div>
+
+      {/* Account type filter — only show when match_field is not account_type */}
+      {value.match_field !== "account_type" && (
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Only apply to account type <span className="text-gray-400">(optional)</span>
+          </label>
+          <select value={value.account_type_filter} onChange={(e) => set({ account_type_filter: e.target.value })}
+            aria-label="Only apply to account type"
+            className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500">
+            <option value="">— Any account type —</option>
+            <option value="depository">Bank account (depository)</option>
+            <option value="credit">Credit card (credit)</option>
+            <option value="investment">Investment</option>
+            <option value="loan">Loan</option>
+          </select>
+        </div>
+      )}
 
       {/* Action */}
       <div>
@@ -222,6 +241,7 @@ export default function RulesPage() {
       category_string: catStr ?? undefined,
       negate_amount: f.action === "categorize" ? f.negate_amount : false,
       priority: f.priority,
+      account_type_filter: f.account_type_filter || null,
     };
   }
 
@@ -237,6 +257,7 @@ export default function RulesPage() {
       catItem: parts[1] ?? "",
       negate_amount: rule.negate_amount,
       priority: rule.priority,
+      account_type_filter: rule.account_type_filter ?? "",
     };
   }
 
@@ -408,6 +429,9 @@ export default function RulesPage() {
                       <p className="text-xs text-gray-500">
                         {rule.match_field === "account_type" ? "Account type" : rule.match_field === "merchant_name" ? "Merchant" : "Description"}{" "}
                         <strong>{rule.match_type}</strong> &ldquo;{rule.match_value}&rdquo;
+                        {rule.account_type_filter && (
+                          <span className="text-gray-400"> · {rule.account_type_filter} only</span>
+                        )}
                         {rule.action === "ignore" ? (
                           <span className="text-orange-600 font-medium"> → ignore</span>
                         ) : rule.category_string ? (

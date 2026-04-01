@@ -69,4 +69,5 @@ class AccountTransactionSummary(BaseModel):
 
 class CSVImportResult(BaseModel):
     imported: int
+    duplicates: int = 0
     errors: list[str]
