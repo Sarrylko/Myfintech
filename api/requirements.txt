@@ -44,3 +44,6 @@ snaptrade-python-sdk==11.0.161
 # ─── Inbox watcher + PDF extraction ──────────
 pdfplumber==0.11.4
 watchdog==4.0.1
+
+# ─── AI / Receipt parsing ─────────────────────
+anthropic>=0.40.0

@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     rag_api_url: str = ""   # e.g. http://fintech-rag-api:8000
     rag_api_key: str = ""   # must match RAG_API_KEY in docker-compose.ai.yml
 
+    # ─── Anthropic (Receipt parsing) ─────────────
+    anthropic_api_key: str = ""
+
+    # ─── Ollama (Local receipt parsing) ──────────
+    # Set to Ollama's URL reachable from API container, e.g. http://172.21.0.4:11434
+    ollama_receipt_url: str = ""
+
     # Look for .env in current dir (Docker) or parent dir (local dev from api/)
     model_config = {"env_file": [".env", "../.env"], "extra": "ignore"}
 

@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
-  Landmark,
   TrendingUp,
   Building2,
   KeyRound,
@@ -80,7 +79,6 @@ const navSections: NavSection[] = [
   },
 ];
 
-// Flat list for currentPage lookup (includes Settings for header title)
 const settingsNavItem = { href: "/settings", label: "Settings", icon: Settings2 };
 const allNavItems = [...navSections.flatMap((s) => s.items), settingsNavItem];
 
@@ -96,21 +94,17 @@ function NavLink({
   const active =
     pathname === item.href || pathname.startsWith(item.href + "/");
   const Icon = item.icon;
+
   return (
     <a
       href={item.href}
       onClick={onClick}
-      className={`group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-100 border-l-2 ${
-        active
-          ? "bg-white/10 text-white border-primary-400"
-          : "text-gray-400 hover:bg-white/5 hover:text-gray-200 border-transparent"
+      className={`nav-link group relative flex items-center gap-3 px-3 py-[7px] rounded-lg text-[13px] font-medium transition-all duration-100 ${
+        active ? "nav-active" : ""
       }`}
     >
-      <Icon
-        className={`w-4 h-4 shrink-0 transition-colors ${
-          active ? "text-primary-400" : "text-gray-500 group-hover:text-gray-300"
-        }`}
-      />
+      {active && <span className="nav-active-pill" />}
+      <Icon className="nav-icon w-4 h-4 shrink-0" />
       <span className="truncate">{item.label}</span>
     </a>
   );
@@ -129,14 +123,17 @@ function SidebarContents({
 }) {
   return (
     <>
-      <div className="p-5 flex-1 overflow-y-auto">
+      {/* Scrollable nav area */}
+      <div className="p-4 flex-1 overflow-y-auto sidebar-scroll">
         {/* Logo */}
-        <div className="flex items-center justify-between mb-6">
-          <a href="/" className="flex items-center gap-2.5">
-            <div className="w-7 h-7 bg-primary-600 rounded-lg flex items-center justify-center shrink-0">
-              <span className="text-white text-xs font-bold tracking-tight">M</span>
+        <div className="flex items-center justify-between mb-6 px-1">
+          <a href="/" className="flex items-center gap-2.5 group">
+            <div className="logo-gradient w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs">
+              <span className="text-white text-[11px] font-bold tracking-tight">
+                M
+              </span>
             </div>
-            <span className="text-[15px] font-bold text-white tracking-tight">
+            <span className="text-[14px] font-semibold tracking-tight text-sidebar-active-text">
               MyFintech
             </span>
           </a>
@@ -144,7 +141,7 @@ function SidebarContents({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded text-gray-500 hover:text-white hover:bg-white/10 transition"
+              className="sidebar-btn p-1.5 rounded-lg transition"
               aria-label="Close menu"
             >
               <X className="w-4 h-4" />
@@ -156,7 +153,7 @@ function SidebarContents({
         <nav>
           {navSections.map((section, i) => (
             <div key={section.label} className={i > 0 ? "mt-5" : ""}>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold text-gray-600 tracking-widest uppercase">
+              <p className="sidebar-section-label px-3 mb-1.5 text-[10px] font-semibold tracking-[0.1em] uppercase">
                 {section.label}
               </p>
               <div className="space-y-0.5">
@@ -175,22 +172,26 @@ function SidebarContents({
       </div>
 
       {/* Footer */}
-      <div className="px-5 pb-5 border-t border-white/5 pt-4 space-y-1">
+      <div className="px-4 pb-4 pt-3 space-y-0.5 sidebar-footer-divider">
         <NavLink item={settingsNavItem} pathname={pathname} onClick={onClose} />
+
         <button
           type="button"
           onClick={toggleTheme}
-          className="w-full text-left text-sm text-gray-400 hover:text-white transition px-3 py-2 rounded-lg hover:bg-white/5 flex items-center gap-3"
+          className="sidebar-btn w-full text-left text-[13px] px-3 py-[7px] rounded-lg flex items-center gap-3 transition-all duration-100"
           aria-label="Toggle theme"
         >
           {theme === "dark" ? (
-            <Sun className="w-4 h-4 shrink-0 text-gray-500" />
+            <Sun className="w-4 h-4 shrink-0" />
           ) : (
-            <Moon className="w-4 h-4 shrink-0 text-gray-500" />
+            <Moon className="w-4 h-4 shrink-0" />
           )}
           <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
         </button>
-        <p className="px-3 text-[11px] text-gray-700">v{APP_VERSION}</p>
+
+        <p className="sidebar-section-label px-3 text-[11px] pt-1">
+          v{APP_VERSION}
+        </p>
       </div>
     </>
   );
@@ -222,16 +223,16 @@ export default function AppLayout({
   return (
     <div className="min-h-screen flex">
       {/* ── Mobile top bar ─────────────────────────────────────── */}
-      <header className="md:hidden fixed top-0 left-0 right-0 z-40 h-14 bg-gray-900 text-white flex items-center px-4 gap-3">
+      <header className="md:hidden fixed top-0 left-0 right-0 z-40 h-14 bg-sidebar sidebar-surface flex items-center px-4 gap-3">
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
-          className="p-1.5 rounded hover:bg-white/10 transition shrink-0"
+          className="sidebar-btn p-1.5 rounded-lg transition shrink-0"
           aria-label="Open menu"
         >
           <Menu className="w-5 h-5" />
         </button>
-        <span className="flex-1 text-sm font-semibold truncate">
+        <span className="flex-1 text-sm font-semibold truncate text-sidebar-active-text">
           {currentPage}
         </span>
         <UserMenu initialProfile={profile} onProfileUpdate={setProfile} />
@@ -250,7 +251,7 @@ export default function AppLayout({
 
       {/* ── Mobile slide-out drawer ─────────────────────────────── */}
       <aside
-        className={`md:hidden fixed top-0 left-0 h-full w-64 bg-gray-900 text-white z-50 flex flex-col transform transition-transform duration-300 ease-out ${
+        className={`md:hidden fixed top-0 left-0 h-full w-64 bg-sidebar sidebar-surface z-50 flex flex-col transform transition-transform duration-300 ease-out ${
           drawerOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -263,7 +264,7 @@ export default function AppLayout({
       </aside>
 
       {/* ── Desktop sidebar ─────────────────────────────────────── */}
-      <aside className="w-60 bg-gray-900 text-white flex-col hidden md:flex fixed top-0 left-0 h-screen z-30">
+      <aside className="w-60 bg-sidebar sidebar-surface sidebar-border-r flex-col hidden md:flex fixed top-0 left-0 h-screen z-30">
         <SidebarContents
           pathname={pathname}
           theme={theme}
@@ -272,10 +273,10 @@ export default function AppLayout({
       </aside>
 
       {/* ── Main content area ────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col min-h-screen bg-slate-50 dark:bg-gray-950 md:ml-60">
+      <div className="flex-1 flex flex-col min-h-screen bg-page md:ml-60">
         {/* Desktop top header */}
-        <header className="hidden md:flex h-14 items-center justify-between px-6 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0 sticky top-0 z-20">
-          <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+        <header className="header-surface hidden md:flex h-14 items-center justify-between px-6 shrink-0 sticky top-0 z-20">
+          <span className="text-sm font-semibold text-content-primary">
             {currentPage}
           </span>
           <UserMenu initialProfile={profile} onProfileUpdate={setProfile} />

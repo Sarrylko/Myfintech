@@ -295,6 +295,7 @@ export interface Transaction {
   is_business: boolean;
   has_splits: boolean;
   splits: TransactionSplit[];
+  receipt?: { id: string; status: string } | null;
   notes: string | null;
   created_at: string;
 }
@@ -413,6 +414,71 @@ export async function setTransactionSplits(
 export async function clearTransactionSplits(txnId: string): Promise<void> {
   await apiFetch(`/api/v1/accounts/transactions/${txnId}/splits`, {
     method: "DELETE",
+  });
+}
+
+// ─── Receipts ─────────────────────────────────────────────────────────────────
+
+export interface ReceiptLineItem {
+  id: string;
+  description: string;
+  amount: string;
+  ai_category: string | null;
+  notes: string | null;
+  sort_order: number;
+  is_confirmed: boolean;
+}
+
+export interface Receipt {
+  id: string;
+  transaction_id: string;
+  filename: string;
+  file_size: number;
+  content_type: string;
+  status: "pending" | "parsing" | "parsed" | "failed";
+  parse_error: string | null;
+  parsed_at: string | null;
+  uploaded_at: string;
+  line_items: ReceiptLineItem[];
+}
+
+export async function uploadReceipt(transactionId: string, file: File, provider: "local" | "claude" = "local"): Promise<Receipt> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("provider", provider);
+  return apiFetch(`/api/v1/transactions/${transactionId}/receipt`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export async function getReceipt(transactionId: string): Promise<Receipt> {
+  return apiFetch(`/api/v1/transactions/${transactionId}/receipt`);
+}
+
+export async function deleteReceipt(transactionId: string): Promise<void> {
+  await apiFetch(`/api/v1/transactions/${transactionId}/receipt`, {
+    method: "DELETE",
+  });
+}
+
+export async function confirmReceiptSplits(
+  transactionId: string,
+  lineItems: { description: string; amount: number; ai_category?: string; notes?: string; sort_order?: number }[]
+): Promise<Receipt> {
+  return apiFetch(`/api/v1/transactions/${transactionId}/receipt/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(lineItems),
+  });
+}
+
+export async function reparseReceipt(transactionId: string, provider: "local" | "claude" = "local"): Promise<{ status: string }> {
+  const form = new FormData();
+  form.append("provider", provider);
+  return apiFetch(`/api/v1/transactions/${transactionId}/receipt/reparse`, {
+    method: "POST",
+    body: form,
   });
 }
 

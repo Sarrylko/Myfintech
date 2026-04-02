@@ -14,6 +14,8 @@ x-common-env: &common-env
   DOMAIN: ${DOMAIN}
   RAG_API_URL: ${RAG_API_URL:-http://fintech-rag-api:8000}
   RAG_API_KEY: ${RAG_API_KEY:-}
+  OLLAMA_RECEIPT_URL: ${OLLAMA_RECEIPT_URL:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
 services:
   # ─── Reverse Proxy ────────────────────────────
@@ -100,6 +102,7 @@ services:
       DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
     volumes:
       - ./api/app:/app/app:delegated
+      - ${UPLOADS_HOST_PATH:-C:/MyFintechUploads}:/app/uploads
     networks:
       - private
       - public

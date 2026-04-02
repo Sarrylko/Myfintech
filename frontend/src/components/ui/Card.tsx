@@ -20,10 +20,10 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
       <div
         ref={ref}
         className={`
-          bg-white dark:bg-slate-800
-          border border-gray-100 dark:border-slate-700
-          rounded-xl shadow-sm
-          ${hover ? "hover:shadow-md hover:border-gray-200 dark:hover:border-slate-600 transition-all" : ""}
+          bg-card
+          border border-border-subtle
+          rounded-xl shadow-card
+          ${hover ? "hover:shadow-md hover:border-border transition-all duration-150 cursor-pointer" : ""}
           ${paddingClasses[padding]}
           ${className}
         `}
@@ -37,7 +37,6 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
 
 Card.displayName = "Card";
 
-// Card sub-components for consistent internal layout
 export function CardHeader({
   children,
   className = "",
@@ -63,11 +62,11 @@ export function CardTitle({
 }) {
   return (
     <div className={className}>
-      <h3 className="font-semibold text-gray-900 dark:text-white text-sm">
+      <h3 className="font-semibold text-content-primary text-sm">
         {children}
       </h3>
       {subtitle && (
-        <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+        <p className="text-xs text-content-muted mt-0.5">
           {subtitle}
         </p>
       )}

@@ -71,4 +71,5 @@ celery_app.conf.include = [
     "app.services.property",
     "app.services.notifications",
     "app.services.financial_picture",
+    "app.services.receipt_tasks",
 ]

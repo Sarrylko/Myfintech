@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    Boolean, DateTime, ForeignKey, Numeric, String, Text, text,
+    Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -131,6 +131,9 @@ class Transaction(Base):
     splits: Mapped[list["TransactionSplit"]] = relationship(
         back_populates="transaction", cascade="all, delete-orphan", lazy="selectin"
     )
+    receipt: Mapped["TransactionReceipt | None"] = relationship(
+        back_populates="transaction", cascade="all, delete-orphan", lazy="selectin", uselist=False
+    )
 
 
 class Category(Base):
@@ -178,3 +181,66 @@ class TransactionSplit(Base):
     )
 
     transaction: Mapped["Transaction"] = relationship(back_populates="splits")
+
+
+class TransactionReceipt(Base):
+    """A receipt image or PDF attached to a transaction."""
+    __tablename__ = "transaction_receipts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    transaction_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("transactions.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), index=True
+    )
+    filename: Mapped[str] = mapped_column(String(500))
+    stored_filename: Mapped[str] = mapped_column(String(500))
+    file_size: Mapped[int] = mapped_column(Integer)
+    content_type: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|parsing|parsed|failed
+    parse_error: Mapped[str | None] = mapped_column(Text)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    parsed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    transaction: Mapped["Transaction"] = relationship(back_populates="receipt")
+    line_items: Mapped[list["ReceiptLineItem"]] = relationship(
+        back_populates="receipt", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class ReceiptLineItem(Base):
+    """A single line item extracted from a receipt by AI."""
+    __tablename__ = "receipt_line_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    receipt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("transaction_receipts.id", ondelete="CASCADE"), index=True
+    )
+    transaction_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("transactions.id", ondelete="CASCADE"), index=True
+    )
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), index=True
+    )
+    description: Mapped[str] = mapped_column(String(500))
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    ai_category: Mapped[str | None] = mapped_column(String(255))
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("categories.id", ondelete="SET NULL"), nullable=True
+    )
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    receipt: Mapped["TransactionReceipt"] = relationship(back_populates="line_items")

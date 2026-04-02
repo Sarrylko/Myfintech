@@ -73,6 +73,7 @@ class TransactionResponse(BaseModel):
     is_ignored: bool
     has_splits: bool = False
     splits: list[TransactionSplitResponse] = []
+    receipt: dict | None = None
     notes: str | None
     created_at: datetime
     is_transfer: bool = False          # True if this transaction is a transfer (CC payment, internal move)
@@ -122,6 +123,16 @@ class TransactionResponse(BaseModel):
                     getattr(acc, "account_scope", "personal") == "business"
                 )
             )
+
+            # receipt summary (id + status only, for the action button indicator)
+            receipt_obj = getattr(data, "receipt", None)
+            if receipt_obj is not None:
+                data.__dict__["receipt"] = {
+                    "id": str(receipt_obj.id),
+                    "status": receipt_obj.status,
+                }
+            else:
+                data.__dict__["receipt"] = None
         return data
 
 

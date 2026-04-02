@@ -2,81 +2,321 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ═══════════════════════════════════════════════════════════════
+   DESIGN TOKENS — Light Theme
+   Professional Finance Authority: #003366 · #007A33 · #A0B3C4 · #F2F2F2 · #333333
+   ═══════════════════════════════════════════════════════════════ */
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --card: #ffffff;
-  --card-border: #e2e8f0;
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --border: #e2e8f0;
-  --accent: #16a34a;
-  --destructive: #ef4444;
-  --ring: #16a34a;
+  /* ── Page surfaces ── */
+  --bg-page:     #F2F2F2;
+  --bg-card:     #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-subtle:   #f8f9fb;
+  --bg-muted:    #edf1f5;
+
+  /* ── Borders ── */
+  --border-subtle: #e4e8ed;
+  --border:        #c8d2db;
+  --border-strong: #a0b3c4;
+
+  /* ── Typography ── */
+  --text-primary:   #333333;
+  --text-secondary: #4a5568;
+  --text-muted:     #7a8fa6;
+  --text-disabled:  #a0b3c4;
+
+  /* ── Sidebar — deep navy #003366 ── */
+  --sidebar-bg:               #003366;
+  --sidebar-border:           #00285a;
+  --sidebar-text:             #a0b3c4;
+  --sidebar-text-hover:       #f2f2f2;
+  --sidebar-active-bg:        rgba(0, 122, 51, 0.20);
+  --sidebar-active-text:      #ffffff;
+  --sidebar-active-indicator: #007A33;
+  --sidebar-section-label:    #4d7aaa;
+  --sidebar-footer-border:    rgba(255, 255, 255, 0.08);
+
+  /* ── Brand ── */
+  --accent:        #007A33;
+  --accent-light:  #009940;
+  --accent-subtle: #eaf5ee;
+
+  /* ── Semantic status ── */
+  --destructive: #dc2626;
+  --ring:        #003366;
+
+  /* ── Shadows ── */
+  --shadow-xs: 0 1px 2px rgba(0, 51, 102, 0.06);
+  --shadow-sm: 0 1px 3px rgba(0, 51, 102, 0.08), 0 1px 2px rgba(0, 51, 102, 0.05);
+  --shadow-md: 0 4px 8px rgba(0, 51, 102, 0.09), 0 2px 4px rgba(0, 51, 102, 0.06);
+  --shadow-lg: 0 8px 24px rgba(0, 51, 102, 0.11), 0 2px 8px rgba(0, 51, 102, 0.07);
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   DESIGN TOKENS — Dark Theme  (deep navy elevation stack)
+   ═══════════════════════════════════════════════════════════════ */
 .dark {
-  --background: #0f172a;
-  --foreground: #f1f5f9;
-  --card: #1e293b;
-  --card-border: #334155;
-  --muted: #1e293b;
-  --muted-foreground: #94a3b8;
-  --border: #334155;
-  --accent: #22c55e;
+  /* ── Page surfaces ── */
+  --bg-page:     #0a0f1a;
+  --bg-card:     #0f1929;
+  --bg-elevated: #162238;
+  --bg-subtle:   #0c1422;
+  --bg-muted:    #182035;
+
+  /* ── Borders ── */
+  --border-subtle: #182035;
+  --border:        #1e2e48;
+  --border-strong: #2a4266;
+
+  /* ── Typography ── */
+  --text-primary:   #f2f2f2;
+  --text-secondary: #a0b3c4;
+  --text-muted:     #5580aa;
+  --text-disabled:  #2e4a6a;
+
+  /* ── Sidebar — deeper navy ── */
+  --sidebar-bg:               #001f40;
+  --sidebar-border:           #002952;
+  --sidebar-text:             #a0b3c4;
+  --sidebar-text-hover:       #f2f2f2;
+  --sidebar-active-bg:        rgba(0, 122, 51, 0.25);
+  --sidebar-active-text:      #ffffff;
+  --sidebar-active-indicator: #00b84d;
+  --sidebar-section-label:    #3d6080;
+  --sidebar-footer-border:    rgba(255, 255, 255, 0.07);
+
+  /* ── Brand ── */
+  --accent:        #009940;
+  --accent-light:  #00b84d;
+  --accent-subtle: rgba(0, 122, 51, 0.15);
+
+  /* ── Semantic status ── */
   --destructive: #f87171;
-  --ring: #22c55e;
+  --ring:        #007A33;
+
+  /* ── Shadows ── */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.50);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.60), 0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.50), 0 2px 4px rgba(0, 0, 0, 0.40);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.60), 0 2px 8px rgba(0, 0, 0, 0.40);
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   BASE STYLES
+   ═══════════════════════════════════════════════════════════════ */
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--bg-page);
+  color: var(--text-primary);
   font-family: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Smooth theme transitions */
+/* Smooth theme transitions — background and border only to avoid jank */
 *, *::before, *::after {
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-/* Exclude transitions on interactive elements to keep them snappy */
+/* Interactive elements: snappy, include color + shadow */
 button, a, input, select, textarea {
   transition: background-color 0.1s ease, border-color 0.1s ease,
               color 0.1s ease, box-shadow 0.1s ease, opacity 0.1s ease;
 }
 
-/* ── Global dark-mode overrides for hardcoded Tailwind utility classes ── */
-/* Uses higher specificity (.dark .class) so no !important needed.        */
+/* Thin scrollbars (sidebar) */
+.sidebar-scroll::-webkit-scrollbar { width: 4px; }
+.sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 2px; }
+.sidebar-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
 
-.dark .bg-white          { background-color: #1e293b; }
+/* ═══════════════════════════════════════════════════════════════
+   DARK MODE — Tailwind utility overrides
+   Maps hardcoded Tailwind color utilities to CSS design tokens
+   so all 16 page files get proper dark theme without editing them.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Background overrides ── */
+.dark .bg-white          { background-color: var(--bg-card); }
+
 .dark .bg-slate-50,
-.dark .bg-gray-50        { background-color: #0f172a; }
+.dark .bg-gray-50        { background-color: var(--bg-subtle); }
+
 .dark .bg-slate-100,
-.dark .bg-gray-100       { background-color: #1e293b; }
+.dark .bg-gray-100       { background-color: var(--bg-muted); }
+
 .dark .bg-slate-200,
-.dark .bg-gray-200       { background-color: #334155; }
+.dark .bg-gray-200       { background-color: #243550; }
 
+.dark .bg-slate-700,
+.dark .bg-gray-700       { background-color: #1a2c44; }
+
+.dark .bg-slate-800,
+.dark .bg-gray-800       { background-color: var(--bg-card); }
+
+.dark .bg-slate-900,
+.dark .bg-gray-900       { background-color: #0d1520; }
+
+.dark .bg-slate-950,
+.dark .bg-gray-950       { background-color: var(--bg-page); }
+
+/* ── Text overrides ── */
 .dark .text-gray-900,
-.dark .text-slate-900    { color: #f1f5f9; }
+.dark .text-slate-900    { color: var(--text-primary); }
+
 .dark .text-gray-800,
-.dark .text-slate-800    { color: #e2e8f0; }
+.dark .text-slate-800    { color: #d0dff0; }
+
 .dark .text-gray-700,
-.dark .text-slate-700    { color: #cbd5e1; }
+.dark .text-slate-700    { color: #a8bed8; }
+
 .dark .text-gray-600,
-.dark .text-slate-600    { color: #94a3b8; }
+.dark .text-slate-600    { color: var(--text-secondary); }
+
 .dark .text-gray-500,
-.dark .text-slate-500    { color: #64748b; }
+.dark .text-slate-500    { color: var(--text-muted); }
 
+.dark .text-gray-400,
+.dark .text-slate-400    { color: #3d5570; }
+
+/* ── Border overrides ── */
 .dark .border-gray-100,
-.dark .border-slate-100  { border-color: #1e293b; }
+.dark .border-slate-100  { border-color: var(--border-subtle); }
+
 .dark .border-gray-200,
-.dark .border-slate-200  { border-color: #334155; }
+.dark .border-slate-200  { border-color: var(--border); }
+
 .dark .border-gray-300,
-.dark .border-slate-300  { border-color: #475569; }
+.dark .border-slate-300  { border-color: var(--border-strong); }
 
-.dark .divide-gray-200 > * + * { border-color: #334155; }
+.dark .border-gray-600,
+.dark .border-slate-600  { border-color: var(--border-strong); }
 
-.dark .shadow-sm  { box-shadow: 0 1px 2px 0 rgba(0,0,0,.4); }
-.dark .shadow     { box-shadow: 0 1px 3px 0 rgba(0,0,0,.5), 0 1px 2px -1px rgba(0,0,0,.5); }
+.dark .border-gray-700,
+.dark .border-slate-700  { border-color: var(--border); }
+
+.dark .border-gray-800,
+.dark .border-slate-800  { border-color: var(--border-subtle); }
+
+/* ── Divide overrides ── */
+.dark .divide-gray-100 > * + * { border-color: var(--border-subtle); }
+.dark .divide-gray-200 > * + * { border-color: var(--border); }
+.dark .divide-gray-300 > * + * { border-color: var(--border-strong); }
+
+/* ── Shadow overrides ── */
+.dark .shadow-xs { box-shadow: var(--shadow-xs); }
+.dark .shadow-sm { box-shadow: var(--shadow-sm); }
+.dark .shadow    { box-shadow: var(--shadow-md); }
+.dark .shadow-md { box-shadow: var(--shadow-md); }
+.dark .shadow-lg { box-shadow: var(--shadow-lg); }
+
+/* ── Input / Form element overrides ──
+   Critical: many pages have inputs with bg-white/border-gray-200 and zero dark: overrides.
+   These rules fix all of them globally without touching page files. ── */
+.dark input:not([class*="bg-"]),
+.dark select:not([class*="bg-"]),
+.dark textarea:not([class*="bg-"]) {
+  background-color: var(--bg-subtle);
+  border-color: var(--border);
+  color: var(--text-primary);
+  color-scheme: dark;
+}
+
+.dark input.bg-white,
+.dark select.bg-white,
+.dark textarea.bg-white {
+  background-color: var(--bg-subtle) !important;
+  color: var(--text-primary);
+}
+
+/* Placeholder text in dark mode */
+.dark ::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+/* Focus rings in dark mode */
+.dark .focus\:ring-primary-500:focus,
+.dark .focus-visible\:ring-primary-500:focus-visible {
+  --tw-ring-color: #007A33;
+}
+
+/* ── Hover state overrides ── */
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-slate-50:hover  { background-color: var(--bg-subtle); }
+
+.dark .hover\:bg-gray-100:hover,
+.dark .hover\:bg-slate-100:hover { background-color: var(--bg-muted); }
+
+.dark .hover\:bg-gray-700:hover,
+.dark .hover\:bg-slate-700:hover { background-color: #1a2c44; }
+
+/* ── Gradient overrides (dashboard hero cards etc.) ── */
+.dark .from-indigo-50  { --tw-gradient-from: rgba(99, 102, 241, 0.08); }
+.dark .from-emerald-50 { --tw-gradient-from: rgba(16, 185, 129, 0.08); }
+.dark .from-blue-50    { --tw-gradient-from: rgba(59, 130, 246, 0.08); }
+.dark .from-amber-50   { --tw-gradient-from: rgba(245, 158, 11, 0.08); }
+.dark .from-rose-50    { --tw-gradient-from: rgba(244, 63, 94, 0.08); }
+.dark .from-violet-50  { --tw-gradient-from: rgba(139, 92, 246, 0.08); }
+.dark .to-white        { --tw-gradient-to: var(--bg-card); }
+.dark .to-slate-800,
+.dark .to-gray-800     { --tw-gradient-to: var(--bg-card); }
+
+/* ═══════════════════════════════════════════════════════════════
+   SIDEBAR UTILITY CLASSES
+   Named classes so layout.tsx uses className only (no inline style)
+   ═══════════════════════════════════════════════════════════════ */
+.sidebar-surface   { background-color: #003366 !important; }
+.sidebar-border-r  { border-right: 1px solid #00285a; }
+.sidebar-footer-divider { border-top: 1px solid rgba(255, 255, 255, 0.10); }
+.sidebar-section-label  { color: #4d7aaa; }
+.logo-gradient     { background: linear-gradient(135deg, #002952 0%, #004a99 100%); }
+.header-surface    { background-color: var(--bg-card); border-bottom: 1px solid var(--border-subtle); box-shadow: var(--shadow-xs); }
+.text-primary-var  { color: var(--text-primary); }
+
+/* NavLink base + states */
+.nav-link {
+  color: #a0b3c4;
+}
+.nav-link:hover {
+  background-color: rgba(255, 255, 255, 0.10);
+  color: #ffffff;
+}
+.nav-link.nav-active {
+  background-color: rgba(0, 122, 51, 0.22);
+  color: #ffffff;
+}
+.nav-link.nav-active .nav-icon {
+  color: #00cc55;
+}
+.nav-link .nav-icon {
+  color: #a0b3c4;
+}
+.nav-link:hover .nav-icon {
+  color: #ffffff;
+}
+
+/* Active left-pill indicator — finance green */
+.nav-active-pill {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 20px;
+  border-radius: 0 2px 2px 0;
+  background-color: #007A33;
+}
+
+/* Theme toggle button */
+.sidebar-btn {
+  color: #a0b3c4;
+}
+.sidebar-btn:hover {
+  background-color: rgba(255, 255, 255, 0.10);
+  color: #ffffff;
+}
+
+/* ── Ring offset in dark mode ── */
+.dark .focus-visible\:ring-offset-2:focus-visible {
+  --tw-ring-offset-color: var(--bg-card);
+}

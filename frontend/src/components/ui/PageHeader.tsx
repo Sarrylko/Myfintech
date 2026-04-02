@@ -14,17 +14,13 @@ export function PageHeader({
   className = "",
 }: PageHeaderProps) {
   return (
-    <div
-      className={`flex items-start justify-between gap-4 mb-6 ${className}`}
-    >
+    <div className={`flex items-start justify-between gap-4 mb-6 ${className}`}>
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">
+        <h1 className="text-2xl font-bold text-content-primary tracking-tight">
           {title}
         </h1>
         {subtitle && (
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-            {subtitle}
-          </p>
+          <p className="text-sm text-content-muted mt-0.5">{subtitle}</p>
         )}
       </div>
       {action && (

@@ -26,19 +26,16 @@ export default function UserMenu({ initialProfile, onProfileUpdate }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
-  // Sync when layout passes a freshly-fetched profile
   useEffect(() => {
     if (initialProfile) setProfile(initialProfile);
   }, [initialProfile]);
 
-  // Fetch profile ourselves if not provided
   useEffect(() => {
     if (!initialProfile) {
       getProfile().then(setProfile).catch(() => {});
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Click-away to close dropdown
   useEffect(() => {
     if (!open) return;
     function handleClick(e: MouseEvent) {
@@ -72,23 +69,24 @@ export default function UserMenu({ initialProfile, onProfileUpdate }: Props) {
     <div ref={menuRef} className="relative">
       {/* Avatar button */}
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-8 h-8 rounded-full bg-primary-600 text-white flex items-center justify-center text-xs font-bold hover:bg-primary-700 transition focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 select-none"
+        className="w-8 h-8 rounded-full bg-primary-700 text-white flex items-center justify-center text-xs font-bold hover:bg-primary-800 transition focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 select-none"
         aria-label="User menu"
-        aria-expanded={open}
+        aria-expanded={open ? "true" : "false"}
       >
         {initials}
       </button>
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute right-0 top-10 w-64 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 z-50 py-1 overflow-hidden">
+        <div className="absolute right-0 top-10 w-64 bg-elevated border border-border rounded-xl shadow-lg z-50 py-1 overflow-hidden">
           {/* User header */}
-          <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
-            <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+          <div className="px-4 py-3 border-b border-border-subtle">
+            <p className="text-sm font-semibold text-content-primary truncate">
               {profile?.full_name ?? "Loading…"}
             </p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
+            <p className="text-xs text-content-muted truncate mt-0.5">
               {profile?.email}
             </p>
             {profile?.role && (
@@ -106,20 +104,22 @@ export default function UserMenu({ initialProfile, onProfileUpdate }: Props) {
 
           {/* Settings */}
           <button
+            type="button"
             onClick={() => openSettings("profile")}
-            className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition flex items-center gap-2"
+            className="w-full text-left px-4 py-2.5 text-sm text-content-secondary hover:bg-subtle transition flex items-center gap-2"
           >
             <span className="text-base">⚙</span>
             Settings
           </button>
 
           {/* Divider */}
-          <div className="border-t border-gray-100 dark:border-gray-700 my-1" />
+          <div className="border-t border-border-subtle my-1" />
 
           {/* Sign out */}
           <button
+            type="button"
             onClick={handleSignOut}
-            className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 transition flex items-center gap-2"
+            className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-subtle transition flex items-center gap-2"
           >
             <span className="text-base">↩</span>
             Sign Out
