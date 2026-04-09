@@ -66,6 +66,8 @@ function buildSpendTimeline(transactions: Transaction[]) {
   for (const t of transactions) {
     const amt = parseFloat(t.amount);
     if (amt <= 0 || t.is_ignored || t.pending) continue;
+    const cat = (t.plaid_category ?? "").toLowerCase();
+    if (cat.startsWith("transfer")) continue;
     const d = new Date(t.date);
     if (d.getFullYear() === thisYear && d.getMonth() === thisMonth)
       thisMap[d.getDate()] = (thisMap[d.getDate()] || 0) + amt;
@@ -175,14 +177,14 @@ function MonthlyBudgetSection({ budgets }: { budgets: BudgetWithActual[] }) {
     );
   }
 
-  const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.amount), 0);
-  const totalSpent = budgets.reduce((s, b) => s + parseFloat(b.actual_spent), 0);
-  const overCount = budgets.filter((b) => parseFloat(b.remaining) < 0).length;
+  const expenseBudgets = budgets.filter((b) => !b.category.is_income);
+  const totalBudgeted = expenseBudgets.reduce((s, b) => s + parseFloat(b.amount), 0);
+  const totalSpent = expenseBudgets.reduce((s, b) => s + parseFloat(b.actual_spent), 0);
+  const overCount = expenseBudgets.filter((b) => parseFloat(b.remaining) < 0).length;
   const overallPct = totalBudgeted > 0 ? (totalSpent / totalBudgeted) * 100 : 0;
 
   // Top 5 by spending percentage
-  const top5 = [...budgets]
-    .filter((b) => !b.category.is_income)
+  const top5 = [...expenseBudgets]
     .sort((a, b) => parseFloat(b.percent_used) - parseFloat(a.percent_used))
     .slice(0, 5);
 
@@ -1026,11 +1028,6 @@ export default function Dashboard() {
   const mortgageDebt = loans.reduce((s, l) => s + parseFloat(l.current_balance ?? "0"), 0);
   const totalLiabilities = creditCardDebt + mortgageDebt;
 
-  // Keep existing liabilities var for net worth (account-based, avoids double-counting linked loans)
-  const accountLiabilities = visibleAccounts
-    .filter((a) => ["credit", "loan"].includes(a.type))
-    .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
-
   // Group properties by currency and convert to USD using live FX rates
   const realEstateByCurrency: Record<string, number> = {};
   let realEstateUSD = 0;
@@ -1049,7 +1046,7 @@ export default function Dashboard() {
       }))
     : undefined;
 
-  const netWorth = cash + investments + realEstateUSD - accountLiabilities;
+  const netWorth = cash + investments + realEstateUSD - totalLiabilities;
 
   // ── Budget stats ───────────────────────────────────────────────────────────
   const monthName = today.toLocaleString(locale, { month: "long" });

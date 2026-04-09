@@ -50,7 +50,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=(
-        ["http://localhost:3000", "http://localhost", f"http://{settings.domain}"]
+        ["http://localhost:3000", f"http://{settings.domain}"]
         if settings.environment == "development"
         else [f"https://{settings.domain}"]
     ),

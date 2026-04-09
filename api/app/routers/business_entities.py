@@ -234,6 +234,15 @@ async def add_ownership(
         )
     if payload.owner_entity_id:
         await _get_entity_or_404(payload.owner_entity_id, user.household_id, db)
+    if payload.owner_user_id:
+        owner_result = await db.execute(
+            select(User).where(
+                User.id == payload.owner_user_id,
+                User.household_id == user.household_id,
+            )
+        )
+        if not owner_result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Invalid owner user")
 
     rec = EntityOwnership(
         entity_id=entity_id,

@@ -101,6 +101,15 @@ async def upload_financial_document(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if owner_user_id:
+        owner_result = await db.execute(
+            select(User).where(
+                User.id == owner_user_id,
+                User.household_id == user.household_id,
+            )
+        )
+        if not owner_result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Invalid owner user")
     original_name = file.filename or "upload"
     mime = _validate_upload(original_name)
 
@@ -163,9 +172,10 @@ async def download_financial_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    file_path = (
-        Path(settings.upload_dir) / "financial" / str(user.household_id) / doc.stored_filename
-    )
+    base_dir = (Path(settings.upload_dir) / "financial" / str(user.household_id)).resolve()
+    file_path = (base_dir / doc.stored_filename).resolve()
+    if not str(file_path).startswith(str(base_dir) + "/") and file_path != base_dir:
+        raise HTTPException(status_code=403, detail="Access denied")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 

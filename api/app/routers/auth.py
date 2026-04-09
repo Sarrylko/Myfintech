@@ -84,7 +84,7 @@ async def register(request: Request, payload: UserCreate, db: AsyncSession = Dep
 
 
 @router.post("/login", response_model=UserResponse)
-@limiter.limit("10/minute;30/hour")
+@limiter.limit("5/minute;15/hour")
 async def login(
     request: Request,
     payload: UserLogin,
@@ -121,6 +121,7 @@ async def login(
 
 
 @router.post("/refresh")
+@limiter.limit("30/hour")
 async def refresh_token(
     request: Request,
     response: Response,
@@ -168,6 +169,7 @@ async def refresh_token(
 
 
 @router.post("/logout", status_code=204)
+@limiter.limit("60/hour")
 async def logout(request: Request, response: Response):
     refresh = request.cookies.get("refresh_token")
     if refresh:

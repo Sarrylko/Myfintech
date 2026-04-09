@@ -68,6 +68,15 @@ app.get("/me", (_req, res) => {
 // ── Send message ──────────────────────────────────────────────────────────────
 
 app.post("/send", async (req, res) => {
+  // Require bearer token auth when WHATSAPP_BOT_SECRET is configured
+  const botSecret = process.env.WHATSAPP_BOT_SECRET;
+  if (botSecret) {
+    const authHeader = req.headers.authorization || "";
+    if (authHeader !== `Bearer ${botSecret}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+  }
+
   const { to, message } = req.body;
 
   if (!to || !message) {
@@ -79,6 +88,9 @@ app.post("/send", async (req, res) => {
 
   try {
     const phone = to.replace(/\D/g, "");
+    if (phone.length < 10 || phone.length > 15) {
+      return res.status(400).json({ error: "Invalid phone number format" });
+    }
 
     // Try resolving via getNumberId first (handles LID accounts)
     let chatId;

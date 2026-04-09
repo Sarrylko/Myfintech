@@ -175,7 +175,10 @@ async def download_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    file_path = Path(settings.upload_dir) / "business" / str(entity_id) / doc.stored_filename
+    base_dir = (Path(settings.upload_dir) / "business" / str(entity_id)).resolve()
+    file_path = (base_dir / doc.stored_filename).resolve()
+    if not str(file_path).startswith(str(base_dir) + "/") and file_path != base_dir:
+        raise HTTPException(status_code=403, detail="Access denied")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 

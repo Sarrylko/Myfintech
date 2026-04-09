@@ -16,7 +16,7 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     container_name: fintech-qdrant
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "6333:6333"
     volumes:
@@ -34,7 +34,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: fintech-ollama
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "11434:11434"
     volumes:
@@ -77,11 +77,11 @@ services:
     build:
       context: ./ai/ingest-worker
     container_name: fintech-ingest-worker
-    restart: unless-stopped
+    restart: "no"
     environment:
       OLLAMA_URL: http://ollama:11434
       QDRANT_URL: http://qdrant:6333
-      DATABASE_URL: "postgresql://MyFintechReadonly:Apple%40123@postgres:5432/myfintech"
+      DATABASE_URL: ${RAG_DATABASE_URL:-postgresql://MyFintechReadonly:changeme@postgres:5432/myfintech}
       FINANCE_DOC_ROOT: /data/finance
       EMBED_MODEL: ${RAG_EMBED_MODEL:-nomic-embed-text}
       QDRANT_COLLECTION_DB: ${RAG_COLLECTION_DB:-fintech_rag_db}
@@ -116,12 +116,12 @@ services:
     build:
       context: ./ai/rag-api
     container_name: fintech-rag-api
-    restart: unless-stopped
+    restart: "no"
     environment:
       OLLAMA_URL: http://ollama:11434
       QDRANT_URL: http://qdrant:6333
       # Direct container-to-container via myfintech_private network
-      DATABASE_URL: "postgresql://MyFintechReadonly:Apple%40123@postgres:5432/myfintech"
+      DATABASE_URL: ${RAG_DATABASE_URL:-postgresql://MyFintechReadonly:changeme@postgres:5432/myfintech}
       FINANCE_DOC_ROOT: /data/finance
       LLM_MODEL: ${RAG_LLM_MODEL:-qwen2.5:7b-instruct}
       EMBED_MODEL: ${RAG_EMBED_MODEL:-nomic-embed-text}
@@ -151,7 +151,7 @@ services:
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: fintech-openwebui
-    restart: unless-stopped
+    restart: "no"
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       # Wire OpenWebUI to the RAG API so financial context is always applied

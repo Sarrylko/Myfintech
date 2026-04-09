@@ -21,6 +21,7 @@ from app.services.inbox_parser import (
     ParseResult,
     PropertyImport,
     match_property_slug,
+    slugify,
 )
 from app.services.pdf_extractor import extract_pdf_text
 
@@ -185,7 +186,7 @@ def _import_property(
         move_to_errors(
             file_path, errors_root,
             f"No property matching folder name '{result.property_slug}'. "
-            f"Available slugs: {[__import__('app.services.inbox_parser', fromlist=['slugify']).slugify(p.address) for p in properties]}"
+            f"Available slugs: {[slugify(p.address) for p in properties]}"
         )
         return False
 

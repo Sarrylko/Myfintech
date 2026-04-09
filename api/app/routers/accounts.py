@@ -63,6 +63,15 @@ async def create_manual_account(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a manually-entered account (no Plaid required)."""
+    if payload.owner_user_id:
+        owner_result = await db.execute(
+            select(User).where(
+                User.id == payload.owner_user_id,
+                User.household_id == user.household_id,
+            )
+        )
+        if not owner_result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Invalid owner user")
     acct = Account(
         plaid_item_id=None,
         plaid_account_id=None,
@@ -199,6 +208,18 @@ async def update_account(
         raise HTTPException(status_code=404, detail="Account not found")
 
     data = payload.model_dump(exclude_unset=True)
+
+    # Validate owner_user_id belongs to same household before applying
+    if "owner_user_id" in data and data["owner_user_id"] is not None:
+        owner_result = await db.execute(
+            select(User).where(
+                User.id == data["owner_user_id"],
+                User.household_id == user.household_id,
+            )
+        )
+        if not owner_result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Invalid owner user")
+
     for field, value in data.items():
         setattr(account, field, value)
 
@@ -311,10 +332,16 @@ async def import_csv_transactions(
     errors = []
     imported = 0
     duplicates = 0
+    CSV_MAX_ROWS = 10_000
     seen_in_file: set[str] = set()  # dedup within the same CSV upload
     i = 1  # track last row number for total_rows calculation
 
     for i, raw_row in enumerate(reader, start=2):  # row 1 = header
+        if i > CSV_MAX_ROWS + 1:
+            raise HTTPException(
+                status_code=413,
+                detail=f"CSV exceeds maximum of {CSV_MAX_ROWS} rows",
+            )
         row = {k.lower().strip(): v.strip() for k, v in raw_row.items() if k}
 
         # Date

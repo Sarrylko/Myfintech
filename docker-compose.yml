@@ -167,14 +167,14 @@ services:
       retries: 5
     profiles: ["default", "dev", "prod"]
 
-  # ─── Inbox file watcher ─────────────────────
+  # ─── Inbox file watcher (optional — start manually with --profile files) ─────
   file-watcher:
     build:
       context: ./api
       dockerfile: Dockerfile
       target: ${ENVIRONMENT:-development}
     command: python -m app.watcher_main
-    restart: unless-stopped
+    restart: "no"
     environment:
       <<: *common-env
       DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
@@ -188,7 +188,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    profiles: ["default", "dev", "prod"]
+    profiles: ["files"]
 
   # ─── WhatsApp notification bot ──────────────
   whatsapp-bot:
@@ -197,6 +197,8 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     shm_size: '1gb'
+    environment:
+      WHATSAPP_BOT_SECRET: ${WHATSAPP_BOT_SECRET:-}
     volumes:
       - whatsapp_session:/app/.wwebjs_auth
     networks:

@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     # ─── WhatsApp Bot ─────────────────────────────
     whatsapp_bot_url: str = "http://whatsapp-bot:3000"
     whatsapp_enabled: bool = True
+    whatsapp_bot_secret: str = ""  # Bearer token for /send endpoint auth
 
     # ─── AI / RAG Assistant ───────────────────────
     rag_api_url: str = ""   # e.g. http://fintech-rag-api:8000

@@ -27,9 +27,13 @@ def send_whatsapp(to: str, message: str) -> bool:
     if not to or not message:
         return False
     try:
+        headers = {}
+        if settings.whatsapp_bot_secret:
+            headers["Authorization"] = f"Bearer {settings.whatsapp_bot_secret}"
         resp = requests.post(
             f"{settings.whatsapp_bot_url}/send",
             json={"to": to, "message": message},
+            headers=headers,
             timeout=10,
         )
         if resp.status_code == 200:
