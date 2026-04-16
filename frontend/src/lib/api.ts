@@ -2695,3 +2695,48 @@ export interface YearlyPlanRow {
 export async function getRetirementYearlyPlan(): Promise<YearlyPlanRow[]> {
   return apiFetch<YearlyPlanRow[]>("/api/v1/retirement/yearly-plan");
 }
+
+// ─── Analytics ───────────────────────────────────────────────────────────────
+
+export interface SankeyNode {
+  id: string;
+  label: string;
+  color: string;
+  value: number;
+}
+
+export interface SankeyLink {
+  source: string;
+  target: string;
+  value: number;
+}
+
+export interface SankeyData {
+  nodes: SankeyNode[];
+  links: SankeyLink[];
+  total_income: number;
+  total_expenses: number;
+  remaining: number;
+  month: number;
+  year: number;
+}
+
+export async function getSankeyData(params: {
+  month?: number;
+  year?: number;
+  startDate?: string;
+  endDate?: string;
+  memberId?: string;
+}): Promise<SankeyData> {
+  const q = new URLSearchParams();
+  if (params.startDate && params.endDate) {
+    q.set("start_date", params.startDate);
+    q.set("end_date", params.endDate);
+  } else if (params.month !== undefined && params.year !== undefined) {
+    q.set("month", String(params.month));
+    q.set("year", String(params.year));
+  }
+  if (params.memberId) q.set("member_id", params.memberId);
+  return apiFetch<SankeyData>(`/api/v1/analytics/sankey?${q.toString()}`);
+}
+

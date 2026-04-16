@@ -1,0 +1,4 @@
+mcp[cli]>=1.2.0
+fast-flights>=1.0.0
+uvicorn>=0.30.0
+starlette>=0.40.0
