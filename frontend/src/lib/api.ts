@@ -2719,6 +2719,9 @@ export interface SankeyData {
   remaining: number;
   month: number;
   year: number;
+  is_annual?: boolean;
+  sankey_type?: "standard" | "payroll";
+  gross_income?: number;
 }
 
 export async function getSankeyData(params: {
@@ -2727,9 +2730,13 @@ export async function getSankeyData(params: {
   startDate?: string;
   endDate?: string;
   memberId?: string;
+  annual?: boolean;
 }): Promise<SankeyData> {
   const q = new URLSearchParams();
-  if (params.startDate && params.endDate) {
+  if (params.annual) {
+    q.set("annual", "true");
+    if (params.year !== undefined) q.set("year", String(params.year));
+  } else if (params.startDate && params.endDate) {
     q.set("start_date", params.startDate);
     q.set("end_date", params.endDate);
   } else if (params.month !== undefined && params.year !== undefined) {
@@ -2738,5 +2745,64 @@ export async function getSankeyData(params: {
   }
   if (params.memberId) q.set("member_id", params.memberId);
   return apiFetch<SankeyData>(`/api/v1/analytics/sankey?${q.toString()}`);
+}
+
+export interface SalaryWithholding {
+  id: string;
+  household_id: string;
+  user_id: string;
+  year: number;
+  employer_name: string | null;
+  gross_wages: string;
+  federal_wages: string;
+  medicare_wages: string;
+  federal_income_tax: string;
+  state_income_tax: string;
+  social_security_tax: string;
+  medicare_tax: string;
+  traditional_401k: string;
+  roth_401k: string;
+  esop_income: string;
+  hsa: string;
+  health_insurance: string;
+  group_term_life: string;
+  fsa_section125: string;
+}
+
+export interface SalaryWithholdingUpsert {
+  user_id: string;
+  year: number;
+  employer_name?: string;
+  gross_wages?: string;
+  federal_wages?: string;
+  medicare_wages?: string;
+  federal_income_tax?: string;
+  state_income_tax?: string;
+  social_security_tax?: string;
+  medicare_tax?: string;
+  traditional_401k?: string;
+  roth_401k?: string;
+  esop_income?: string;
+  hsa?: string;
+  health_insurance?: string;
+  group_term_life?: string;
+  fsa_section125?: string;
+}
+
+export async function listSalaryWithholdings(year?: number): Promise<SalaryWithholding[]> {
+  const q = year !== undefined ? `?year=${year}` : "";
+  return apiFetch<SalaryWithholding[]>(`/api/v1/salary/withholdings${q}`);
+}
+
+export async function upsertSalaryWithholding(data: SalaryWithholdingUpsert): Promise<SalaryWithholding> {
+  return apiFetch<SalaryWithholding>("/api/v1/salary/withholdings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteSalaryWithholding(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/salary/withholdings/${id}`, { method: "DELETE" });
 }
 

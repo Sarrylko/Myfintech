@@ -237,6 +237,7 @@ async def _property_metrics(
             select(func.coalesce(func.sum(MaintenanceExpense.amount), 0)).where(
                 MaintenanceExpense.property_id == property_id,
                 MaintenanceExpense.is_capex == False,
+                MaintenanceExpense.category != "loan_principal",
                 MaintenanceExpense.expense_date >= d_start,
                 MaintenanceExpense.expense_date <= d_end,
             )

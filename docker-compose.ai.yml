@@ -1,9 +1,12 @@
 # MyFintech AI Stack
 #
-# Start:   docker compose -f docker-compose.ai.yml up -d --build
-# Stop:    docker compose -f docker-compose.ai.yml down
-# Logs:    docker compose -f docker-compose.ai.yml logs -f
-# Rebuild: docker compose -f docker-compose.ai.yml up -d --build rag-api
+# All services are under the "ai" profile — nothing starts unless you explicitly opt in.
+# restart: "no" on every service ensures nothing comes back after a Docker daemon restart.
+#
+# Start:   docker compose -f docker-compose.ai.yml --profile ai up -d --build
+# Stop:    docker compose -f docker-compose.ai.yml --profile ai down
+# Logs:    docker compose -f docker-compose.ai.yml --profile ai logs -f
+# Rebuild: docker compose -f docker-compose.ai.yml --profile ai up -d --build rag-api
 #
 # Prerequisites:
 #   - Main myfintech stack must be running (for myfintech_private network + Postgres)
@@ -17,6 +20,7 @@ services:
     image: qdrant/qdrant:latest
     container_name: fintech-qdrant
     restart: "no"
+    profiles: ["ai"]
     ports:
       - "6333:6333"
     volumes:
@@ -35,6 +39,7 @@ services:
     image: ollama/ollama:latest
     container_name: fintech-ollama
     restart: "no"
+    profiles: ["ai"]
     ports:
       - "11434:11434"
     volumes:
@@ -63,6 +68,7 @@ services:
     image: ollama/ollama:latest
     container_name: fintech-ollama-init
     restart: "no"
+    profiles: ["ai"]
     environment:
       OLLAMA_HOST: http://ollama:11434
     entrypoint: ["/bin/bash", "-c", "ollama pull ${RAG_LLM_MODEL:-qwen2.5:7b-instruct} && ollama pull ${RAG_EMBED_MODEL:-nomic-embed-text} && echo 'Model pull complete.'"]
@@ -78,6 +84,7 @@ services:
       context: ./ai/ingest-worker
     container_name: fintech-ingest-worker
     restart: "no"
+    profiles: ["ai"]
     environment:
       OLLAMA_URL: http://ollama:11434
       QDRANT_URL: http://qdrant:6333
@@ -117,6 +124,7 @@ services:
       context: ./ai/rag-api
     container_name: fintech-rag-api
     restart: "no"
+    profiles: ["ai"]
     environment:
       OLLAMA_URL: http://ollama:11434
       QDRANT_URL: http://qdrant:6333
@@ -152,6 +160,7 @@ services:
     image: ghcr.io/open-webui/open-webui:main
     container_name: fintech-openwebui
     restart: "no"
+    profiles: ["ai"]
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       # Wire OpenWebUI to the RAG API so financial context is always applied

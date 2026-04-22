@@ -118,7 +118,7 @@ const COST_FREQUENCIES = ["monthly", "quarterly", "annual", "one_time"];
 const EXPENSE_CATEGORIES = [
   "repair", "appliance", "landscaping", "cleaning",
   "inspection", "plumbing", "electrical", "roofing", "hvac",
-  "management_fee", "administrative", "leasing_fee", "other",
+  "management_fee", "administrative", "leasing_fee", "loan_principal", "other",
 ];
 
 const COST_COLORS: Record<string, string> = {
@@ -143,6 +143,7 @@ const EXPENSE_COLORS: Record<string, string> = {
   management_fee: "bg-violet-100 text-violet-700",
   administrative: "bg-pink-100 text-pink-700",
   leasing_fee: "bg-orange-100 text-orange-700",
+  loan_principal: "bg-slate-100 text-slate-700",
   other: "bg-gray-100 text-gray-600",
 };
 
@@ -2172,15 +2173,11 @@ function MaintenanceTab({
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-sm font-semibold text-gray-900">{e.amount != null && e.amount !== "" ? fmt(Number(e.amount), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</span>
-                  {e.transaction_id ? (
-                    <span className="text-xs text-amber-500 italic" title="Linked from Transactions page — unlink there to edit">Linked</span>
-                  ) : (
-                    <>
-                      <button type="button" onClick={() => { setEditId(e.id); setEditForm(expenseToForm(e)); }}
-                        className="text-xs text-gray-400 hover:text-primary-600 transition">Edit</button>
-                      <button type="button" onClick={() => handleDelete(e.id)} disabled={deletingId === e.id}
-                        className="text-xs text-gray-400 hover:text-red-500 transition disabled:opacity-40">Delete</button>
-                    </>
+                  <button type="button" onClick={() => { setEditId(e.id); setEditForm(expenseToForm(e)); }}
+                    className="text-xs text-gray-400 hover:text-primary-600 transition">Edit</button>
+                  {!e.transaction_id && (
+                    <button type="button" onClick={() => handleDelete(e.id)} disabled={deletingId === e.id}
+                      className="text-xs text-gray-400 hover:text-red-500 transition disabled:opacity-40">Delete</button>
                   )}
                 </div>
               </div>

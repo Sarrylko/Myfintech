@@ -209,7 +209,7 @@ services:
   # ─── Dev-only: Adminer ──────────────────────
   adminer:
     image: adminer:latest
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "8080:8080"
     networks:

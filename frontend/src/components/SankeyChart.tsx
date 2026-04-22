@@ -362,6 +362,278 @@ function ChartCanvas({ data, width, height }: ChartCanvasProps) {
   );
 }
 
+// ─── Payroll (4-layer) layout helpers ────────────────────────────────────────
+
+/** Determine column index (0–3) from node ID prefix */
+function payrollColumn(id: string): number {
+  if (id.startsWith("l1_")) return 0;
+  if (id.startsWith("l2_")) return 1;
+  if (id.startsWith("l3_")) return 2;
+  return 3; // l4_*
+}
+
+interface PayrollLayoutNode {
+  id: string; label: string; color: string; value: number;
+  col: number; x0: number; y0: number; x1: number; y1: number;
+}
+
+interface PayrollLayoutLink {
+  id: string;
+  srcNode: PayrollLayoutNode; tgtNode: PayrollLayoutNode;
+  value: number;
+  ySrcTop: number; ySrcBot: number;
+  yTgtTop: number; yTgtBot: number;
+}
+
+function buildPayrollLayout(
+  data: SankeyData,
+  innerW: number,
+  innerH: number,
+): { nodes: PayrollLayoutNode[]; links: PayrollLayoutLink[] } {
+  const NODE_W = 14;
+  const NODE_GAP = 16;
+  const NUM_COLS = 4;
+
+  // Group nodes by column
+  const colGroups: Map<number, typeof data.nodes[0][]> = new Map();
+  for (let c = 0; c < NUM_COLS; c++) colGroups.set(c, []);
+  for (const n of data.nodes) {
+    const c = payrollColumn(n.id);
+    colGroups.get(c)!.push(n);
+  }
+
+  // Column x-positions
+  const colX = (col: number) => (col / (NUM_COLS - 1)) * (innerW - NODE_W);
+
+  // Place nodes in each column (proportional height, top-aligned with gaps)
+  const layoutNodes: PayrollLayoutNode[] = [];
+  const nodeMap: Record<string, PayrollLayoutNode> = {};
+
+  for (let c = 0; c < NUM_COLS; c++) {
+    const raws = colGroups.get(c) ?? [];
+    if (!raws.length) continue;
+
+    // Compute incoming value for each node (sum of link values targeting it)
+    const incomingByNode: Record<string, number> = {};
+    for (const link of data.links) {
+      incomingByNode[link.target] = (incomingByNode[link.target] ?? 0) + link.value;
+    }
+
+    // For column 0 (L1 sources), use the node's own value; others use incoming
+    const valOf = (n: typeof raws[0]) =>
+      c === 0 ? n.value : (incomingByNode[n.id] ?? n.value);
+
+    const totalVal = raws.reduce((s, n) => s + valOf(n), 0);
+    const totalGap = NODE_GAP * (raws.length - 1);
+    const usableH = innerH - totalGap;
+    const x0 = colX(c);
+    let y = 0;
+
+    for (const raw of raws) {
+      const val = valOf(raw);
+      const h = totalVal > 0 ? Math.max(8, (val / totalVal) * usableH) : 8;
+      const node: PayrollLayoutNode = {
+        ...raw, value: val, col: c,
+        x0, y0: y, x1: x0 + NODE_W, y1: y + h,
+      };
+      layoutNodes.push(node);
+      nodeMap[raw.id] = node;
+      y += h + NODE_GAP;
+    }
+  }
+
+  // Build links with cumulative offsets (same ribbon technique as buildLayout)
+  const srcOffset: Record<string, number> = {};
+  const tgtOffset: Record<string, number> = {};
+  const layoutLinks: PayrollLayoutLink[] = [];
+
+  // Compute total outgoing/incoming per node for proportional slicing
+  const srcTotals: Record<string, number> = {};
+  const tgtTotals: Record<string, number> = {};
+  for (const link of data.links) {
+    srcTotals[link.source] = (srcTotals[link.source] ?? 0) + link.value;
+    tgtTotals[link.target] = (tgtTotals[link.target] ?? 0) + link.value;
+  }
+
+  for (const raw of data.links) {
+    const s = nodeMap[raw.source];
+    const t = nodeMap[raw.target];
+    if (!s || !t || raw.value < 0.01) continue;
+
+    const sH = s.y1 - s.y0;
+    const tH = t.y1 - t.y0;
+    const sSW = (raw.value / (srcTotals[s.id] || 1)) * sH;
+    const tSW = (raw.value / (tgtTotals[t.id] || 1)) * tH;
+
+    const sOff = srcOffset[s.id] ?? 0;
+    const tOff = tgtOffset[t.id] ?? 0;
+
+    layoutLinks.push({
+      id: `${raw.source}__${raw.target}`,
+      srcNode: s, tgtNode: t,
+      value: raw.value,
+      ySrcTop: s.y0 + sOff,
+      ySrcBot: s.y0 + sOff + sSW,
+      yTgtTop: t.y0 + tOff,
+      yTgtBot: t.y0 + tOff + tSW,
+    });
+
+    srcOffset[s.id] = sOff + sSW;
+    tgtOffset[t.id] = tOff + tSW;
+  }
+
+  return { nodes: layoutNodes, links: layoutLinks };
+}
+
+// ─── Payroll chart canvas (4-column custom layout) ────────────────────────────
+
+function PayrollChartCanvas({ data, width, height }: ChartCanvasProps) {
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [isDark, setIsDark] = useState(false);
+
+  useEffect(() => {
+    const el = document.documentElement;
+    const update = () => setIsDark(el.classList.contains("dark"));
+    update();
+    const mo = new MutationObserver(update);
+    mo.observe(el, { attributes: true, attributeFilter: ["class"] });
+    return () => mo.disconnect();
+  }, []);
+
+  const PAD = { top: 24, right: 180, bottom: 24, left: 180 };
+  const innerW = Math.max(width - PAD.left - PAD.right, 60);
+  const innerH = height - PAD.top - PAD.bottom;
+
+  const { nodes: layoutNodes, links: layoutLinks } = buildPayrollLayout(data, innerW, innerH);
+
+  const labelColor = isDark ? "#f3f4f6" : "#111827";
+  const subColor = isDark ? "#9ca3af" : "#6b7280";
+  const totalGross = data.gross_income ?? data.total_income;
+
+  return (
+    <>
+      <svg
+        width={width}
+        height={height}
+        onMouseLeave={() => { setTooltip(null); setHoveredId(null); }}
+      >
+        <g transform={`translate(${PAD.left},${PAD.top})`}>
+          {/* ── Ribbons ───────────────────────────────────────────── */}
+          {layoutLinks.map((link) => {
+            const isHov = hoveredId === link.id ||
+              hoveredId === link.srcNode.id ||
+              hoveredId === link.tgtNode.id;
+            const d = ribbonPath(
+              link.srcNode.x1, link.ySrcTop, link.ySrcBot,
+              link.tgtNode.x0, link.yTgtTop, link.yTgtBot,
+            );
+            const pct = totalGross > 0 ? Math.round((link.value / totalGross) * 100) : 0;
+            return (
+              <path
+                key={link.id}
+                d={d}
+                fill={link.tgtNode.color}
+                fillOpacity={isHov ? 0.72 : 0.28}
+                stroke={link.tgtNode.color}
+                strokeOpacity={isHov ? 0.3 : 0.08}
+                strokeWidth={0.5}
+                className="cursor-pointer transition-[fill-opacity] duration-150"
+                onMouseEnter={(e) => {
+                  setHoveredId(link.id);
+                  setTooltip({
+                    x: e.clientX, y: e.clientY,
+                    label: `${link.srcNode.label} → ${link.tgtNode.label}`,
+                    value: link.value, pct,
+                  });
+                }}
+                onMouseMove={(e) => setTooltip((p) => p ? { ...p, x: e.clientX, y: e.clientY } : p)}
+                onMouseLeave={() => { setHoveredId(null); setTooltip(null); }}
+              />
+            );
+          })}
+
+          {/* ── Nodes ─────────────────────────────────────────────── */}
+          {layoutNodes.map((node) => {
+            const midY = (node.y0 + node.y1) / 2;
+            const nodeH = Math.max(node.y1 - node.y0, 2);
+            const isHov = hoveredId === node.id;
+            const pct = totalGross > 0 ? Math.round((node.value / totalGross) * 100) : 0;
+
+            return (
+              <g
+                key={node.id}
+                onMouseEnter={(e) => {
+                  setHoveredId(node.id);
+                  setTooltip({ x: e.clientX, y: e.clientY, label: node.label, value: node.value, pct });
+                }}
+                onMouseMove={(e) => setTooltip((p) => p ? { ...p, x: e.clientX, y: e.clientY } : p)}
+                onMouseLeave={() => { setHoveredId(null); setTooltip(null); }}
+                className="cursor-default"
+              >
+                {isHov && (
+                  <rect x={node.x0 - 2} y={node.y0 - 2} width={node.x1 - node.x0 + 4} height={nodeH + 4}
+                    fill={node.color} opacity={0.25} rx={5} />
+                )}
+                <rect x={node.x0} y={node.y0} width={node.x1 - node.x0} height={nodeH}
+                  fill={node.color} rx={4} opacity={isHov ? 1 : 0.88}
+                  className="transition-opacity duration-150" />
+
+                {/* L1 (col 0) — label left */}
+                {node.col === 0 && (
+                  <>
+                    <text x={node.x0 - 14} y={midY - 8} textAnchor="end" dominantBaseline="middle"
+                      fontSize={12} fontWeight={700} fill={labelColor}>{node.label}</text>
+                    <text x={node.x0 - 14} y={midY + 8} textAnchor="end" dominantBaseline="middle"
+                      fontSize={11} fill={subColor}>{fmtUSD(node.value)}</text>
+                  </>
+                )}
+                {/* L4 (col 3) — label right */}
+                {node.col === 3 && (
+                  <>
+                    <text x={node.x1 + 14} y={midY - 8} textAnchor="start" dominantBaseline="middle"
+                      fontSize={12} fontWeight={700} fill={labelColor}>{node.label}</text>
+                    <text x={node.x1 + 14} y={midY + 8} textAnchor="start" dominantBaseline="middle"
+                      fontSize={11} fill={subColor}>{fmtUSD(node.value)}</text>
+                  </>
+                )}
+                {/* L2 / L3 (col 1–2) — label above bar if tall enough */}
+                {(node.col === 1 || node.col === 2) && nodeH > 14 && (
+                  <>
+                    <text x={(node.x0 + node.x1) / 2} y={node.y0 - 12} textAnchor="middle"
+                      dominantBaseline="middle" fontSize={9} fontWeight={600} fill={labelColor}>
+                      {node.label}
+                    </text>
+                    <text x={(node.x0 + node.x1) / 2} y={node.y0 - 2} textAnchor="middle"
+                      dominantBaseline="middle" fontSize={9} fill={subColor}>
+                      {fmtUSD(node.value)}
+                    </text>
+                  </>
+                )}
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+
+      {tooltip && (
+        <div
+          className="fixed z-[9999] pointer-events-none rounded-xl shadow-xl border
+                     bg-white dark:bg-slate-800 border-gray-100 dark:border-slate-700
+                     text-gray-900 dark:text-gray-100 px-4 py-3 text-sm"
+          style={{ left: tooltip.x + 16, top: tooltip.y - 56 }}
+        >
+          <div className="font-semibold text-xs text-gray-500 dark:text-gray-400 mb-1">{tooltip.label}</div>
+          <div className="font-bold text-base">{fmtFull(tooltip.value)}</div>
+          {tooltip.pct !== undefined && (
+            <div className="text-xs text-gray-400 mt-0.5">{tooltip.pct}% of gross</div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface SankeyChartProps {
@@ -369,7 +641,9 @@ interface SankeyChartProps {
   height?: number;
 }
 
-export default function SankeyChart({ data, height = 400 }: SankeyChartProps) {
+export default function SankeyChart({ data, height: heightProp }: SankeyChartProps) {
+  const isPayroll = data.sankey_type === "payroll";
+  const height = heightProp ?? (isPayroll ? 520 : 400);
   const containerRef  = useRef<HTMLDivElement>(null);
   const [width, setWidth]         = useState(700);
   const [fullscreen, setFullscreen] = useState(false);
@@ -419,7 +693,10 @@ export default function SankeyChart({ data, height = 400 }: SankeyChartProps) {
           </svg>
         </button>
 
-        <ChartCanvas data={data} width={width} height={height} />
+        {isPayroll
+          ? <PayrollChartCanvas data={data} width={width} height={height} />
+          : <ChartCanvas data={data} width={width} height={height} />
+        }
       </div>
 
       {/* ── Fullscreen modal ────────────────────────────────────────── */}
@@ -452,7 +729,7 @@ export default function SankeyChart({ data, height = 400 }: SankeyChartProps) {
             </div>
 
             {/* Modal chart — full width, tall */}
-            <FullscreenChart data={data} />
+            <FullscreenChart data={data} isPayroll={isPayroll} />
           </div>
         </div>
       )}
@@ -462,11 +739,13 @@ export default function SankeyChart({ data, height = 400 }: SankeyChartProps) {
 
 // ─── Fullscreen inner chart with its own size tracking ───────────────────────
 
-const FULL_H = 560;
+const FULL_H_STANDARD = 560;
+const FULL_H_PAYROLL = 680;
 
-function FullscreenChart({ data }: { data: SankeyData }) {
+function FullscreenChart({ data, isPayroll }: { data: SankeyData; isPayroll: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
+  const FULL_H = isPayroll ? FULL_H_PAYROLL : FULL_H_STANDARD;
 
   useEffect(() => {
     if (!ref.current) return;
@@ -479,8 +758,11 @@ function FullscreenChart({ data }: { data: SankeyData }) {
   }, []);
 
   return (
-    <div ref={ref} className="h-[560px]">
-      <ChartCanvas data={data} width={width} height={FULL_H} />
+    <div ref={ref} className={isPayroll ? "h-[680px]" : "h-[560px]"}>
+      {isPayroll
+        ? <PayrollChartCanvas data={data} width={width} height={FULL_H} />
+        : <ChartCanvas data={data} width={width} height={FULL_H} />
+      }
     </div>
   );
 }

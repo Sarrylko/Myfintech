@@ -28,7 +28,6 @@ import {
   listNetWorthSnapshots,
   takeNetWorthSnapshot,
   getSankeyData,
-  listHouseholdMembers,
   Account,
   BudgetWithActual,
   Transaction,
@@ -36,7 +35,6 @@ import {
   Loan,
   NetWorthSnapshot,
   SankeyData,
-  UserResponse,
 } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
@@ -501,72 +499,25 @@ function LiabilitiesSection({
   );
 }
 
-// ─── Sankey: Income & Expense Flow ───────────────────────────────────────────
+// ─── Sankey: Annual Payroll Flow ─────────────────────────────────────────────
 
-type SankeyPreset = "this_month" | "last_month" | "ytd";
-
-function toISO(d: Date): string {
-  return d.toISOString().split("T")[0];
-}
-
-function getPresetRange(preset: SankeyPreset): { startDate: string; endDate: string; label: string } {
-  const now = new Date();
-  const today = toISO(now);
-  if (preset === "this_month") {
-    return {
-      startDate: toISO(new Date(now.getFullYear(), now.getMonth(), 1)),
-      endDate: today,
-      label: now.toLocaleString("default", { month: "long", year: "numeric" }),
-    };
-  }
-  if (preset === "last_month") {
-    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const end = new Date(now.getFullYear(), now.getMonth(), 0);
-    return {
-      startDate: toISO(start),
-      endDate: toISO(end),
-      label: start.toLocaleString("default", { month: "long", year: "numeric" }),
-    };
-  }
-  // ytd
-  return {
-    startDate: `${now.getFullYear()}-01-01`,
-    endDate: today,
-    label: `YTD ${now.getFullYear()}`,
-  };
-}
-
-const PRESET_LABELS: Record<SankeyPreset, string> = {
-  this_month: "This Month",
-  last_month: "Last Month",
-  ytd: "YTD",
-};
+const SANKEY_YEARS = [2024, 2025, 2026];
 
 function SankeyDashboardSection() {
-  const [preset, setPreset] = useState<SankeyPreset>("this_month");
-  const [members, setMembers] = useState<UserResponse[]>([]);
-  const [memberId, setMemberId] = useState<string | null>(null);
+  const [annualYear, setAnnualYear] = useState<number>(new Date().getFullYear());
   const [data, setData] = useState<SankeyData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { fmt } = useCurrency();
 
-  // Load household members once for the person filter
   useEffect(() => {
-    listHouseholdMembers().then(setMembers).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const { startDate, endDate } = getPresetRange(preset);
     setLoading(true);
     setError(null);
-    getSankeyData({ startDate, endDate, memberId: memberId ?? undefined })
+    getSankeyData({ annual: true, year: annualYear })
       .then(setData)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [preset, memberId]);
-
-  const { label: rangeLabel } = getPresetRange(preset);
+  }, [annualYear]);
 
   const btnBase =
     "text-xs px-2.5 py-1 rounded-lg border font-medium transition-colors duration-150";
@@ -580,56 +531,39 @@ function SankeyDashboardSection() {
       {/* Header row */}
       <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
         <div>
-          <h3 className="font-semibold text-gray-900 dark:text-white">Income &amp; Expense Flow</h3>
-          <p className="text-xs text-gray-400">{rangeLabel}</p>
+          <h3 className="font-semibold text-gray-900 dark:text-white">Annual Payroll Flow</h3>
+          <p className="text-xs text-gray-400">
+            Gross → Taxes → Investments → Expenses&ensp;·&ensp;
+            <Link href="/settings/salary" className="text-indigo-500 hover:underline">Edit W-2 data</Link>
+          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Date preset buttons */}
-          <div className="flex items-center gap-1">
-            {(["this_month", "last_month", "ytd"] as SankeyPreset[]).map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => setPreset(p)}
-                className={`${btnBase} ${preset === p ? btnActive : btnIdle}`}
-              >
-                {PRESET_LABELS[p]}
-              </button>
-            ))}
-          </div>
-
-          {/* Member filter — separator + "All" + one button per member */}
-          {members.length > 1 && (
-            <div className="flex items-center gap-1 border-l border-gray-200 dark:border-slate-600 pl-2">
-              <button
-                type="button"
-                onClick={() => setMemberId(null)}
-                className={`${btnBase} ${memberId === null ? btnActive : btnIdle}`}
-              >
-                All
-              </button>
-              {members.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setMemberId(memberId === m.id ? null : m.id)}
-                  className={`${btnBase} ${memberId === m.id ? btnActive : btnIdle}`}
-                >
-                  {m.full_name.split(" ")[0]}
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="flex items-center gap-1">
+          {SANKEY_YEARS.map((y) => (
+            <button
+              key={y}
+              type="button"
+              onClick={() => setAnnualYear(y)}
+              className={`${btnBase} ${annualYear === y ? btnActive : btnIdle}`}
+            >
+              {y}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Summary totals */}
       {data && !loading && (
         <div className="flex items-center gap-4 mb-3 text-xs">
-          <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-            Income&nbsp;{fmt(data.total_income)}
-          </span>
+          {data.sankey_type === "payroll" && data.gross_income ? (
+            <span className="text-indigo-600 dark:text-indigo-400 font-semibold">
+              Gross&nbsp;{fmt(data.gross_income)}
+            </span>
+          ) : (
+            <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+              Income&nbsp;{fmt(data.total_income)}
+            </span>
+          )}
           <span className="text-gray-300 dark:text-gray-600">→</span>
           <span className="text-red-500 dark:text-red-400 font-semibold">
             Expenses&nbsp;{fmt(data.total_expenses)}
@@ -655,7 +589,7 @@ function SankeyDashboardSection() {
           {error}
         </div>
       )}
-      {data && !loading && <SankeyChart data={data} height={320} />}
+      {data && !loading && <SankeyChart data={data} />}
     </Card>
   );
 }
