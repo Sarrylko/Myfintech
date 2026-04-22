@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -1220,7 +1221,7 @@ function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
 }
 
 export default function Dashboard() {
-  const { fmt, fmtCompact, locale, currency } = useCurrency();
+  const { fmt, fmtCompact, locale, activeCountryCode } = useCurrency();
   const { rates: fxRates } = useForex();
   const today = new Date();
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -1293,7 +1294,7 @@ export default function Dashboard() {
   };
 
   // ── Net worth calculation ──────────────────────────────────────────────────
-  const visibleAccounts = accounts.filter((a) => !a.is_hidden);
+  const visibleAccounts = accounts.filter((a) => !a.is_hidden && a.country === activeCountryCode);
 
   const cash = visibleAccounts
     .filter((a) => a.type === "depository")
@@ -1308,18 +1309,19 @@ export default function Dashboard() {
   const mortgageDebt = loans.reduce((s, l) => s + parseFloat(l.current_balance ?? "0"), 0);
   const totalLiabilities = creditCardDebt + mortgageDebt;
 
-  // Group properties by currency and convert to USD using live FX rates
+  // Only count properties for the active country context
+  const visibleProperties = properties.filter((p) => p.country === activeCountryCode);
   const realEstateByCurrency: Record<string, number> = {};
   let realEstateUSD = 0;
-  for (const p of properties) {
+  for (const p of visibleProperties) {
     const val = parseFloat(p.current_value ?? "0");
     const cur = p.currency_code || "USD";
     realEstateByCurrency[cur] = (realEstateByCurrency[cur] ?? 0) + val;
     realEstateUSD += convertToUSD(val, cur, fxRates);
   }
   const reCurrencies = Object.keys(realEstateByCurrency);
-  // Show breakdown when any property currency differs from household currency
-  const reBreakdown = reCurrencies.some((cur) => cur !== currency)
+  // Show breakdown only when multiple currencies exist in the visible set
+  const reBreakdown = reCurrencies.length > 1
     ? reCurrencies.map((cur) => ({
         label: cur,
         amount: fmtInCurrency(realEstateByCurrency[cur], cur),
@@ -1368,6 +1370,7 @@ export default function Dashboard() {
   }
 
   return (
+    <CountryGate allowedCountries={["US"]} featureName="Dashboard">
     <div>
       {/* Header */}
       <PageHeader
@@ -1400,7 +1403,7 @@ export default function Dashboard() {
         </div>
         <div className="lg:col-span-2">
           <AccountsPanel
-            accounts={accounts}
+            accounts={accounts.filter((a) => a.country === activeCountryCode)}
             onSync={() => fetchAll(true)}
             syncing={refreshing}
             lastUpdated={lastUpdated}
@@ -1436,7 +1439,7 @@ export default function Dashboard() {
           label="Real Estate"
           value={realEstateUSD}
           icon={ICONS.realestate}
-          subtext={`${properties.length} propert${properties.length !== 1 ? "ies" : "y"}`}
+          subtext={`${visibleProperties.length} propert${visibleProperties.length !== 1 ? "ies" : "y"}`}
           breakdown={reBreakdown}
           accent="amber"
         />
@@ -1558,5 +1561,6 @@ export default function Dashboard() {
 
       </div>
     </div>
+    </CountryGate>
   );
 }

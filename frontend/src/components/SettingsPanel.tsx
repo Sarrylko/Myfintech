@@ -943,6 +943,8 @@ function PreferencesTab() {
     default_currency: ctxCurrency,
     default_locale: ctxLocale,
     country_code: ctxCountry,
+    active_country_code: ctxCountry,
+    country_profiles: [],
   });
   const [localeSaving, setLocaleSaving] = useState(false);
   const [localeMsg, setLocaleMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);

@@ -24,6 +24,7 @@ class RecurringTransaction(Base):
     frequency: Mapped[str] = mapped_column(String(20))  # weekly | biweekly | monthly | quarterly | annual
     tag: Mapped[str] = mapped_column(String(30), default="other")
     spending_type: Mapped[str] = mapped_column(String(10), default="want")  # need | want | saving
+    country: Mapped[str] = mapped_column(String(2), server_default="US")
     next_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

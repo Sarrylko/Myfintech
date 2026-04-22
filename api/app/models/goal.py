@@ -28,6 +28,7 @@ class Goal(Base):
         Numeric(14, 2), nullable=True
     )  # manual override; if None, computed from linked source
     currency_code: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")
+    country: Mapped[str] = mapped_column(String(2), server_default="US")
     start_date: Mapped[date] = mapped_column(Date)
     target_date: Mapped[date] = mapped_column(Date)
     # Link to an account (balance-based progress)

@@ -117,6 +117,7 @@ async def create_recurring(
         frequency=payload.frequency,
         tag=payload.tag,
         spending_type=payload.spending_type,
+        country=payload.country,
         next_due_date=payload.next_due_date,
         start_date=payload.start_date,
         notes=payload.notes,

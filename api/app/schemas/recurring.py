@@ -46,6 +46,7 @@ class RecurringTransactionResponse(BaseModel):
     frequency: str
     tag: str
     spending_type: str
+    country: str = "US"
     next_due_date: date | None
     start_date: date | None
     is_active: bool
@@ -68,6 +69,7 @@ class RecurringTransactionCreate(BaseModel):
     start_date: date | None = None
     notes: str | None = None
     amount_type: str = "fixed"
+    country: str = "US"
 
 
 class RecurringTransactionUpdate(BaseModel):
@@ -81,6 +83,7 @@ class RecurringTransactionUpdate(BaseModel):
     next_due_date: date | None = None
     start_date: date | None = None
     amount_type: str | None = None
+    country: str | None = None
 
 
 class RecurringPaymentCreate(BaseModel):

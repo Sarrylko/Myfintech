@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useCurrency } from "@/lib/currency";
+import CountryGate from "@/components/CountryGate";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   getLinkToken,
@@ -91,7 +92,7 @@ const DEFAULT_MANUAL: ManualAccountCreate = {
 };
 
 export function AccountsContent() {
-  const { locale, fmt } = useCurrency();
+  const { locale, fmt, activeCountryCode } = useCurrency();
   const router = useRouter();
   const searchParams = useSearchParams();
   const snapSyncedRef = useRef(false);
@@ -245,6 +246,7 @@ export function AccountsContent() {
       is_hidden: acct.is_hidden,
       entity_id: acct.entity_id ?? null,
       account_scope: acct.account_scope ?? "personal",
+      country: acct.country ?? "US",
     });
   }
 
@@ -365,7 +367,7 @@ export function AccountsContent() {
   }
   function fmtK(n: number) { return fmt(n); }
 
-  const visibleAccounts = accounts.filter((a) => !a.is_hidden);
+  const visibleAccounts = accounts.filter((a) => !a.is_hidden && a.country === activeCountryCode);
   const CHECKING_SUBTYPES = new Set(["checking", "prepaid"]);
   const SAVINGS_SUBTYPES  = new Set(["savings", "cd", "money market", "cash management"]);
 
@@ -401,7 +403,7 @@ export function AccountsContent() {
         <h2 className="text-2xl font-bold">Accounts</h2>
         <div className="flex gap-2">
           <button
-            onClick={() => { setShowManual(true); setManualError(""); }}
+            onClick={() => { setManualForm({ ...DEFAULT_MANUAL, country: activeCountryCode }); setShowManual(true); setManualError(""); }}
             className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition text-sm font-medium"
           >
             + Add Manually
@@ -536,6 +538,19 @@ export function AccountsContent() {
                     />
                   </div>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
+                <select
+                  aria-label="Country"
+                  value={manualForm.country ?? "US"}
+                  onChange={(e) => setManualForm((p) => ({ ...p, country: e.target.value }))}
+                  className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                >
+                  <option value="US">🇺🇸 United States</option>
+                  <option value="IN">🇮🇳 India</option>
+                </select>
               </div>
 
               {manualError && (
@@ -706,6 +721,20 @@ export function AccountsContent() {
                   </div>
                 </div>
               )}
+
+              {/* Country */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
+                <select
+                  aria-label="Country"
+                  value={editForm.country ?? "US"}
+                  onChange={(e) => setEditForm((p) => ({ ...p, country: e.target.value }))}
+                  className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+                >
+                  <option value="US">🇺🇸 United States</option>
+                  <option value="IN">🇮🇳 India</option>
+                </select>
+              </div>
 
               {/* Hidden toggle */}
               <label className="flex items-center gap-2 cursor-pointer">
@@ -952,7 +981,7 @@ PLAID_ENV=sandbox`}
             <p className="text-lg font-medium mb-2 text-gray-600">No accounts yet</p>
             <p className="text-sm mb-6">Link via Plaid to auto-import transactions, or add an account manually to track balances.</p>
             <div className="flex justify-center gap-3">
-              <button onClick={() => setShowManual(true)}
+              <button onClick={() => { setManualForm({ ...DEFAULT_MANUAL, country: activeCountryCode }); setShowManual(true); }}
                 className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium">+ Add Manually</button>
               <button onClick={handleLinkAccount} disabled={linking}
                 className="bg-primary-600 text-white px-5 py-2 rounded-lg hover:bg-primary-700 text-sm font-medium disabled:opacity-50">
@@ -1162,5 +1191,9 @@ function AccountRow({ acct, members, onEdit, onDelete }: { acct: Account; member
 }
 
 export default function AccountsPage() {
-  return <AccountsContent />;
+  return (
+    <CountryGate allowedCountries={["US", "IN"]} featureName="Accounts">
+      <AccountsContent />
+    </CountryGate>
+  );
 }

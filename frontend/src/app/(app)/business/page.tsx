@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   listBusinessEntities,
@@ -300,6 +301,7 @@ export default function BusinessPage() {
   }
 
   return (
+    <CountryGate allowedCountries={["US"]} featureName="Business Entities">
     <div className="max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -770,5 +772,6 @@ export default function BusinessPage() {
         </div>
       )}
     </div>
+    </CountryGate>
   );
 }

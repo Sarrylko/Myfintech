@@ -28,6 +28,7 @@ import { getProfile, UserResponse } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
 import { useTheme } from "@/components/ThemeProvider";
 import UserMenu from "@/components/UserMenu";
+import CountryToggle from "@/components/CountryToggle";
 import { CurrencyProvider } from "@/lib/currency";
 import { ForexProvider } from "@/components/ForexProvider";
 
@@ -221,6 +222,7 @@ export default function AppLayout({
     )?.label ?? "MyFintech";
 
   return (
+    <CurrencyProvider>
     <div className="min-h-screen flex">
       {/* ── Mobile top bar ─────────────────────────────────────── */}
       <header className="md:hidden fixed top-0 left-0 right-0 z-40 h-14 bg-sidebar sidebar-surface flex items-center px-4 gap-3">
@@ -235,7 +237,10 @@ export default function AppLayout({
         <span className="flex-1 text-sm font-semibold truncate text-sidebar-active-text">
           {currentPage}
         </span>
-        <UserMenu initialProfile={profile} onProfileUpdate={setProfile} />
+        <div className="flex items-center gap-2">
+          <CountryToggle />
+          <UserMenu initialProfile={profile} onProfileUpdate={setProfile} />
+        </div>
       </header>
 
       {/* ── Mobile drawer backdrop ──────────────────────────────── */}
@@ -279,16 +284,18 @@ export default function AppLayout({
           <span className="text-sm font-semibold text-content-primary">
             {currentPage}
           </span>
-          <UserMenu initialProfile={profile} onProfileUpdate={setProfile} />
+          <div className="flex items-center gap-2">
+            <CountryToggle />
+            <UserMenu initialProfile={profile} onProfileUpdate={setProfile} />
+          </div>
         </header>
 
         {/* Page content */}
         <main className="flex-1 p-6 pt-[4.5rem] md:pt-6">
-          <CurrencyProvider>
-            <ForexProvider>{children}</ForexProvider>
-          </CurrencyProvider>
+          <ForexProvider>{children}</ForexProvider>
         </main>
       </div>
     </div>
+    </CurrencyProvider>
   );
 }

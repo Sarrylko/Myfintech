@@ -81,6 +81,7 @@ class Account(Base):
     account_scope: Mapped[str] = mapped_column(
         String(10), server_default="personal"
     )  # personal | business
+    country: Mapped[str] = mapped_column(String(2), server_default="US")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

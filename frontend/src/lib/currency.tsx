@@ -7,7 +7,7 @@ import {
   useEffect,
   useState,
 } from "react";
-import { getHouseholdSettings, HouseholdSettings } from "./api";
+import { getHouseholdSettings, switchActiveCountry, CountryProfile, HouseholdSettings } from "./api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -17,24 +17,30 @@ interface FormatOptions {
 }
 
 interface CurrencyContextValue {
-  /** ISO 4217 code, e.g. "USD" */
+  /** ISO 4217 code for the active country, e.g. "USD" or "INR" */
   currency: string;
-  /** BCP 47 locale, e.g. "en-US" */
+  /** BCP 47 locale for the active country, e.g. "en-US" or "en-IN" */
   locale: string;
-  /** ISO 3166-1 alpha-2, e.g. "US" */
+  /** ISO 3166-1 alpha-2, the household's primary country e.g. "US" */
   countryCode: string;
-  /** Currency symbol extracted from Intl, e.g. "$" */
+  /** Currently selected country code (may differ from primary) */
+  activeCountryCode: string;
+  /** All country profiles configured for this household */
+  countryProfiles: CountryProfile[];
+  /** Currency symbol extracted from Intl, e.g. "$" or "₹" */
   symbol: string;
-  /** Format a monetary value using the household locale/currency */
+  /** Format a monetary value using the active country locale/currency */
   fmt: (value: number, opts?: FormatOptions) => string;
-  /** Compact format: $1.2M, £850K */
+  /** Compact format: $1.2M, ₹12.3L */
   fmtCompact: (value: number) => string;
-  /** Format a date string "YYYY-MM-DD" using the household locale */
+  /** Format a date string "YYYY-MM-DD" using the active country locale */
   fmtDate: (date: string | null | undefined) => string;
   /** True while the settings are being fetched */
   loading: boolean;
   /** Re-fetch household settings (call after saving locale/currency preferences) */
   refreshSettings: () => void;
+  /** Switch the active country context for all users in the household */
+  switchCountry: (code: string) => Promise<void>;
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -43,6 +49,8 @@ const CurrencyContext = createContext<CurrencyContextValue>({
   currency: "USD",
   locale: "en-US",
   countryCode: "US",
+  activeCountryCode: "US",
+  countryProfiles: [],
   symbol: "$",
   fmt: (v) =>
     new Intl.NumberFormat("en-US", {
@@ -54,6 +62,7 @@ const CurrencyContext = createContext<CurrencyContextValue>({
   fmtDate: (d) => d ? new Date(d.includes("T") ? d : d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—",
   loading: true,
   refreshSettings: () => {},
+  switchCountry: async () => {},
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -70,14 +79,18 @@ function extractSymbol(locale: string, currency: string): string {
   }
 }
 
+const DEFAULT_SETTINGS: HouseholdSettings = {
+  default_currency: "USD",
+  default_locale: "en-US",
+  country_code: "US",
+  active_country_code: "US",
+  country_profiles: [],
+};
+
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function CurrencyProvider({ children }: { children: React.ReactNode }) {
-  const [settings, setSettings] = useState<HouseholdSettings>({
-    default_currency: "USD",
-    default_locale: "en-US",
-    country_code: "US",
-  });
+  const [settings, setSettings] = useState<HouseholdSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
 
   const fetchSettings = useCallback(() => {
@@ -91,7 +104,13 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
     fetchSettings();
   }, [fetchSettings]);
 
-  const { default_currency: currency, default_locale: locale, country_code: countryCode } = settings;
+  const {
+    default_currency: currency,
+    default_locale: locale,
+    country_code: countryCode,
+    active_country_code: activeCountryCode,
+    country_profiles: countryProfiles,
+  } = settings;
 
   const symbol = extractSymbol(locale, currency);
 
@@ -143,9 +162,30 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
     [locale]
   );
 
+  const switchCountry = useCallback(
+    async (code: string) => {
+      const updated = await switchActiveCountry(code);
+      setSettings(updated);
+    },
+    []
+  );
+
   return (
     <CurrencyContext.Provider
-      value={{ currency, locale, countryCode, symbol, fmt, fmtCompact, fmtDate, loading, refreshSettings: fetchSettings }}
+      value={{
+        currency,
+        locale,
+        countryCode,
+        activeCountryCode,
+        countryProfiles,
+        symbol,
+        fmt,
+        fmtCompact,
+        fmtDate,
+        loading,
+        refreshSettings: fetchSettings,
+        switchCountry,
+      }}
     >
       {children}
     </CurrencyContext.Provider>

@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
@@ -1264,7 +1265,7 @@ function ImportModal({ accounts, onImported, onClose }: {
 }
 
 export default function TransactionsPage() {
-  const { fmt, fmtDate, locale } = useCurrency();
+  const { fmt, fmtDate, locale, activeCountryCode } = useCurrency();
   const router = useRouter();
 
   function fmtAmt(amount: string): { display: string; isExpense: boolean } {
@@ -1353,6 +1354,11 @@ export default function TransactionsPage() {
   const accountMap: Record<string, Account> = {};
   for (const a of accounts) accountMap[a.id] = a;
 
+  // IDs of accounts belonging to the active country (null-account txns pass through)
+  const countryAccountIds = new Set(
+    accounts.filter((a) => a.country === activeCountryCode).map((a) => a.id)
+  );
+
   const allCategories = [...TAXONOMY.map((t) => t.category), ...parentCats.map((c) => c.name)];
 
   // Resolve date range from preset or custom inputs
@@ -1361,6 +1367,7 @@ export default function TransactionsPage() {
   const effectiveTo   = datePreset === "custom" ? (dateTo   ? new Date(dateTo   + "T23:59:59") : null) : presetTo;
 
   const filtered = transactions.filter((t) => {
+    if (t.account_id && !countryAccountIds.has(t.account_id)) return false;
     if (!showIgnored && t.is_ignored) return false;
     const matchAccount = selectedAccount === "all" || t.account_id === selectedAccount;
     const matchCategory = selectedCategory === "all" ||
@@ -1491,6 +1498,7 @@ export default function TransactionsPage() {
   }
 
   return (
+    <CountryGate allowedCountries={["US", "IN"]} featureName="Transactions">
     <div>
       {/* Save-as-Rule prompt banner */}
       {rulePrompt && (
@@ -2071,5 +2079,6 @@ export default function TransactionsPage() {
         </p>
       )}
     </div>
+    </CountryGate>
   );
 }

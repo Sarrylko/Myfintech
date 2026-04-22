@@ -13,6 +13,7 @@ class GoalCreate(BaseModel):
     target_amount: Decimal
     current_amount: Optional[Decimal] = None
     currency_code: str = "USD"
+    country: str = "US"
     start_date: date
     target_date: date
     linked_account_id: Optional[uuid.UUID] = None
@@ -34,6 +35,7 @@ class GoalUpdate(BaseModel):
     target_amount: Optional[Decimal] = None
     current_amount: Optional[Decimal] = None
     currency_code: Optional[str] = None
+    country: Optional[str] = None
     start_date: Optional[date] = None
     target_date: Optional[date] = None
     linked_account_id: Optional[uuid.UUID] = None
@@ -69,6 +71,7 @@ class GoalResponse(BaseModel):
     target_amount: Decimal
     current_amount: Optional[Decimal] = None
     currency_code: str
+    country: str = "US"
     start_date: date
     target_date: date
     linked_account_id: Optional[uuid.UUID] = None

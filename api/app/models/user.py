@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Integer, String, ForeignKey, text
+from sqlalchemy import Boolean, DateTime, Integer, String, ForeignKey, text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,6 +18,7 @@ class Household(Base):
     default_currency: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")
     default_locale: Mapped[str] = mapped_column(String(10), default="en-US", server_default="en-US")
     country_code: Mapped[str] = mapped_column(String(2), default="US", server_default="US")
+    active_country_code: Mapped[str] = mapped_column(String(2), default="US", server_default="US")
     price_refresh_interval_minutes: Mapped[int] = mapped_column(Integer, default=15)
     price_refresh_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_price_refresh_at: Mapped[datetime | None] = mapped_column(
@@ -29,6 +30,32 @@ class Household(Base):
     )
 
     members: Mapped[list["User"]] = relationship(back_populates="household")
+    country_profiles: Mapped[list["HouseholdCountryProfile"]] = relationship(
+        back_populates="household", order_by="HouseholdCountryProfile.display_order"
+    )
+
+
+class HouseholdCountryProfile(Base):
+    __tablename__ = "household_country_profiles"
+    __table_args__ = (
+        UniqueConstraint("household_id", "country_code", name="uq_household_country_profile"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    country_code: Mapped[str] = mapped_column(String(2))
+    country_name: Mapped[str] = mapped_column(String(100))
+    currency_code: Mapped[str] = mapped_column(String(3))
+    locale: Mapped[str] = mapped_column(String(20))
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    display_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+    household: Mapped["Household"] = relationship(back_populates="country_profiles")
 
 
 class User(Base):

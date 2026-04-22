@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import { useEffect, useState } from "react";
 import { useCurrency } from "@/lib/currency";
 import {
@@ -242,7 +243,7 @@ export default function InsurancePage() {
   // Collapsed groups
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
-  const { fmt: fmtRaw, fmtDate, locale } = useCurrency();
+  const { fmt: fmtRaw, fmtDate, locale, activeCountryCode } = useCurrency();
   function fmt(val: string | number | null | undefined, decimals = 0): string {
     if (val == null || val === "") return "—";
     const n = typeof val === "string" ? parseFloat(val) : val;
@@ -282,11 +283,13 @@ export default function InsurancePage() {
 
   // ── Stats ──────────────────────────────────────────────────────────────────
 
-  const activePolicies = policies.filter(p => p.is_active);
+  const visiblePolicies = policies.filter(p => p.country === activeCountryCode);
+  const activePolicies = visiblePolicies.filter(p => p.is_active);
   const totalAnnual = activePolicies.reduce((sum, p) => sum + annualPremium(p), 0);
   const renewingSoon = activePolicies
     .filter(p => { const d = renewalDays(p.renewal_date); return d !== null && d >= 0 && d <= 60; })
     .sort((a, b) => (renewalDays(a.renewal_date) ?? 999) - (renewalDays(b.renewal_date) ?? 999));
+  const activePoliciesCount = activePolicies.length;
 
   // ── Policy form helpers ───────────────────────────────────────────────────
 
@@ -294,6 +297,10 @@ export default function InsurancePage() {
     setEditingId(null);
     setForm({ ...DEFAULT_FORM });
     setShowForm(true);
+  }
+
+  function formCountry(): string {
+    return activeCountryCode ?? "US";
   }
 
   function openEdit(p: InsurancePolicy) {
@@ -324,6 +331,7 @@ export default function InsurancePage() {
     const payload: InsurancePolicyCreate = {
       policy_type: form.policy_type,
       provider: form.provider.trim(),
+      country: formCountry(),
       policy_number: form.policy_number?.trim() || undefined,
       premium_amount: form.premium_amount_str ? Number(form.premium_amount_str) : undefined,
       premium_frequency: form.premium_frequency,
@@ -504,6 +512,7 @@ export default function InsurancePage() {
   }
 
   return (
+    <CountryGate allowedCountries={["US", "IN"]} featureName="Insurance">
     <div className="flex h-full gap-0">
       {/* ── Left: main content ── */}
       <div className={`flex-1 overflow-auto p-6 ${selectedDetail ? "pr-3" : ""}`}>
@@ -513,7 +522,7 @@ export default function InsurancePage() {
             <h1 className="text-xl font-semibold text-gray-900 dark:text-white flex items-center gap-2">
               🛡 Insurance
               <span className="text-sm font-normal text-gray-500">
-                {activePolicies.length} active {activePolicies.length === 1 ? "policy" : "policies"}
+                {activePoliciesCount} active {activePoliciesCount === 1 ? "policy" : "policies"}
               </span>
             </h1>
             {totalAnnual > 0 && (
@@ -569,7 +578,7 @@ export default function InsurancePage() {
         )}
 
         {/* Empty state */}
-        {policies.length === 0 && (
+        {visiblePolicies.length === 0 && (
           <div className="text-center py-20 text-gray-400">
             <p className="text-4xl mb-3">🛡</p>
             <p className="text-lg font-medium text-gray-500 dark:text-gray-400">No insurance policies yet</p>
@@ -585,7 +594,7 @@ export default function InsurancePage() {
 
         {/* Policy groups */}
         {POLICY_GROUPS.map(group => {
-          const groupPolicies = policies.filter(p => group.types.includes(p.policy_type as PolicyType));
+          const groupPolicies = visiblePolicies.filter(p => group.types.includes(p.policy_type as PolicyType));
           if (groupPolicies.length === 0) return null;
           const groupTotal = groupPolicies.filter(p => p.is_active).reduce((s, p) => s + annualPremium(p), 0);
           const isCollapsed = collapsed[group.label];
@@ -1222,5 +1231,6 @@ export default function InsurancePage() {
         </div>
       )}
     </div>
+    </CountryGate>
   );
 }

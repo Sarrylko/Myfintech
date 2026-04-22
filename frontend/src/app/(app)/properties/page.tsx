@@ -262,7 +262,7 @@ function toDetailForm(p: Property): DetailForm {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function PropertiesPage() {
-  const { fmt: fmtRaw, fmtDate, locale, currency: householdCurrency } = useCurrency();
+  const { fmt: fmtRaw, fmtDate, locale, currency: householdCurrency, activeCountryCode } = useCurrency();
   const { rates: fxRates } = useForex();
   // Look up the symbol for a currency code
   const currencySymbol = (code: string) =>
@@ -552,24 +552,35 @@ export default function PropertiesPage() {
     }
   }
 
-  // FX-converted USD totals for summary cards
-  const totalValueUSD = properties.reduce((sum, p) => {
+  // Only compute summary for properties visible in the current country context
+  const visibleProperties = properties.filter((p) => p.country === activeCountryCode);
+
+  // Determine if all visible properties share a single currency (use native display)
+  const visibleCurrencies = Array.from(new Set(visibleProperties.map((p) => p.currency_code || householdCurrency)));
+  const singleNativeCurrency = visibleCurrencies.length === 1 ? visibleCurrencies[0] : null;
+
+  const totalValueUSD = visibleProperties.reduce((sum, p) => {
     const val = p.current_value ? Number(p.current_value) : 0;
     return sum + convertToUSD(val, p.currency_code || householdCurrency, fxRates);
   }, 0);
-  const totalCostBasisUSD = properties.reduce((sum, p) => {
+  const totalCostBasisUSD = visibleProperties.reduce((sum, p) => {
     const basis = costBasis(p);
     return sum + convertToUSD(basis, p.currency_code || householdCurrency, fxRates);
   }, 0);
-  // Per-currency breakdown for summary cards (show when portfolio has non-household-currency properties)
-  const valuesByCurrency: Record<string, number> = {};
-  for (const p of properties) {
-    const cur = p.currency_code || householdCurrency;
-    valuesByCurrency[cur] = (valuesByCurrency[cur] ?? 0) + (p.current_value ? Number(p.current_value) : 0);
-  }
-  const currencyBreakdown = Object.keys(valuesByCurrency).some((c) => c !== householdCurrency)
-    ? Object.entries(valuesByCurrency).map(([cur, val]) => `${cur} ${fmtInCurrency(val, cur)}`).join(" · ")
-    : null;
+
+  // Native totals (for single-currency display without conversion)
+  const totalValueNative = visibleProperties.reduce((sum, p) => sum + (p.current_value ? Number(p.current_value) : 0), 0);
+  const totalCostBasisNative = visibleProperties.reduce((sum, p) => sum + costBasis(p), 0);
+
+  // Display in native currency if all visible properties use the same non-household currency
+  const useNativeDisplay = singleNativeCurrency !== null && singleNativeCurrency !== householdCurrency;
+  const displayTotal = useNativeDisplay ? fmtInCurrency(totalValueNative, singleNativeCurrency!) : fmt(String(totalValueUSD));
+  const displayCostBasis = useNativeDisplay ? fmtInCurrency(totalCostBasisNative, singleNativeCurrency!) : fmt(String(totalCostBasisUSD));
+  const displayGainValue = useNativeDisplay ? totalValueNative : totalValueUSD;
+  const displayCostBasisValue = useNativeDisplay ? totalCostBasisNative : totalCostBasisUSD;
+  const displayGain = gain(String(displayGainValue), displayCostBasisValue, (v) =>
+    useNativeDisplay ? fmtInCurrency(Number(v), singleNativeCurrency!) : fmt(String(v))
+  );
 
   return (
     <div>
@@ -584,22 +595,21 @@ export default function PropertiesPage() {
         </button>
       </div>
 
-      {properties.length > 0 && (
+      {visibleProperties.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
             <p className="text-sm text-gray-500 mb-1">Total Current Value</p>
-            <p className="text-2xl font-bold">{fmt(String(totalValueUSD))}</p>
-            {currencyBreakdown && <p className="text-xs text-gray-400 mt-0.5">{currencyBreakdown}</p>}
+            <p className="text-2xl font-bold">{displayTotal}</p>
           </div>
           <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
             <p className="text-sm text-gray-500 mb-1">Total Cost Basis</p>
-            <p className="text-2xl font-bold">{fmt(String(totalCostBasisUSD))}</p>
+            <p className="text-2xl font-bold">{displayCostBasis}</p>
             <p className="text-xs text-gray-400 mt-0.5">Purchase price + closing costs</p>
           </div>
           <div className="bg-white rounded-lg shadow border border-gray-100 p-5">
             <p className="text-sm text-gray-500 mb-1">Total Gain / Loss</p>
-            <p className={`text-2xl font-bold ${gainColor(String(totalValueUSD), totalCostBasisUSD)}`}>
-              {gain(String(totalValueUSD), totalCostBasisUSD, fmt)}
+            <p className={`text-2xl font-bold ${gainColor(String(displayGainValue), displayCostBasisValue)}`}>
+              {displayGain}
             </p>
           </div>
         </div>
@@ -615,9 +625,9 @@ export default function PropertiesPage() {
         <div className="bg-white rounded-lg shadow border border-gray-100 p-12 text-center text-gray-400">
           Loading properties...
         </div>
-      ) : properties.length === 0 ? (
+      ) : visibleProperties.length === 0 ? (
         <div className="bg-white rounded-lg shadow border border-gray-100 p-12 text-center text-gray-400">
-          <p className="text-lg mb-2">No properties added yet</p>
+          <p className="text-lg mb-2">No properties in this country yet</p>
           <button
             type="button"
             onClick={() => setShowAddModal(true)}
@@ -628,7 +638,7 @@ export default function PropertiesPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {properties.map((p) => {
+          {visibleProperties.map((p) => {
             const basis = costBasis(p);
             const isEditingDetails = editingDetails === p.id;
             const propLoans = loans[p.id] ?? [];

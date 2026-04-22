@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import { useEffect, useState, useRef } from "react";
 import { useCurrency } from "@/lib/currency";
 import { useRouter } from "next/navigation";
@@ -884,6 +885,7 @@ export default function TaxCenterPage() {
   const total = taxData?.portfolio_total;
 
   return (
+    <CountryGate allowedCountries={["US"]} featureName="Tax Center">
     <div className="max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
@@ -1066,5 +1068,6 @@ export default function TaxCenterPage() {
         <FinancialPictureTab selectedYear={selectedYear} />
       )}
     </div>
+    </CountryGate>
   );
 }

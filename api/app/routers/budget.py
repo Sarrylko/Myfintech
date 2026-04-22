@@ -230,6 +230,8 @@ async def create_budgets_bulk(
             household_id=user.household_id,
             category_id=item.category_id,
             amount=item.amount,
+            currency_code=item.currency_code,
+            country=item.country,
             budget_type=item.budget_type.value,
             month=item.month,
             year=item.year,

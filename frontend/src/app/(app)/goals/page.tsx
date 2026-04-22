@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import { useState, useEffect } from "react";
 import {
   listGoals,
@@ -487,7 +488,7 @@ function GoalFormModal({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function GoalsPage() {
-  const { fmt } = useCurrency();
+  const { fmt, activeCountryCode } = useCurrency();
   const [goals, setGoals] = useState<Goal[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [budgets, setBudgets] = useState<BudgetWithActual[]>([]);
@@ -517,7 +518,7 @@ export default function GoalsPage() {
     if (editingGoal) {
       await updateGoal(editingGoal.id, data);
     } else {
-      await createGoal(data);
+      await createGoal({ ...data, country: activeCountryCode ?? "US" });
     }
     setShowModal(false);
     setEditingGoal(null);
@@ -545,20 +546,23 @@ export default function GoalsPage() {
     setShowModal(true);
   }
 
-  const filtered = goals.filter((g) => {
+  const countryGoals = goals.filter((g) => g.country === activeCountryCode);
+
+  const filtered = countryGoals.filter((g) => {
     if (filter === "active") return !g.is_completed;
     if (filter === "completed") return g.is_completed;
     return true;
   });
 
   // Summary stats
-  const activeGoals = goals.filter((g) => !g.is_completed);
-  const completedGoals = goals.filter((g) => g.is_completed);
+  const activeGoals = countryGoals.filter((g) => !g.is_completed);
+  const completedGoals = countryGoals.filter((g) => g.is_completed);
   const totalTarget = activeGoals.reduce((s, g) => s + parseFloat(g.target_amount), 0);
   const totalProgress = activeGoals.reduce((s, g) => s + parseFloat(g.progress_amount), 0);
   const onTrackCount = activeGoals.filter((g) => g.is_on_track).length;
 
   return (
+    <CountryGate allowedCountries={["US", "IN"]} featureName="Goals">
     <div className="p-6 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -653,5 +657,6 @@ export default function GoalsPage() {
         />
       )}
     </div>
+    </CountryGate>
   );
 }

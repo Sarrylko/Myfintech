@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import { useEffect, useState } from "react";
 import { useCurrency } from "@/lib/currency";
 import {
@@ -264,10 +265,12 @@ function LogPaymentModal({
 
 function RecurringFormModal({
   initial,
+  country,
   onClose,
   onSaved,
 }: {
   initial?: RecurringTransaction;
+  country: string;
   onClose: () => void;
   onSaved: (rec: RecurringTransaction) => void;
 }) {
@@ -306,7 +309,7 @@ function RecurringFormModal({
       if (isEdit && initial) {
         rec = await updateRecurring(initial.id, payload);
       } else {
-        rec = await createRecurring(payload);
+        rec = await createRecurring({ ...payload, country });
       }
       onSaved(rec);
       onClose();
@@ -659,7 +662,7 @@ function SavedRow({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function RecurringPage() {
-  const { fmt } = useCurrency();
+  const { fmt, activeCountryCode } = useCurrency();
 
   const [saved, setSaved] = useState<RecurringTransaction[]>([]);
   const [candidates, setCandidates] = useState<RecurringCandidate[] | null>(null);
@@ -757,7 +760,8 @@ export default function RecurringPage() {
 
   // ── Summary ──
 
-  const active = saved.filter((r) => r.is_active);
+  const countrySaved = saved.filter((r) => r.country === activeCountryCode);
+  const active = countrySaved.filter((r) => r.is_active);
   const hasVariable = active.some((r) => r.amount_type === "variable");
   const monthlyCommitted = active.reduce((s, r) => s + effectiveMonthlyAmount(r), 0);
   const annualProjected = monthlyCommitted * 12;
@@ -770,7 +774,7 @@ export default function RecurringPage() {
 
   // ── Filtered + grouped ──
 
-  const filtered = saved.filter((r) => spendFilter === "all" || r.spending_type === spendFilter);
+  const filtered = countrySaved.filter((r) => spendFilter === "all" || r.spending_type === spendFilter);
 
   let groups: { key: string; label: string; icon?: string; items: RecurringTransaction[] }[] = [];
   if (groupBy === "tag") {
@@ -788,6 +792,7 @@ export default function RecurringPage() {
   // ── Render ──
 
   return (
+    <CountryGate allowedCountries={["US", "IN"]} featureName="Recurring & Subscriptions">
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -968,10 +973,12 @@ export default function RecurringPage() {
       {editModal !== null && (
         <RecurringFormModal
           initial={editModal === "new" ? undefined : editModal}
+          country={activeCountryCode ?? "US"}
           onClose={() => setEditModal(null)}
           onSaved={handleSaved}
         />
       )}
     </div>
+    </CountryGate>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import { useCallback, useEffect, useState } from "react";
 import { useCurrency } from "@/lib/currency";
 import {
@@ -1014,6 +1015,7 @@ export default function RetirementPage() {
   const insightIcons = ["💡", "📊", "🧮", "🛡", "⏱"];
 
   return (
+    <CountryGate allowedCountries={["US"]} featureName="Retirement Planner">
     <div className="min-h-screen bg-slate-900 text-white">
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
 
@@ -1633,5 +1635,6 @@ export default function RetirementPage() {
 
       </div>
     </div>
+    </CountryGate>
   );
 }

@@ -80,11 +80,23 @@ class HouseholdResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CountryProfile(BaseModel):
+    country_code: str
+    country_name: str
+    currency_code: str
+    locale: str
+    is_primary: bool
+
+    model_config = {"from_attributes": True}
+
+
 class HouseholdSettings(BaseModel):
     """Locale and currency preferences for a household."""
     default_currency: str = "USD"
     default_locale: str = "en-US"
     country_code: str = "US"
+    active_country_code: str = "US"
+    country_profiles: list[CountryProfile] = []
 
     model_config = {"from_attributes": True}
 
@@ -93,6 +105,19 @@ class HouseholdSettingsUpdate(BaseModel):
     default_currency: str | None = None
     default_locale: str | None = None
     country_code: str | None = None
+
+
+class ActiveCountryUpdate(BaseModel):
+    country_code: str
+
+
+class CountryProfileCreate(BaseModel):
+    country_code: str
+    country_name: str
+    currency_code: str
+    locale: str
+    is_primary: bool = False
+    display_order: int = 0
 
 
 class HouseholdMemberCreate(BaseModel):

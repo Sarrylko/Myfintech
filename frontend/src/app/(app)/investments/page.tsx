@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   listAccounts,
@@ -1439,7 +1440,7 @@ function Segment({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InvestmentsPage() {
-  const { fmt: fmtRaw } = useCurrency();
+  const { fmt: fmtRaw, activeCountryCode } = useCurrency();
   const fmt = (val: string | number | null | undefined, decimals = 0): string => {
     if (val === null || val === undefined || val === "") return "—";
     return fmtRaw(Number(val), { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -1463,12 +1464,12 @@ export default function InvestmentsPage() {
   useEffect(() => {
     Promise.all([listAccounts(), listHouseholdMembers()])
       .then(([all, mems]) => {
-        setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden));
+        setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden && a.country === activeCountryCode));
         setMembers(mems);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load data"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [activeCountryCode]);
 
   // Fetch refresh + market status; poll every 60s
   useEffect(() => {
@@ -1489,7 +1490,7 @@ export default function InvestmentsPage() {
       .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: false })));
     // Also refresh account list so Total Value cards stay in sync
     listAccounts()
-      .then((all) => setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden)))
+      .then((all) => setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden && a.country === activeCountryCode)))
       .catch(() => {});
   }
 
@@ -1500,7 +1501,7 @@ export default function InvestmentsPage() {
       const result = await refreshInvestmentPrices();
       // Re-fetch accounts to get updated current_balance (drives Total Value cards)
       listAccounts()
-        .then((all) => setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden)))
+        .then((all) => setAccounts(all.filter((a) => a.type === "investment" && !a.is_hidden && a.country === activeCountryCode)))
         .catch(() => {});
       // Re-fetch holdings for all currently expanded accounts
       const expanded = Object.keys(holdingsMap);
@@ -1559,6 +1560,7 @@ export default function InvestmentsPage() {
   const totalAll = totalBrokerage + totalRetirement + totalCrypto;
 
   return (
+    <CountryGate allowedCountries={["US", "IN"]} featureName="Investments">
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h2 className="text-2xl font-bold">Investments</h2>
@@ -1795,5 +1797,6 @@ export default function InvestmentsPage() {
         </div>
       )}
     </div>
+    </CountryGate>
   );
 }

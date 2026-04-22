@@ -17,6 +17,7 @@ class BudgetCreate(BaseModel):
     category_id: uuid.UUID
     amount: Decimal = Field(gt=0, decimal_places=2)
     currency_code: str = "USD"
+    country: str = "US"
     budget_type: BudgetType = BudgetType.monthly
     year: int = Field(ge=2000, le=2100)
     month: int | None = Field(default=None, ge=1, le=12)  # required only for monthly
@@ -70,6 +71,7 @@ class BudgetResponse(BaseModel):
     category: CategoryInBudget
     amount: Decimal
     currency_code: str
+    country: str = "US"
     budget_type: str
     month: int | None
     year: int

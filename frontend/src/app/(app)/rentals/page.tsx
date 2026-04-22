@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import { useEffect, useState, memo, useCallback } from "react";
 import { useCurrency } from "@/lib/currency";
 import { useRouter } from "next/navigation";
@@ -153,6 +154,7 @@ export default function RentalsPage() {
   }
 
   return (
+    <CountryGate allowedCountries={["US"]} featureName="Rentals">
     <div>
       <h2 className="text-2xl font-bold mb-6">Rentals</h2>
 
@@ -215,6 +217,7 @@ export default function RentalsPage() {
         />
       )}
     </div>
+    </CountryGate>
   );
 }
 

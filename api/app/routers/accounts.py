@@ -85,6 +85,7 @@ async def create_manual_account(
         current_balance=payload.current_balance,
         available_balance=payload.current_balance,
         currency_code=payload.currency_code,
+        country=payload.country,
         is_manual=True,
     )
     db.add(acct)

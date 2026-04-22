@@ -23,6 +23,7 @@ class Budget(Base):
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     currency_code: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")
+    country: Mapped[str] = mapped_column(String(2), server_default="US")
     budget_type: Mapped[str] = mapped_column(
         String(10), default="monthly", server_default="monthly"
     )  # monthly | annual | quarterly | custom

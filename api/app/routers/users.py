@@ -8,8 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.security import hash_password, verify_password
-from app.models.user import Household, User
+from sqlalchemy.orm import selectinload
+
+from app.models.user import Household, HouseholdCountryProfile, User
 from app.schemas.user import (
+    ActiveCountryUpdate,
+    CountryProfile,
+    CountryProfileCreate,
     HouseholdMemberCreate,
     HouseholdMemberUpdate,
     HouseholdSettings,
@@ -117,6 +122,20 @@ async def update_notification_prefs(
 
 # ─── Household locale / currency settings ─────────────────────────────────────
 
+async def _load_household_settings(household: Household) -> HouseholdSettings:
+    """Build HouseholdSettings from a household with country_profiles loaded."""
+    profiles = [CountryProfile.model_validate(p) for p in household.country_profiles]
+    # Derive active locale/currency from active country profile; fall back to household defaults
+    active = next((p for p in profiles if p.country_code == household.active_country_code), None)
+    return HouseholdSettings(
+        default_currency=active.currency_code if active else household.default_currency,
+        default_locale=active.locale if active else household.default_locale,
+        country_code=household.country_code,
+        active_country_code=household.active_country_code,
+        country_profiles=profiles,
+    )
+
+
 @router.get("/household/settings", response_model=HouseholdSettings)
 async def get_household_settings(
     user: User = Depends(get_current_user),
@@ -124,12 +143,14 @@ async def get_household_settings(
 ):
     """Return locale and currency preferences for the household."""
     result = await db.execute(
-        select(Household).where(Household.id == user.household_id)
+        select(Household)
+        .options(selectinload(Household.country_profiles))
+        .where(Household.id == user.household_id)
     )
     household = result.scalar_one_or_none()
     if not household:
         raise HTTPException(status_code=404, detail="Household not found")
-    return HouseholdSettings.model_validate(household)
+    return await _load_household_settings(household)
 
 
 @router.patch("/household/settings", response_model=HouseholdSettings)
@@ -142,7 +163,9 @@ async def update_household_settings(
     if user.role != "owner":
         raise HTTPException(status_code=403, detail="Only household owners can change locale settings")
     result = await db.execute(
-        select(Household).where(Household.id == user.household_id)
+        select(Household)
+        .options(selectinload(Household.country_profiles))
+        .where(Household.id == user.household_id)
     )
     household = result.scalar_one_or_none()
     if not household:
@@ -151,7 +174,89 @@ async def update_household_settings(
         setattr(household, field, value)
     await db.commit()
     await db.refresh(household)
-    return HouseholdSettings.model_validate(household)
+    await db.execute(
+        select(Household)
+        .options(selectinload(Household.country_profiles))
+        .where(Household.id == household.id)
+    )
+    result2 = await db.execute(
+        select(Household)
+        .options(selectinload(Household.country_profiles))
+        .where(Household.id == household.id)
+    )
+    household = result2.scalar_one()
+    return await _load_household_settings(household)
+
+
+@router.patch("/household/active-country", response_model=HouseholdSettings)
+async def switch_active_country(
+    payload: ActiveCountryUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch the household's active country context (any member can toggle)."""
+    result = await db.execute(
+        select(Household)
+        .options(selectinload(Household.country_profiles))
+        .where(Household.id == user.household_id)
+    )
+    household = result.scalar_one_or_none()
+    if not household:
+        raise HTTPException(status_code=404, detail="Household not found")
+    # Validate that this country profile exists for the household
+    valid_codes = {p.country_code for p in household.country_profiles}
+    if payload.country_code not in valid_codes:
+        raise HTTPException(status_code=400, detail=f"Country '{payload.country_code}' is not configured for this household")
+    household.active_country_code = payload.country_code
+    await db.commit()
+    result2 = await db.execute(
+        select(Household)
+        .options(selectinload(Household.country_profiles))
+        .where(Household.id == household.id)
+    )
+    household = result2.scalar_one()
+    return await _load_household_settings(household)
+
+
+@router.get("/household/country-profiles", response_model=list[CountryProfile])
+async def list_country_profiles(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all country profiles for the household."""
+    result = await db.execute(
+        select(HouseholdCountryProfile)
+        .where(HouseholdCountryProfile.household_id == user.household_id)
+        .order_by(HouseholdCountryProfile.display_order)
+    )
+    return result.scalars().all()
+
+
+@router.post("/household/country-profiles", response_model=CountryProfile, status_code=201)
+async def add_country_profile(
+    payload: CountryProfileCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a new country profile to the household (owner only)."""
+    if user.role != "owner":
+        raise HTTPException(status_code=403, detail="Only household owners can add country profiles")
+    existing = await db.execute(
+        select(HouseholdCountryProfile).where(
+            HouseholdCountryProfile.household_id == user.household_id,
+            HouseholdCountryProfile.country_code == payload.country_code,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Country profile already exists")
+    profile = HouseholdCountryProfile(
+        household_id=user.household_id,
+        **payload.model_dump(),
+    )
+    db.add(profile)
+    await db.commit()
+    await db.refresh(profile)
+    return CountryProfile.model_validate(profile)
 
 
 # ─── Household member management ──────────────────────────────────────────────

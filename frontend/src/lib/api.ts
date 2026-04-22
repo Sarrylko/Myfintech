@@ -124,12 +124,22 @@ export async function changePassword(
   });
 }
 
-// ─── Household Settings (locale / currency) ───────────────────────────────────
+// ─── Household Settings (locale / currency / country) ────────────────────────
+
+export interface CountryProfile {
+  country_code: string;
+  country_name: string;
+  currency_code: string;
+  locale: string;
+  is_primary: boolean;
+}
 
 export interface HouseholdSettings {
   default_currency: string;
   default_locale: string;
   country_code: string;
+  active_country_code: string;
+  country_profiles: CountryProfile[];
 }
 
 export async function getHouseholdSettings(): Promise<HouseholdSettings> {
@@ -137,11 +147,18 @@ export async function getHouseholdSettings(): Promise<HouseholdSettings> {
 }
 
 export async function updateHouseholdSettings(
-  data: Partial<HouseholdSettings>
+  data: Partial<Pick<HouseholdSettings, "default_currency" | "default_locale" | "country_code">>
 ): Promise<HouseholdSettings> {
   return apiFetch<HouseholdSettings>("/api/v1/users/household/settings", {
     method: "PATCH",
     body: JSON.stringify(data),
+  });
+}
+
+export async function switchActiveCountry(country_code: string): Promise<HouseholdSettings> {
+  return apiFetch<HouseholdSettings>("/api/v1/users/household/active-country", {
+    method: "PATCH",
+    body: JSON.stringify({ country_code }),
   });
 }
 
@@ -241,6 +258,7 @@ export interface Account {
   current_balance: string | null;
   available_balance: string | null;
   currency_code: string;
+  country: string;
   is_hidden: boolean;
   is_manual: boolean;
   created_at: string;
@@ -255,6 +273,7 @@ export interface ManualAccountCreate {
   mask?: string;
   current_balance?: number;
   currency_code?: string;
+  country?: string;
 }
 
 export interface AccountUpdate {
@@ -268,6 +287,8 @@ export interface AccountUpdate {
   mask?: string;
   current_balance?: number | null;
   is_hidden?: boolean;
+  country?: string;
+  currency_code?: string;
 }
 
 export interface TransactionSplit {
@@ -1144,6 +1165,7 @@ export interface RecurringTransaction {
   frequency: string;
   tag: string;           // home | personal | food | transport | health | subscriptions | savings | insurance | education | other
   spending_type: string; // need | want | saving
+  country: string;
   next_due_date: string | null;
   start_date: string | null;
   is_active: boolean;
@@ -1172,7 +1194,7 @@ export async function listRecurring(): Promise<RecurringTransaction[]> {
 
 export async function createRecurring(data: {
   name: string; amount: number; frequency: string; tag: string; spending_type: string;
-  merchant_name?: string; next_due_date?: string; start_date?: string; notes?: string;
+  merchant_name?: string; next_due_date?: string; start_date?: string; notes?: string; country?: string;
 }): Promise<RecurringTransaction> {
   return apiFetch<RecurringTransaction>("/api/v1/recurring/", {
     method: "POST",
@@ -1814,6 +1836,7 @@ export interface BudgetCreate {
   end_date?: string;    // ISO date string, required for quarterly/custom
   rollover_enabled?: boolean;
   alert_threshold?: number;
+  country?: string;
 }
 
 export interface BudgetUpdate {
@@ -1829,6 +1852,7 @@ export interface Budget {
   category: BudgetCategory;
   amount: string; // Decimal serialized as string
   budget_type: BudgetType;
+  country: string;
   month: number | null;
   year: number;
   start_date: string | null;
@@ -1928,6 +1952,7 @@ export interface GoalCreate {
   target_amount: string;
   current_amount?: string;
   currency_code?: string;
+  country?: string;
   start_date: string; // YYYY-MM-DD
   target_date: string; // YYYY-MM-DD
   linked_account_id?: string;
@@ -1972,6 +1997,7 @@ export interface Goal {
   target_amount: string;
   current_amount: string | null;
   currency_code: string;
+  country: string;
   start_date: string;
   target_date: string;
   linked_account_id: string | null;
@@ -2456,6 +2482,7 @@ export interface InsurancePolicy {
   policy_type: PolicyType;
   provider: string;
   policy_number: string | null;
+  country: string;
   premium_amount: string | null;
   premium_frequency: PremiumFrequency;
   coverage_amount: string | null;
@@ -2484,6 +2511,7 @@ export interface InsurancePolicyCreate {
   policy_type: PolicyType;
   provider: string;
   policy_number?: string;
+  country?: string;
   premium_amount?: number;
   premium_frequency?: PremiumFrequency;
   coverage_amount?: number;

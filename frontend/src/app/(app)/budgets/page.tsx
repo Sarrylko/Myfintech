@@ -1,5 +1,6 @@
 "use client";
 
+import CountryGate from "@/components/CountryGate";
 import { useState, useEffect, useRef } from "react";
 import {
   listBudgets,
@@ -1082,6 +1083,7 @@ function LongTermView({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function BudgetsPage() {
+  const { activeCountryCode } = useCurrency();
   const today = new Date();
   const [activeTab, setActiveTab] = useState<ViewTab>("monthly");
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -1123,7 +1125,7 @@ export default function BudgetsPage() {
       .then(([b, c]) => { setBudgets(b); setCategories(c); })
       .catch((e) => setError(e.message ?? "Failed to load budgets"))
       .finally(() => setLoading(false));
-  }, [month, year]);
+  }, [month, year, activeCountryCode]);
 
   // Load categories independently for wizard when switching tabs
   useEffect(() => {
@@ -1131,14 +1133,15 @@ export default function BudgetsPage() {
     listCustomCategories().then(setCategories).catch(() => {});
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const expenseBudgets = budgets.filter((b) => !b.category.is_income);
-  const incomeBudgets = budgets.filter((b) => b.category.is_income);
-  const existingCategoryIds = new Set(budgets.map((b) => b.category_id));
+  const countryBudgets = budgets.filter((b) => b.country === activeCountryCode);
+  const expenseBudgets = countryBudgets.filter((b) => !b.category.is_income);
+  const incomeBudgets = countryBudgets.filter((b) => b.category.is_income);
+  const existingCategoryIds = new Set(countryBudgets.map((b) => b.category_id));
 
-  const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.amount), 0);
-  const totalSpent = budgets.reduce((s, b) => s + parseFloat(b.actual_spent), 0);
+  const totalBudgeted = countryBudgets.reduce((s, b) => s + parseFloat(b.amount), 0);
+  const totalSpent = countryBudgets.reduce((s, b) => s + parseFloat(b.actual_spent), 0);
   const totalRemaining = totalBudgeted - totalSpent;
-  const overBudgetCount = budgets.filter((b) => parseFloat(b.remaining) < 0).length;
+  const overBudgetCount = countryBudgets.filter((b) => parseFloat(b.remaining) < 0).length;
 
   function openWizard() {
     const defaultType: BudgetType = activeTab === "longterm" ? "annual" : "monthly";
@@ -1185,6 +1188,7 @@ export default function BudgetsPage() {
             amount: parseFloat(e.amount),
             budget_type: wizard.budgetType,
             year: wizard.year,
+            country: activeCountryCode ?? "US",
             ...(wizard.budgetType === "monthly"
               ? { month: wizard.month }
               : { start_date: wizard.startDate, end_date: wizard.endDate }),
@@ -1272,6 +1276,7 @@ export default function BudgetsPage() {
   }
 
   return (
+    <CountryGate allowedCountries={["US", "IN"]} featureName="Budgets">
     <div>
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1420,5 +1425,6 @@ export default function BudgetsPage() {
         <EditModal budget={editingBudget} saving={saving} onClose={() => setEditingBudget(null)} onSave={handleEditSave} />
       )}
     </div>
+    </CountryGate>
   );
 }

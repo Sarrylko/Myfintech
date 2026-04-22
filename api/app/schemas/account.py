@@ -28,6 +28,7 @@ class AccountResponse(BaseModel):
     current_balance: Decimal | None
     available_balance: Decimal | None
     currency_code: str
+    country: str = "US"
     is_hidden: bool
     is_manual: bool
     created_at: datetime
@@ -44,6 +45,7 @@ class ManualAccountCreate(BaseModel):
     mask: str | None = None  # last 4 digits of account number
     current_balance: Decimal | None = None
     currency_code: str = "USD"
+    country: str = "US"
 
 
 class AccountUpdate(BaseModel):
@@ -57,6 +59,8 @@ class AccountUpdate(BaseModel):
     mask: str | None = None
     current_balance: Decimal | None = None
     is_hidden: bool | None = None
+    country: str | None = None
+    currency_code: str | None = None
 
 
 class TransactionResponse(BaseModel):
