@@ -734,6 +734,7 @@ export interface Tenant {
   email: string | null;
   phone: string | null;
   notes: string | null;
+  country: string;
   created_at: string;
 }
 
@@ -742,6 +743,7 @@ export interface TenantCreate {
   email?: string;
   phone?: string;
   notes?: string;
+  country?: string;
 }
 
 export interface Lease {
@@ -1702,9 +1704,12 @@ export async function getPropertyReport(
 export async function getPortfolioReport(
   year: number,
   month: string, // YYYY-MM
+  country?: string,
 ): Promise<PortfolioReport> {
+  const params = new URLSearchParams({ year: String(year), month });
+  if (country) params.set("country", country);
   return apiFetch<PortfolioReport>(
-    `/api/v1/reports/portfolio?year=${year}&month=${month}`,
+    `/api/v1/reports/portfolio?${params}`,
     {}
   );
 }

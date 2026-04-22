@@ -1552,7 +1552,7 @@ export default function InvestmentsPage() {
     : accounts.filter((a) => a.owner_user_id === ownerFilter);
 
   const crypto = filtered.filter((a) => isCrypto(a.subtype));
-  const brokerage = filtered.filter((a) => !isRetirement(a.subtype) && !isCrypto(a.subtype));
+  const brokerage = filtered.filter((a) => !isRetirement(a.subtype) && !isCrypto(a.subtype) && (a.subtype ?? "").toLowerCase() !== "529");
   const retirement = filtered.filter((a) => isRetirement(a.subtype));
   const totalCrypto = totalBalance(crypto);
   const totalBrokerage = totalBalance(brokerage);

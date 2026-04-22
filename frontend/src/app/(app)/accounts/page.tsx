@@ -66,6 +66,8 @@ const SUBTYPES: Record<string, { value: string; label: string }[]> = {
     { value: "401k", label: "401(k)" },
     { value: "ira", label: "IRA" },
     { value: "roth", label: "Roth IRA" },
+    { value: "529", label: "529 Plan" },
+    { value: "hsa", label: "HSA" },
     { value: "crypto exchange", label: "Crypto Exchange" },
   ],
   loan: [
@@ -381,7 +383,7 @@ export function AccountsContent() {
   const totalChecking   = sumBal(checkingAccounts);
   const totalSavings    = sumBal(savingsAccounts);
   const totalCards      = sumBal(creditAccounts);
-  const totalInvest     = sumBal(investmentAccounts);
+  const totalInvest     = sumBal(investmentAccounts.filter((a) => (a.subtype ?? "").toLowerCase() !== "529"));
   const totalLoans      = sumBal(loanAccounts);
   const totalOtherDep   = sumBal(otherDepository);
   const netCash         = totalChecking + totalSavings + totalOtherDep - totalCards;

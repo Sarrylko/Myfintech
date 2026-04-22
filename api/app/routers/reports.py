@@ -686,6 +686,7 @@ async def property_report(
 async def portfolio_report(
     year: int = Query(default=None),
     month: str = Query(default=None),  # YYYY-MM
+    country: str = Query(default=None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -701,12 +702,16 @@ async def portfolio_report(
         except (ValueError, IndexError):
             raise HTTPException(status_code=400, detail="month must be YYYY-MM")
 
-    props_result = await db.execute(
-        select(Property).where(
-            Property.household_id == user.household_id,
-            Property.is_primary_residence == False,
-        )
-    )
+    filters = [
+        Property.household_id == user.household_id,
+        Property.is_primary_residence == False,
+    ]
+    if country == "IN":
+        filters.append(Property.country == "IN")
+    else:
+        filters.append(or_(Property.country == None, Property.country == "US"))
+
+    props_result = await db.execute(select(Property).where(*filters))
     properties = list(props_result.scalars().all())
 
     reports = []

@@ -73,11 +73,12 @@ function SummaryCard({ label, value, sub }: { label: string; value: string; sub?
 function CurrencyInput({
   label, value, onChange, placeholder,
 }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const { symbol } = useCurrency();
   return (
     <div>
       <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
       <div className="relative">
-        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{symbol}</span>
         <input
           type="number" min="0" step="any" value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -108,9 +109,11 @@ function TextInput({
 
 export default function RentalsPage() {
   const router = useRouter();
+  const { activeCountryCode } = useCurrency();
   const [tab, setTab] = useState<Tab>("Overview");
 
   // Global data
+  const [allRawProps, setAllRawProps] = useState<Property[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [allUnits, setAllUnits] = useState<Unit[]>([]);   // flat list for property lookup
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -123,6 +126,21 @@ export default function RentalsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Re-filter properties when active country changes
+  useEffect(() => {
+    if (allRawProps.length === 0) return;
+    const filtered = allRawProps.filter((p) => {
+      if (p.is_primary_residence) return false;
+      if (activeCountryCode === "IN") return p.country === "IN";
+      return !p.country || p.country === "US";
+    });
+    setProperties(filtered);
+    Promise.all(filtered.map((p) => listUnits(p.id).catch(() => []))).then((lists) =>
+      setAllUnits(lists.flat())
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCountryCode, allRawProps]);
+
   async function loadAll() {
     setLoading(true);
     try {
@@ -131,13 +149,9 @@ export default function RentalsPage() {
         listTenants(),
         listLeases(),
       ]);
-      setProperties(props.filter((p) => !p.is_primary_residence));
+      setAllRawProps(props);
       setTenants(tnts);
       setAllLeases(lses);
-      // Load all units for all properties to enable property-name lookup in PaymentsTab
-      const rentalProps = props.filter((p) => !p.is_primary_residence);
-      const unitLists = await Promise.all(rentalProps.map((p) => listUnits(p.id).catch(() => [])));
-      setAllUnits(unitLists.flat());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -153,8 +167,16 @@ export default function RentalsPage() {
     );
   }
 
+  // Filter tenants and leases to the active country context
+  const filteredTenants = tenants.filter((t) => {
+    if (activeCountryCode === "IN") return t.country === "IN";
+    return !t.country || t.country === "US";
+  });
+  const unitIdSet = new Set(allUnits.map((u) => u.id));
+  const filteredLeases = allLeases.filter((l) => unitIdSet.has(l.unit_id));
+
   return (
-    <CountryGate allowedCountries={["US"]} featureName="Rentals">
+    <CountryGate allowedCountries={["US", "IN"]} featureName="Rentals">
     <div>
       <h2 className="text-2xl font-bold mb-6">Rentals</h2>
 
@@ -184,29 +206,30 @@ export default function RentalsPage() {
       {tab === "Overview" && (
         <OverviewTab
           properties={properties}
-          allLeases={allLeases}
-          tenants={tenants}
+          allLeases={filteredLeases}
+          tenants={filteredTenants}
         />
       )}
       {tab === "Units & Leases" && (
         <UnitsLeasesTab
           properties={properties}
-          tenants={tenants}
-          allLeases={allLeases}
+          tenants={filteredTenants}
+          allLeases={filteredLeases}
           setAllLeases={setAllLeases}
         />
       )}
       {tab === "Tenants" && (
         <TenantsTab
-          tenants={tenants}
+          tenants={filteredTenants}
           setTenants={setTenants}
-          allLeases={allLeases}
+          allLeases={filteredLeases}
+          activeCountryCode={activeCountryCode}
         />
       )}
       {tab === "Payments" && (
         <PaymentsTab
-          allLeases={allLeases}
-          tenants={tenants}
+          allLeases={filteredLeases}
+          tenants={filteredTenants}
           properties={properties}
           allUnits={allUnits}
         />
@@ -214,6 +237,7 @@ export default function RentalsPage() {
       {tab === "Reports" && (
         <ReportsTab
           properties={properties}
+          activeCountryCode={activeCountryCode}
         />
       )}
     </div>
@@ -799,11 +823,12 @@ function UnitsLeasesTab({
 // ─── Tenants Tab ───────────────────────────────────────────────────────────
 
 function TenantsTab({
-  tenants, setTenants, allLeases,
+  tenants, setTenants, allLeases, activeCountryCode,
 }: {
   tenants: Tenant[];
   setTenants: React.Dispatch<React.SetStateAction<Tenant[]>>;
   allLeases: Lease[];
+  activeCountryCode: string;
 }) {
   const { fmt: fmtRaw } = useCurrency();
   function fmt(val: string | number | null | undefined): string {
@@ -812,7 +837,7 @@ function TenantsTab({
   }
 
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState<TenantCreate>({ name: "" });
+  const [form, setForm] = useState<TenantCreate>({ name: "", country: activeCountryCode });
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<TenantCreate>({ name: "" });
@@ -873,6 +898,18 @@ function TenantsTab({
               <TextInput label="Email" type="email" value={form.email ?? ""} onChange={(v) => setForm((f) => ({ ...f, email: v || undefined }))} placeholder="jane@example.com" />
               <TextInput label="Phone" type="tel" value={form.phone ?? ""} onChange={(v) => setForm((f) => ({ ...f, phone: v || undefined }))} placeholder="+1 555-0100" />
               <TextInput label="Notes" value={form.notes ?? ""} onChange={(v) => setForm((f) => ({ ...f, notes: v || undefined }))} placeholder="Optional notes" />
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
+                <select
+                  value={form.country ?? "US"}
+                  onChange={(e) => setForm((f) => ({ ...f, country: e.target.value }))}
+                  title="Country"
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="US">🇺🇸 United States</option>
+                  <option value="IN">🇮🇳 India</option>
+                </select>
+              </div>
             </div>
             <div className="flex gap-2">
               <button type="submit" disabled={saving || !form.name.trim()}
@@ -899,6 +936,18 @@ function TenantsTab({
                         <TextInput label="Email" type="email" value={editForm.email ?? ""} onChange={(v) => setEditForm((f) => ({ ...f, email: v || undefined }))} />
                         <TextInput label="Phone" value={editForm.phone ?? ""} onChange={(v) => setEditForm((f) => ({ ...f, phone: v || undefined }))} />
                         <TextInput label="Notes" value={editForm.notes ?? ""} onChange={(v) => setEditForm((f) => ({ ...f, notes: v || undefined }))} />
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
+                          <select
+                            value={editForm.country ?? "US"}
+                            onChange={(e) => setEditForm((f) => ({ ...f, country: e.target.value }))}
+                            title="Country"
+                            className="border border-gray-300 rounded-lg px-3 py-1.5 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          >
+                            <option value="US">🇺🇸 United States</option>
+                            <option value="IN">🇮🇳 India</option>
+                          </select>
+                        </div>
                       </div>
                       <div className="flex gap-2">
                         <button onClick={() => handleEdit(t.id)} disabled={saving}
@@ -911,7 +960,12 @@ function TenantsTab({
                   ) : (
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-medium text-gray-800">{t.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-gray-800">{t.name}</p>
+                          {t.country && t.country !== "US" && (
+                            <span className="text-xs bg-blue-50 text-blue-600 rounded px-2 py-0.5 font-medium">{t.country}</span>
+                          )}
+                        </div>
                         <p className="text-xs text-gray-400">
                           {[t.email, t.phone].filter(Boolean).join(" · ") || "No contact info"}
                         </p>
@@ -921,7 +975,7 @@ function TenantsTab({
                       </div>
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => { setEditId(t.id); setEditForm({ name: t.name, email: t.email ?? undefined, phone: t.phone ?? undefined, notes: t.notes ?? undefined }); }}
+                          onClick={() => { setEditId(t.id); setEditForm({ name: t.name, email: t.email ?? undefined, phone: t.phone ?? undefined, notes: t.notes ?? undefined, country: t.country ?? "US" }); }}
                           className="text-xs text-primary-600 hover:text-primary-700"
                         >
                           Edit
@@ -1106,7 +1160,8 @@ const TT = {
 
 function ReportsTab({
   properties,
-}: { properties: Property[] }) {
+  activeCountryCode,
+}: { properties: Property[]; activeCountryCode: string }) {
   const { fmt: fmtRaw, fmtCompact, locale } = useCurrency();
   function fmtM(n: number | null | undefined): string {
     if (n === null || n === undefined) return "—";
@@ -1152,7 +1207,7 @@ function ReportsTab({
     setPortfolio(null);
     try {
       if (selectedPropId === "all") {
-        const data = await getPortfolioReport(year, monthStr);
+        const data = await getPortfolioReport(year, monthStr, activeCountryCode);
         setPortfolio(data);
       } else if (selectedPreset === "LTD") {
         // Lifetime: pass period=ltd, no prev-month comparison
@@ -1210,7 +1265,7 @@ function ReportsTab({
             const mStr = `${year}-${m.toString().padStart(2, "0")}`;
             labels.push(MONTHS[m - 1]);
             if (selectedPropId === "all") {
-              promises.push(getPortfolioReport(year, mStr));
+              promises.push(getPortfolioReport(year, mStr, activeCountryCode));
             } else {
               promises.push(getPropertyReport(selectedPropId, year, mStr));
             }
@@ -1221,7 +1276,7 @@ function ReportsTab({
             const mStr = `${year}-${m.toString().padStart(2, "0")}`;
             labels.push(MONTHS[m - 1]);
             if (selectedPropId === "all") {
-              promises.push(getPortfolioReport(year, mStr));
+              promises.push(getPortfolioReport(year, mStr, activeCountryCode));
             } else {
               promises.push(getPropertyReport(selectedPropId, year, mStr));
             }

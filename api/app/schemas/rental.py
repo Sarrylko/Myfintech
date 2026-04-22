@@ -46,6 +46,7 @@ class TenantCreate(BaseModel):
     email: str | None = None
     phone: str | None = None
     notes: str | None = None
+    country: str = "US"
 
 
 class TenantUpdate(BaseModel):
@@ -53,6 +54,7 @@ class TenantUpdate(BaseModel):
     email: str | None = None
     phone: str | None = None
     notes: str | None = None
+    country: str | None = None
 
 
 class TenantResponse(BaseModel):
@@ -64,6 +66,7 @@ class TenantResponse(BaseModel):
     email: str | None
     phone: str | None
     notes: str | None
+    country: str
     created_at: datetime
 
 

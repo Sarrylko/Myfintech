@@ -1088,7 +1088,7 @@ function AccountsPanel({ accounts, onSync, syncing, lastUpdated }: {
   const checkingAccs = vis.filter((a) => a.type === "depository" && a.subtype !== "savings");
   const savingsAccs  = vis.filter((a) => a.type === "depository" && a.subtype === "savings");
   const creditAccs   = vis.filter((a) => a.type === "credit");
-  const investAccs   = vis.filter((a) => ["investment", "brokerage"].includes(a.type));
+  const investAccs   = vis.filter((a) => ["investment", "brokerage"].includes(a.type) && (a.subtype ?? "").toLowerCase() !== "529");
 
   const checkingTotal = sum(checkingAccs);
   const savingsTotal  = sum(savingsAccs);
@@ -1301,7 +1301,7 @@ export default function Dashboard() {
     .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
 
   const investments = visibleAccounts
-    .filter((a) => ["investment", "brokerage"].includes(a.type))
+    .filter((a) => ["investment", "brokerage"].includes(a.type) && (a.subtype ?? "").toLowerCase() !== "529")
     .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
 
   const creditAccounts = visibleAccounts.filter((a) => a.type === "credit");
