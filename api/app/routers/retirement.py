@@ -439,6 +439,7 @@ async def get_retirement_projection(
     years_to_retirement = max(0, profile.retirement_age - current_age)
 
     r = float(profile.expected_return_rate)
+    inflation_r = float(profile.inflation_rate)
     n = years_to_retirement
 
     # Combine contributions (add spouse if enabled)
@@ -533,11 +534,18 @@ async def get_retirement_projection(
     total_net_worth = total_cash + total_investment_assets + total_real_estate - credit_debt - total_mortgage
 
     # ── Three-scenario projection math ───────────────────────────────────
-    target = desired_income / SAFE_WITHDRAWAL_RATE
+    # Project in real (inflation-adjusted) terms so the portfolio FV is in today's
+    # purchasing power and can be compared directly to `target` (also today's dollars).
+    # Real rate = (1 + nominal) / (1 + inflation) - 1
+    swr = float(profile.safe_withdrawal_rate) if profile.safe_withdrawal_rate else SAFE_WITHDRAWAL_RATE
+    target = desired_income / swr
 
-    r_pessimistic = max(0.01, r - 0.02)
-    r_base = r
-    r_optimistic = r + 0.03
+    def _to_real(nominal_rate: float) -> float:
+        return (1 + nominal_rate) / (1 + inflation_r) - 1
+
+    r_pessimistic = max(0.001, _to_real(max(0.01, r - 0.02)))
+    r_base = max(0.001, _to_real(r))
+    r_optimistic = max(0.001, _to_real(r + 0.03))
 
     def _project(rate: float) -> float:
         return _fv_lump_sum(retirement_assets, rate, n) + _fv_annuity(annual_contribution, rate, n)
@@ -551,9 +559,9 @@ async def get_retirement_projection(
     on_track_pct = min(200.0, (projected / target * 100) if target > 0 else 0.0)
     probability = _probability_of_success(projected_pessimistic, projected_base, projected_optimistic, target)
 
-    # Required extra annual saving to close the gap (base scenario)
-    if gap > 0 and n > 0 and r > 0:
-        required_extra_annual = gap / (((1 + r) ** n - 1) / r)
+    # Required extra annual saving to close the gap (base real-rate scenario)
+    if gap > 0 and n > 0 and r_base > 0:
+        required_extra_annual = gap / (((1 + r_base) ** n - 1) / r_base)
     else:
         required_extra_annual = 0.0
     monthly_needed = required_extra_annual / 12
@@ -585,9 +593,9 @@ async def get_retirement_projection(
     # ── Income sources ───────────────────────────────────────────────────
     income_sources: list[IncomeSource] = []
 
-    portfolio_income = projected * SAFE_WITHDRAWAL_RATE
+    portfolio_income = projected * swr
     income_sources.append(IncomeSource(
-        label="Portfolio Withdrawals (4% SWR)",
+        label=f"Portfolio Withdrawals ({swr * 100:.1f}% SWR)",
         annual_amount=round(portfolio_income, 2),
         source_type="portfolio",
     ))
@@ -634,7 +642,7 @@ async def get_retirement_projection(
             source_type="rental",
         ))
 
-    re_income = real_estate_equity * SAFE_WITHDRAWAL_RATE
+    re_income = real_estate_equity * swr
     if re_income > 0:
         income_sources.append(IncomeSource(
             label="Real Estate Equity Income",
@@ -712,7 +720,14 @@ async def get_yearly_plan(
     inflation_r = float(profile.inflation_rate)
     retirement_age = profile.retirement_age
     life_exp_age = profile.life_expectancy_age
-    end_year = current_year + (life_exp_age - current_age)
+    # If spouse has a longer life expectancy, extend the plan to cover them
+    if profile.include_spouse and profile.spouse_birth_year and profile.spouse_life_expectancy_age:
+        spouse_current_age = current_year - profile.spouse_birth_year
+        spouse_plan_end_age = profile.spouse_life_expectancy_age
+        spouse_end_year = current_year + (spouse_plan_end_age - spouse_current_age)
+        end_year = max(current_year + (life_exp_age - current_age), spouse_end_year)
+    else:
+        end_year = current_year + (life_exp_age - current_age)
 
     # ── Expense basis ──────────────────────────────────────────────────────
     if profile.monthly_essential_expenses or profile.monthly_non_essential_expenses:

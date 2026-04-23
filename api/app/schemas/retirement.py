@@ -16,10 +16,12 @@ class RetirementProfileCreate(BaseModel):
     social_security_estimate: Decimal | None = None
     expected_return_rate: Decimal = Decimal("0.07")
     inflation_rate: Decimal = Decimal("0.03")
+    safe_withdrawal_rate: Decimal = Decimal("0.04")
     annual_contribution: Decimal = Decimal("0")
     include_spouse: bool = False
     spouse_birth_year: int | None = None
     spouse_retirement_age: int | None = None
+    spouse_life_expectancy_age: int | None = None
     spouse_social_security_estimate: Decimal | None = None
     spouse_annual_contribution: Decimal | None = None
     yearly_income: Decimal | None = None
@@ -48,6 +50,13 @@ class RetirementProfileCreate(BaseModel):
             raise ValueError("expected_return_rate must be between 1% and 20%")
         return v
 
+    @field_validator("safe_withdrawal_rate")
+    @classmethod
+    def valid_swr(cls, v: Decimal) -> Decimal:
+        if v < Decimal("0.02") or v > Decimal("0.08"):
+            raise ValueError("safe_withdrawal_rate must be between 2% and 8%")
+        return v
+
 
 class RetirementProfileUpdate(BaseModel):
     currency_code: str | None = None
@@ -58,10 +67,12 @@ class RetirementProfileUpdate(BaseModel):
     social_security_estimate: Decimal | None = None
     expected_return_rate: Decimal | None = None
     inflation_rate: Decimal | None = None
+    safe_withdrawal_rate: Decimal | None = None
     annual_contribution: Decimal | None = None
     include_spouse: bool | None = None
     spouse_birth_year: int | None = None
     spouse_retirement_age: int | None = None
+    spouse_life_expectancy_age: int | None = None
     spouse_social_security_estimate: Decimal | None = None
     spouse_annual_contribution: Decimal | None = None
     yearly_income: Decimal | None = None
@@ -81,10 +92,12 @@ class RetirementProfileResponse(BaseModel):
     social_security_estimate: Decimal | None
     expected_return_rate: Decimal
     inflation_rate: Decimal
+    safe_withdrawal_rate: Decimal
     annual_contribution: Decimal
     include_spouse: bool
     spouse_birth_year: int | None
     spouse_retirement_age: int | None
+    spouse_life_expectancy_age: int | None
     spouse_social_security_estimate: Decimal | None
     spouse_annual_contribution: Decimal | None
     yearly_income: Decimal | None

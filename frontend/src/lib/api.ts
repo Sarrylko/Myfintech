@@ -2587,10 +2587,12 @@ export interface RetirementProfile {
   social_security_estimate: string | null;
   expected_return_rate: string;
   inflation_rate: string;
+  safe_withdrawal_rate: string;
   annual_contribution: string;
   include_spouse: boolean;
   spouse_birth_year: number | null;
   spouse_retirement_age: number | null;
+  spouse_life_expectancy_age: number | null;
   spouse_social_security_estimate: string | null;
   spouse_annual_contribution: string | null;
   yearly_income: string | null;
@@ -2674,10 +2676,12 @@ export async function upsertRetirementProfile(data: {
   social_security_estimate?: number | null;
   expected_return_rate: number;
   inflation_rate: number;
+  safe_withdrawal_rate?: number;
   annual_contribution: number;
   include_spouse?: boolean;
   spouse_birth_year?: number | null;
   spouse_retirement_age?: number | null;
+  spouse_life_expectancy_age?: number | null;
   spouse_social_security_estimate?: number | null;
   spouse_annual_contribution?: number | null;
   yearly_income?: number | null;

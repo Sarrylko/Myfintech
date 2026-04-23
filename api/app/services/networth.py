@@ -24,7 +24,7 @@ from app.models.account import Account
 from app.models.networth import NetWorthSnapshot
 from app.models.property import Property
 from app.models.property_details import Loan
-from app.models.user import Household
+from app.models.user import Household, HouseholdCountryProfile
 from app.worker import celery_app
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,11 @@ _engine = create_engine(settings.database_url_sync, pool_pre_ping=True)
 
 def _compute_metrics(db: Session, household_id: uuid.UUID) -> dict:
     """Compute the 5 snapshot metrics for one household using a sync session."""
+    household = db.execute(
+        select(Household).where(Household.id == household_id)
+    ).scalar_one_or_none()
+    home_currency = household.default_currency if household else "USD"
+
     # Accounts
     accounts = db.execute(
         select(Account).where(
@@ -57,9 +62,12 @@ def _compute_metrics(db: Session, household_id: uuid.UUID) -> dict:
         elif acc.type == "credit":
             credit_debt += bal
 
-    # Properties — real-estate value
+    # Properties — only include properties in the household's home currency
     properties = db.execute(
-        select(Property).where(Property.household_id == household_id)
+        select(Property).where(
+            Property.household_id == household_id,
+            Property.currency_code == home_currency,
+        )
     ).scalars().all()
 
     total_real_estate = sum((p.current_value or Decimal(0)) for p in properties)

@@ -335,9 +335,11 @@ interface ProfileFormData {
   expected_return_rate: string;
   inflation_rate: string;
   annual_contribution: string;
+  safe_withdrawal_rate: string;
   include_spouse: boolean;
   spouse_birth_year: string;
   spouse_retirement_age: string;
+  spouse_life_expectancy_age: string;
   spouse_social_security_estimate: string;
   spouse_annual_contribution: string;
   yearly_income: string;
@@ -365,10 +367,12 @@ function ProfileForm({
     social_security_estimate: initial?.social_security_estimate ?? "",
     expected_return_rate: initial?.expected_return_rate ?? "7",
     inflation_rate: initial?.inflation_rate ?? "3",
+    safe_withdrawal_rate: initial?.safe_withdrawal_rate ?? "4",
     annual_contribution: initial?.annual_contribution ?? "0",
     include_spouse: initial?.include_spouse ?? false,
     spouse_birth_year: initial?.spouse_birth_year ?? String(currentYear - 38),
     spouse_retirement_age: initial?.spouse_retirement_age ?? "65",
+    spouse_life_expectancy_age: initial?.spouse_life_expectancy_age ?? "90",
     spouse_social_security_estimate: initial?.spouse_social_security_estimate ?? "",
     spouse_annual_contribution: initial?.spouse_annual_contribution ?? "0",
     yearly_income: initial?.yearly_income ?? "",
@@ -494,6 +498,18 @@ function ProfileForm({
             onChange={(e) => fs("inflation_rate", e.target.value)} className="w-full accent-amber-500" />
           <div className="flex justify-between text-xs text-slate-600 mt-0.5"><span>1%</span><span>6%</span></div>
         </div>
+        <div className="sm:col-span-2">
+          <div className="flex justify-between text-xs text-slate-400 mb-1">
+            <div>
+              <label>Safe Withdrawal Rate (SWR)</label>
+              <span className="text-slate-500 ml-2">— drives your retirement target ({(100 / parseFloat(form.safe_withdrawal_rate || "4")).toFixed(0)}× income)</span>
+            </div>
+            <span className="text-emerald-400 font-semibold">{form.safe_withdrawal_rate}%</span>
+          </div>
+          <input type="range" title="Safe withdrawal rate" min="2" max="6" step="0.1" value={form.safe_withdrawal_rate}
+            onChange={(e) => fs("safe_withdrawal_rate", e.target.value)} className="w-full accent-emerald-500" />
+          <div className="flex justify-between text-xs text-slate-600 mt-0.5"><span>2% (conservative)</span><span>6% (aggressive)</span></div>
+        </div>
       </div>
 
       {/* Spouse toggle */}
@@ -523,6 +539,12 @@ function ProfileForm({
               <input type="number" title="Spouse target retirement age" value={form.spouse_retirement_age} onChange={(e) => fs("spouse_retirement_age", e.target.value)}
                 className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
                 min="40" max="80" required={form.include_spouse} />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Spouse Life Expectancy Age</label>
+              <input type="number" title="Spouse life expectancy age" value={form.spouse_life_expectancy_age} onChange={(e) => fs("spouse_life_expectancy_age", e.target.value)}
+                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                min="70" max="110" />
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">Spouse Annual Income ($)</label>
@@ -682,7 +704,7 @@ function YearByYearTable({
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
         <div>
           <h2 className="text-base font-semibold text-white">Year-by-Year Retirement Plan</h2>
-          <p className="text-slate-400 text-xs mt-0.5">Base scenario · inflation-adjusted · current dollars</p>
+          <p className="text-slate-400 text-xs mt-0.5">Base scenario · nominal (future) dollars — all amounts grow with inflation each year</p>
         </div>
         <button
           type="button"
@@ -736,13 +758,20 @@ function YearByYearTable({
                       <td className="sticky left-0 z-10 bg-slate-700/95 px-4 py-2.5 font-semibold text-white border-r border-slate-600 text-xs">
                         {def.label}
                       </td>
-                      {rows.map((row) => (
-                        <td key={row.year} className={`px-3 py-2.5 text-center font-semibold text-white border-l border-slate-600/40 ${
-                          row.age === retirementAge ? "bg-blue-900/10" : ""
-                        }`}>
-                          {def.totalKey ? fmtRaw(row[def.totalKey] as number) : ""}
-                        </td>
-                      ))}
+                      {rows.map((row) => {
+                        const annual = def.totalKey ? (row[def.totalKey] as number) : null;
+                        const showMonthly = def.totalKey === "total_expenses" || def.totalKey === "total_income" || def.totalKey === "savings_withdrawals";
+                        return (
+                          <td key={row.year} className={`px-3 py-2.5 text-center font-semibold text-white border-l border-slate-600/40 ${
+                            row.age === retirementAge ? "bg-blue-900/10" : ""
+                          }`}>
+                            {annual !== null ? fmtRaw(annual) : ""}
+                            {showMonthly && annual !== null && annual > 0 && (
+                              <div className="text-slate-400 text-[9px] font-normal mt-0.5">{fmtRaw(annual / 12)}/mo</div>
+                            )}
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 }
@@ -858,10 +887,12 @@ export default function RetirementPage() {
       social_security_estimate: formData.social_security_estimate ? parseFloat(formData.social_security_estimate) : null,
       expected_return_rate: parseFloat(formData.expected_return_rate) / 100,
       inflation_rate: parseFloat(formData.inflation_rate) / 100,
+      safe_withdrawal_rate: parseFloat(formData.safe_withdrawal_rate) / 100,
       annual_contribution: parseFloat(formData.annual_contribution),
       include_spouse: formData.include_spouse,
       spouse_birth_year: formData.include_spouse && formData.spouse_birth_year ? parseInt(formData.spouse_birth_year) : null,
       spouse_retirement_age: formData.include_spouse && formData.spouse_retirement_age ? parseInt(formData.spouse_retirement_age) : null,
+      spouse_life_expectancy_age: formData.include_spouse && formData.spouse_life_expectancy_age ? parseInt(formData.spouse_life_expectancy_age) : null,
       spouse_social_security_estimate: formData.include_spouse && formData.spouse_social_security_estimate ? parseFloat(formData.spouse_social_security_estimate) : null,
       spouse_annual_contribution: formData.include_spouse && formData.spouse_annual_contribution ? parseFloat(formData.spouse_annual_contribution) : null,
       yearly_income: formData.yearly_income ? parseFloat(formData.yearly_income) : null,
@@ -1000,10 +1031,12 @@ export default function RetirementPage() {
     social_security_estimate: prof.social_security_estimate ? String(Math.round(parseFloat(prof.social_security_estimate as unknown as string))) : "",
     expected_return_rate: String(Math.round(parseFloat(prof.expected_return_rate as unknown as string) * 100)),
     inflation_rate: String(Math.round(parseFloat(prof.inflation_rate as unknown as string) * 100)),
+    safe_withdrawal_rate: prof.safe_withdrawal_rate ? String(parseFloat(prof.safe_withdrawal_rate as unknown as string) * 100) : "4",
     annual_contribution: String(Math.round(parseFloat(prof.annual_contribution as unknown as string))),
     include_spouse: prof.include_spouse,
     spouse_birth_year: prof.spouse_birth_year ? String(prof.spouse_birth_year) : String(currentYear - 38),
     spouse_retirement_age: prof.spouse_retirement_age ? String(prof.spouse_retirement_age) : "65",
+    spouse_life_expectancy_age: prof.spouse_life_expectancy_age ? String(prof.spouse_life_expectancy_age) : "90",
     spouse_social_security_estimate: prof.spouse_social_security_estimate ? String(Math.round(parseFloat(prof.spouse_social_security_estimate as unknown as string))) : "",
     spouse_annual_contribution: prof.spouse_annual_contribution ? String(Math.round(parseFloat(prof.spouse_annual_contribution as unknown as string))) : "0",
     yearly_income: prof.yearly_income ? String(Math.round(parseFloat(prof.yearly_income as unknown as string))) : "",

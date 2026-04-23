@@ -15,7 +15,7 @@ from app.models.account import Account
 from app.models.networth import NetWorthSnapshot
 from app.models.property import Property
 from app.models.property_details import Loan
-from app.models.user import User
+from app.models.user import Household, User
 
 router = APIRouter(prefix="/networth", tags=["networth"])
 
@@ -38,6 +38,11 @@ class NetWorthSnapshotResponse(BaseModel):
 
 async def _compute_metrics_async(db: AsyncSession, household_id: uuid.UUID) -> dict:
     """Compute the 5 snapshot metrics using the async session."""
+    household = (await db.execute(
+        select(Household).where(Household.id == household_id)
+    )).scalar_one_or_none()
+    home_currency = household.default_currency if household else "USD"
+
     accounts = (await db.execute(
         select(Account).where(
             Account.household_id == household_id,
@@ -58,8 +63,12 @@ async def _compute_metrics_async(db: AsyncSession, household_id: uuid.UUID) -> d
         elif acc.type == "credit":
             credit_debt += bal
 
+    # Only include properties in the household's home currency
     properties = (await db.execute(
-        select(Property).where(Property.household_id == household_id)
+        select(Property).where(
+            Property.household_id == household_id,
+            Property.currency_code == home_currency,
+        )
     )).scalars().all()
 
     total_real_estate = sum((p.current_value or Decimal(0)) for p in properties)

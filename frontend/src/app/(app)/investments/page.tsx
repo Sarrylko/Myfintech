@@ -250,6 +250,10 @@ function HoldingsTable({
 
   async function handleSaveEdit() {
     if (!editingId) return;
+    if (editIsCrypto && !editForm.coingecko_id) {
+      setRowError("Crypto lookup not resolved yet — wait a moment or re-enter the ticker");
+      return;
+    }
     setSaving(true); setRowError("");
     try {
       await updateHolding(editingId, nullifyEmpty(editForm as Record<string, unknown>) as HoldingUpdate);

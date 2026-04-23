@@ -140,6 +140,28 @@ def next_market_open() -> datetime | None:
 _CG_BASE = "https://api.coingecko.com/api/v3"
 
 
+def _resolve_coingecko_id(ticker: str) -> str | None:
+    """Search CoinGecko for a coin by ticker symbol and return its id, or None on failure."""
+    try:
+        r = http_requests.get(
+            f"{_CG_BASE}/search",
+            params={"query": ticker},
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return None
+        coins = r.json().get("coins", [])
+        # Prefer exact symbol match (case-insensitive)
+        ticker_upper = ticker.upper()
+        for coin in coins:
+            if coin.get("symbol", "").upper() == ticker_upper:
+                return coin["id"]
+        return None
+    except Exception as exc:
+        logger.warning("CoinGecko search failed for %s: %s", ticker, exc)
+        return None
+
+
 def _fetch_crypto_prices(coingecko_ids: list[str]) -> dict[str, tuple[Decimal, Decimal | None]]:
     """Batch-fetch USD prices and 24h previous price for a list of CoinGecko IDs.
 
@@ -196,11 +218,20 @@ def refresh_prices_for_household(household_id: uuid.UUID, session: Session) -> i
         return 0
 
     # Split into crypto (CoinGecko) vs equity (Yahoo Finance)
+    # Auto-resolve coingecko_id for crypto holdings that are missing it
     crypto_holdings: list[Holding] = []
     equity_holdings: list[Holding] = []
     for h in holdings:
-        if h.asset_class == "crypto" and h.coingecko_id:
-            crypto_holdings.append(h)
+        if h.asset_class == "crypto":
+            if not h.coingecko_id and h.ticker_symbol:
+                resolved = _resolve_coingecko_id(h.ticker_symbol)
+                if resolved:
+                    h.coingecko_id = resolved
+                    logger.info("Auto-resolved coingecko_id=%s for ticker %s", resolved, h.ticker_symbol)
+            if h.coingecko_id:
+                crypto_holdings.append(h)
+            else:
+                logger.warning("Skipping crypto holding %s — coingecko_id could not be resolved", h.ticker_symbol)
         else:
             equity_holdings.append(h)
 
