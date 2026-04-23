@@ -1,7 +1,7 @@
 "use client";
 
 import CountryGate from "@/components/CountryGate";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
@@ -25,7 +25,7 @@ import {
   listLongTermBudgets,
   listAllTransactions,
   listProperties,
-  listLoans,
+  listAllLoans,
   listNetWorthSnapshots,
   takeNetWorthSnapshot,
   getSankeyData,
@@ -1248,25 +1248,21 @@ export default function Dashboard() {
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
 
-    const [accRes, budRes, ltRes, txRes, propRes] = await Promise.allSettled([
+    const [accRes, budRes, ltRes, txRes, propRes, loanRes] = await Promise.allSettled([
       listAccounts(),
       listBudgets(month, year),
       listLongTermBudgets(year),
-      listAllTransactions(500),
+      listAllTransactions(100),
       listProperties(),
+      listAllLoans(),
     ]);
 
     if (accRes.status === "fulfilled") setAccounts(accRes.value);
     if (budRes.status === "fulfilled") setMonthlyBudgets(budRes.value);
     if (ltRes.status === "fulfilled") setLongTermBudgets(ltRes.value);
     if (txRes.status === "fulfilled") setTransactions(txRes.value);
-
-    if (propRes.status === "fulfilled") {
-      const props = propRes.value;
-      setProperties(props);
-      const loanResults = await Promise.allSettled(props.map((p) => listLoans(p.id)));
-      setLoans(loanResults.flatMap((r) => r.status === "fulfilled" ? r.value : []));
-    }
+    if (propRes.status === "fulfilled") setProperties(propRes.value);
+    if (loanRes.status === "fulfilled") setLoans(loanRes.value);
 
     await fetchSnapshots();
     setLastUpdated(new Date());
@@ -1278,14 +1274,16 @@ export default function Dashboard() {
   // Initial load
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // Auto-refresh when the tab regains focus (e.g. user returns from accounts/budgets page)
+  // Auto-refresh when the tab regains focus, but only if data is >2 minutes stale
   useEffect(() => {
     function onVisibilityChange() {
-      if (document.visibilityState === "visible") fetchAll(true);
+      if (document.visibilityState !== "visible") return;
+      const staleMs = lastUpdated ? Date.now() - lastUpdated.getTime() : Infinity;
+      if (staleMs > 2 * 60 * 1000) fetchAll(true);
     }
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [fetchAll]);
+  }, [fetchAll, lastUpdated]);
 
   const handleTakeSnapshot = async () => {
     await takeNetWorthSnapshot();
@@ -1294,41 +1292,54 @@ export default function Dashboard() {
   };
 
   // ── Net worth calculation ──────────────────────────────────────────────────
-  const visibleAccounts = accounts.filter((a) => !a.is_hidden && a.country === activeCountryCode);
+  const visibleAccounts = useMemo(
+    () => accounts.filter((a) => !a.is_hidden && a.country === activeCountryCode),
+    [accounts, activeCountryCode],
+  );
 
-  const cash = visibleAccounts
-    .filter((a) => a.type === "depository")
-    .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
+  const cash = useMemo(
+    () => visibleAccounts
+      .filter((a) => a.type === "depository")
+      .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0),
+    [visibleAccounts],
+  );
 
-  const investments = visibleAccounts
-    .filter((a) => ["investment", "brokerage"].includes(a.type) && (a.subtype ?? "").toLowerCase() !== "529")
-    .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
+  const investments = useMemo(
+    () => visibleAccounts
+      .filter((a) => ["investment", "brokerage"].includes(a.type) && (a.subtype ?? "").toLowerCase() !== "529")
+      .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0),
+    [visibleAccounts],
+  );
 
-  const creditAccounts = visibleAccounts.filter((a) => a.type === "credit");
-  const creditCardDebt = creditAccounts.reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
-  const mortgageDebt = loans.reduce((s, l) => s + parseFloat(l.current_balance ?? "0"), 0);
-  const totalLiabilities = creditCardDebt + mortgageDebt;
+  const { creditAccounts, totalLiabilities } = useMemo(() => {
+    const creditAccounts = visibleAccounts.filter((a) => a.type === "credit");
+    const creditCardDebt = creditAccounts.reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0);
+    const mortgageDebt = loans.reduce((s, l) => s + parseFloat(l.current_balance ?? "0"), 0);
+    return { creditAccounts, totalLiabilities: creditCardDebt + mortgageDebt };
+  }, [visibleAccounts, loans]);
 
-  // Only count properties for the active country context
-  const visibleProperties = properties.filter((p) => p.country === activeCountryCode);
-  const realEstateByCurrency: Record<string, number> = {};
-  let realEstateUSD = 0;
-  for (const p of visibleProperties) {
-    const val = parseFloat(p.current_value ?? "0");
-    const cur = p.currency_code || "USD";
-    realEstateByCurrency[cur] = (realEstateByCurrency[cur] ?? 0) + val;
-    realEstateUSD += convertToUSD(val, cur, fxRates);
-  }
-  const reCurrencies = Object.keys(realEstateByCurrency);
-  // Show breakdown only when multiple currencies exist in the visible set
-  const reBreakdown = reCurrencies.length > 1
-    ? reCurrencies.map((cur) => ({
-        label: cur,
-        amount: fmtInCurrency(realEstateByCurrency[cur], cur),
-      }))
-    : undefined;
+  const { visibleProperties, realEstateUSD, reBreakdown } = useMemo(() => {
+    // Only count properties for the active country context
+    const visibleProperties = properties.filter((p) => p.country === activeCountryCode);
+    const realEstateByCurrency: Record<string, number> = {};
+    let realEstateUSD = 0;
+    for (const p of visibleProperties) {
+      const val = parseFloat(p.current_value ?? "0");
+      const cur = p.currency_code || "USD";
+      realEstateByCurrency[cur] = (realEstateByCurrency[cur] ?? 0) + val;
+      realEstateUSD += convertToUSD(val, cur, fxRates);
+    }
+    const reCurrencies = Object.keys(realEstateByCurrency);
+    const reBreakdown = reCurrencies.length > 1
+      ? reCurrencies.map((cur) => ({ label: cur, amount: fmtInCurrency(realEstateByCurrency[cur], cur) }))
+      : undefined;
+    return { visibleProperties, realEstateUSD, reBreakdown };
+  }, [properties, activeCountryCode, fxRates, fmtInCurrency]);
 
-  const netWorth = cash + investments + realEstateUSD - totalLiabilities;
+  const netWorth = useMemo(
+    () => cash + investments + realEstateUSD - totalLiabilities,
+    [cash, investments, realEstateUSD, totalLiabilities],
+  );
 
   // ── Budget stats ───────────────────────────────────────────────────────────
   const monthName = today.toLocaleString(locale, { month: "long" });

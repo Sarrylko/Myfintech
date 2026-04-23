@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
-import { AccountsContent } from "@/app/(app)/accounts/page";
+import { AccountsContent } from "@/components/AccountsContent";
 import {
   UserResponse,
   UserProfileUpdate,

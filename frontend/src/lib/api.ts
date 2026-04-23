@@ -992,6 +992,9 @@ export interface LoanCreate {
   notes?: string;
 }
 
+export async function listAllLoans(): Promise<Loan[]> {
+  return apiFetch<Loan[]>(`/api/v1/loans`, {});
+}
 export async function listLoans(propertyId: string): Promise<Loan[]> {
   return apiFetch<Loan[]>(`/api/v1/properties/${propertyId}/loans`, {});
 }

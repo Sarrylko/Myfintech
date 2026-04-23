@@ -51,6 +51,20 @@ async def _get_property(
 
 # ─── Loans ────────────────────────────────────────────────────────────────────
 
+@router.get("/loans", response_model=list[LoanResponse])
+async def list_all_loans(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Loan)
+        .join(Property, Loan.property_id == Property.id)
+        .where(Property.household_id == user.household_id)
+        .order_by(Loan.created_at)
+    )
+    return result.scalars().all()
+
+
 @router.get("/properties/{property_id}/loans", response_model=list[LoanResponse])
 async def list_loans(
     property_id: uuid.UUID,

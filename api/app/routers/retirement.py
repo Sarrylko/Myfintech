@@ -1,11 +1,12 @@
 """Retirement planning endpoints — profile + projection."""
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -277,6 +278,126 @@ def _generate_insights(
     return insights[:5]  # cap at 5
 
 
+# ─── Shared DB helpers ──────────────────────────────────────────────────────
+
+def _parse_manual_ids(profile: RetirementProfile) -> "set[str] | None":
+    if not profile.retirement_account_ids:
+        return None
+    try:
+        return set(json.loads(profile.retirement_account_ids))
+    except Exception:
+        return None
+
+
+async def _load_account_totals(
+    db: AsyncSession,
+    household_id,
+    manual_ids: "set[str] | None",
+) -> "tuple[float, float, float, float, float, float, float]":
+    """
+    Single-pass column-level scan of accounts.
+    Returns: (retirement_assets, tax_deferred, tax_exempt, taxable_investment,
+              total_investment, total_cash, credit_debt)
+    """
+    rows = (await db.execute(
+        select(Account.id, Account.type, Account.subtype, Account.current_balance).where(
+            Account.household_id == household_id,
+            Account.is_hidden == False,  # noqa: E712
+        )
+    )).all()
+
+    retirement = tax_deferred = tax_exempt = taxable_inv = 0.0
+    total_inv = total_cash = credit_debt = 0.0
+
+    for acc_id, acc_type, acc_subtype, acc_bal in rows:
+        bal = float(acc_bal or 0)
+        subtype = (acc_subtype or "").lower()
+        acc_id_str = str(acc_id)
+
+        if acc_type in ("investment", "brokerage"):
+            total_inv += bal
+            if manual_ids is not None:
+                if acc_id_str in manual_ids:
+                    if subtype in TAX_DEFERRED_SUBTYPES:
+                        tax_deferred += bal
+                    elif subtype in TAX_EXEMPT_SUBTYPES:
+                        tax_exempt += bal
+                    else:
+                        taxable_inv += bal
+                    retirement += bal
+            else:
+                if subtype in TAX_DEFERRED_SUBTYPES:
+                    tax_deferred += bal
+                    retirement += bal
+                elif subtype in TAX_EXEMPT_SUBTYPES:
+                    tax_exempt += bal
+                    retirement += bal
+                else:
+                    taxable_inv += bal
+        elif acc_type == "depository":
+            total_cash += bal
+        elif acc_type == "credit":
+            credit_debt += bal
+
+    return retirement, tax_deferred, tax_exempt, taxable_inv, total_inv, total_cash, credit_debt
+
+
+async def _load_real_estate_totals(
+    db: AsyncSession,
+    household_id,
+) -> "tuple[float, float]":
+    """
+    Returns (total_real_estate_value, total_mortgage_balance) in a single
+    aggregated query — pre-aggregates loans per property to avoid row fan-out.
+    """
+    loan_subq = (
+        select(
+            Loan.property_id,
+            func.sum(Loan.current_balance).label("total_balance"),
+        )
+        .group_by(Loan.property_id)
+        .subquery()
+    )
+    row = (await db.execute(
+        select(
+            func.coalesce(func.sum(Property.current_value), 0).label("total_value"),
+            func.coalesce(func.sum(loan_subq.c.total_balance), 0).label("total_loans"),
+        )
+        .outerjoin(loan_subq, loan_subq.c.property_id == Property.id)
+        .where(Property.household_id == household_id)
+    )).one()
+    return float(row.total_value), float(row.total_loans)
+
+
+async def _load_rental_income_annual(
+    db: AsyncSession,
+    household_id,
+) -> float:
+    """Returns annual rental income from active leases via a single 3-table JOIN."""
+    monthly = (await db.execute(
+        select(func.coalesce(func.sum(Lease.monthly_rent), 0))
+        .join(Unit, Lease.unit_id == Unit.id)
+        .join(Property, Unit.property_id == Property.id)
+        .where(
+            Property.household_id == household_id,
+            Lease.status == "active",
+        )
+    )).scalar()
+    return float(monthly) * 12
+
+
+async def _load_has_life_insurance(db: AsyncSession, household_id) -> bool:
+    """Returns True if any active life insurance policy exists for the household."""
+    result = await db.execute(
+        select(InsurancePolicy.id).where(
+            InsurancePolicy.household_id == household_id,
+            InsurancePolicy.policy_type.in_(["life_term", "life_whole", "life_universal"]),
+            InsurancePolicy.is_active == True,  # noqa: E712
+        ).limit(1)
+    )
+    return result.scalar() is not None
+
+
 # ─── Endpoints ──────────────────────────────────────────────────────────────
 
 @router.get("/profile")
@@ -458,78 +579,29 @@ async def get_retirement_projection(
     else:
         desired_income = float(profile.desired_annual_income)
 
-    # ── Current retirement assets ─────────────────────────────────────────
-    accounts = (await db.execute(
-        select(Account).where(
-            Account.household_id == user.household_id,
-            Account.is_hidden == False,  # noqa: E712
-        )
-    )).scalars().all()
-
-    # Determine if user has a manual account selection
-    manual_ids: set[str] | None = None
-    if profile.retirement_account_ids:
-        try:
-            manual_ids = set(json.loads(profile.retirement_account_ids))
-        except Exception:
-            manual_ids = None
-
-    retirement_assets = 0.0
-    total_investment_assets = 0.0
-    total_cash = 0.0
-    credit_debt = 0.0
-    tax_deferred_balance = 0.0
-    tax_exempt_balance = 0.0
-    taxable_investment_balance = 0.0
-
-    for acc in accounts:
-        bal = float(acc.current_balance or 0)
-        subtype = (acc.subtype or "").lower()
-        acc_id = str(acc.id)
-
-        if acc.type in ("investment", "brokerage"):
-            total_investment_assets += bal
-            # If manual selection is set, only include explicitly selected accounts
-            if manual_ids is not None:
-                if acc_id in manual_ids:
-                    # Classify for tax breakdown
-                    if subtype in TAX_DEFERRED_SUBTYPES:
-                        tax_deferred_balance += bal
-                    elif subtype in TAX_EXEMPT_SUBTYPES:
-                        tax_exempt_balance += bal
-                    else:
-                        taxable_investment_balance += bal
-                    retirement_assets += bal
-                # else: skip (not in manual selection)
-            else:
-                # Auto-detect: include only recognised retirement subtypes
-                if subtype in TAX_DEFERRED_SUBTYPES:
-                    tax_deferred_balance += bal
-                    retirement_assets += bal
-                elif subtype in TAX_EXEMPT_SUBTYPES:
-                    tax_exempt_balance += bal
-                    retirement_assets += bal
-                else:
-                    taxable_investment_balance += bal
-        elif acc.type == "depository":
-            total_cash += bal
-        elif acc.type == "credit":
-            credit_debt += bal
+    # ── Load all DB aggregates concurrently ───────────────────────────────
+    manual_ids = _parse_manual_ids(profile)
+    (
+        (
+            retirement_assets,
+            tax_deferred_balance,
+            tax_exempt_balance,
+            taxable_investment_balance,
+            total_investment_assets,
+            total_cash,
+            credit_debt,
+        ),
+        (total_real_estate, total_mortgage),
+        rental_income,
+        has_life_insurance,
+    ) = await asyncio.gather(
+        _load_account_totals(db, user.household_id, manual_ids),
+        _load_real_estate_totals(db, user.household_id),
+        _load_rental_income_annual(db, user.household_id),
+        _load_has_life_insurance(db, user.household_id),
+    )
 
     # ── Real estate equity ───────────────────────────────────────────────
-    properties = (await db.execute(
-        select(Property).where(Property.household_id == user.household_id)
-    )).scalars().all()
-    total_real_estate = sum(float(p.current_value or 0) for p in properties)
-
-    total_mortgage = 0.0
-    if properties:
-        prop_ids = [p.id for p in properties]
-        loans = (await db.execute(
-            select(Loan).where(Loan.property_id.in_(prop_ids))
-        )).scalars().all()
-        total_mortgage = sum(float(l.current_balance or 0) for l in loans)
-
     real_estate_equity = max(0.0, total_real_estate - total_mortgage)
     total_net_worth = total_cash + total_investment_assets + total_real_estate - credit_debt - total_mortgage
 
@@ -616,25 +688,6 @@ async def get_retirement_projection(
                 source_type="social_security",
             ))
 
-    # Rental income from active leases
-    units_q = await db.execute(
-        select(Unit).where(Unit.property_id.in_([p.id for p in properties]))
-    ) if properties else None
-
-    rental_income = 0.0
-    if units_q:
-        units = units_q.scalars().all()
-        if units:
-            unit_ids = [u.id for u in units]
-            leases_q = await db.execute(
-                select(Lease).where(
-                    Lease.unit_id.in_(unit_ids),
-                    Lease.status == "active",
-                )
-            )
-            active_leases = leases_q.scalars().all()
-            rental_income = sum(float(l.monthly_rent) * 12 for l in active_leases)
-
     if rental_income > 0:
         income_sources.append(IncomeSource(
             label="Rental Income",
@@ -649,16 +702,6 @@ async def get_retirement_projection(
             annual_amount=round(re_income, 2),
             source_type="real_estate",
         ))
-
-    # ── Life insurance check ─────────────────────────────────────────────
-    insurance_q = await db.execute(
-        select(InsurancePolicy).where(
-            InsurancePolicy.household_id == user.household_id,
-            InsurancePolicy.policy_type.in_(["life_term", "life_whole", "life_universal"]),
-            InsurancePolicy.is_active == True,  # noqa: E712
-        )
-    )
-    has_life_insurance = insurance_q.scalars().first() is not None
 
     # ── Insights ─────────────────────────────────────────────────────────
     insights = _generate_insights(
@@ -752,54 +795,12 @@ async def get_yearly_plan(
     if profile.include_spouse and profile.spouse_annual_contribution:
         annual_contribution += float(profile.spouse_annual_contribution)
 
-    # ── Retirement assets (same logic as /projection) ──────────────────────
-    accounts = (await db.execute(
-        select(Account).where(
-            Account.household_id == user.household_id,
-            Account.is_hidden == False,  # noqa: E712
-        )
-    )).scalars().all()
-
-    manual_ids: set[str] | None = None
-    if profile.retirement_account_ids:
-        try:
-            manual_ids = set(json.loads(profile.retirement_account_ids))
-        except Exception:
-            manual_ids = None
-
-    retirement_assets = 0.0
-    for acc in accounts:
-        bal = float(acc.current_balance or 0)
-        subtype = (acc.subtype or "").lower()
-        acc_id = str(acc.id)
-        if acc.type in ("investment", "brokerage"):
-            if manual_ids is not None:
-                if acc_id in manual_ids:
-                    retirement_assets += bal
-            else:
-                if subtype in RETIREMENT_SUBTYPES:
-                    retirement_assets += bal
-
-    # ── Rental income ──────────────────────────────────────────────────────
-    properties = (await db.execute(
-        select(Property).where(Property.household_id == user.household_id)
-    )).scalars().all()
-
-    rental_income_annual = 0.0
-    if properties:
-        prop_ids = [p.id for p in properties]
-        units = (await db.execute(
-            select(Unit).where(Unit.property_id.in_(prop_ids))
-        )).scalars().all()
-        if units:
-            unit_ids = [u.id for u in units]
-            active_leases = (await db.execute(
-                select(Lease).where(
-                    Lease.unit_id.in_(unit_ids),
-                    Lease.status == "active",
-                )
-            )).scalars().all()
-            rental_income_annual = sum(float(l.monthly_rent) * 12 for l in active_leases)
+    # ── Load retirement assets and rental income concurrently ─────────────
+    manual_ids = _parse_manual_ids(profile)
+    (retirement_assets, *_), rental_income_annual = await asyncio.gather(
+        _load_account_totals(db, user.household_id, manual_ids),
+        _load_rental_income_annual(db, user.household_id),
+    )
 
     # ── Year-by-year loop ──────────────────────────────────────────────────
     rows: list[YearlyPlanRow] = []
