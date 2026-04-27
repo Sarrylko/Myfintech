@@ -1,6 +1,7 @@
 "use client";
 
 import CountryGate from "@/components/CountryGate";
+import { getInstitutionLogoUrl, getInstitutionFaviconUrl } from "@/lib/institutionLogos";
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   listAccounts,
@@ -1276,6 +1277,34 @@ function TransactionActivityView({
   );
 }
 
+// ─── Institution Logo with letter fallback ───────────────────────────────────
+
+function InstitutionLogoOrFallback({ name }: { name: string | null | undefined }) {
+  const [src, setSrc] = React.useState<"clearbit" | "favicon" | "failed">("clearbit");
+  const clearbitUrl = getInstitutionLogoUrl(name, 36);
+  const faviconUrl = getInstitutionFaviconUrl(name);
+  const letter = (name ?? "?").charAt(0).toUpperCase();
+
+  if (clearbitUrl && src !== "failed") {
+    const imgSrc = src === "clearbit" ? clearbitUrl : faviconUrl!;
+    return (
+      <img
+        src={imgSrc}
+        alt={name ?? ""}
+        width={36}
+        height={36}
+        className="w-9 h-9 rounded-full object-contain bg-white border border-gray-100 shrink-0"
+        onError={() => setSrc(src === "clearbit" ? "favicon" : "failed")}
+      />
+    );
+  }
+  return (
+    <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center shrink-0 text-base font-semibold text-gray-500">
+      {letter}
+    </div>
+  );
+}
+
 // ─── Account Row ─────────────────────────────────────────────────────────────
 
 function AccountRow({
@@ -1304,9 +1333,7 @@ function AccountRow({
         onClick={onToggle}
       >
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center shrink-0 text-base font-semibold text-gray-500">
-            {(account.institution_name ?? account.name).charAt(0).toUpperCase()}
-          </div>
+          <InstitutionLogoOrFallback name={account.institution_name ?? account.name} />
           <div className="min-w-0">
             <p className="text-sm font-medium text-gray-900 truncate">
               {account.name}

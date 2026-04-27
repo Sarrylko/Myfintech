@@ -1,6 +1,7 @@
 "use client";
 
 import CountryGate from "@/components/CountryGate";
+import MerchantLogo from "@/components/MerchantLogo";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
@@ -1942,11 +1943,16 @@ export default function TransactionsPage() {
                     )}
                   </td>
                   <td className="px-5 py-3.5 max-w-xs">
-                    <div className={`text-sm font-medium text-gray-800 dark:text-gray-200 truncate ${txn.is_ignored ? "line-through" : ""}`}>{txn.name}</div>
-                    {txn.merchant_name && txn.merchant_name !== txn.name && (
-                      <div className="text-xs text-gray-400 dark:text-gray-500 truncate">{txn.merchant_name}</div>
-                    )}
-                    {txn.notes && <div className="text-xs text-gray-400 dark:text-gray-500 italic truncate">{txn.notes}</div>}
+                    <div className="flex items-center gap-2.5">
+                      <MerchantLogo merchantName={txn.merchant_name} txnName={txn.name} size={32} />
+                      <div className="min-w-0">
+                        <div className={`text-sm font-medium text-gray-800 dark:text-gray-200 truncate ${txn.is_ignored ? "line-through" : ""}`}>{txn.name}</div>
+                        {txn.merchant_name && txn.merchant_name !== txn.name && (
+                          <div className="text-xs text-gray-400 dark:text-gray-500 truncate">{txn.merchant_name}</div>
+                        )}
+                        {txn.notes && <div className="text-xs text-gray-400 dark:text-gray-500 italic truncate">{txn.notes}</div>}
+                      </div>
+                    </div>
                   </td>
                   <td className="px-5 py-3.5 hidden md:table-cell">
                     {txn.has_splits && txn.splits.length > 0 ? (

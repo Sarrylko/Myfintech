@@ -20,6 +20,7 @@ import {
   type ScenarioProjection,
   type IncomeSource,
   type YearlyPlanRow,
+  type YearlyPlanResponse,
 } from "@/lib/api";
 
 // ─── Probability Gauge (donut) ───────────────────────────────────────────────
@@ -335,6 +336,8 @@ interface ProfileFormData {
   expected_return_rate: string;
   inflation_rate: string;
   annual_contribution: string;
+  annual_contribution_401k: string;
+  annual_contribution_roth: string;
   safe_withdrawal_rate: string;
   include_spouse: boolean;
   spouse_birth_year: string;
@@ -342,6 +345,8 @@ interface ProfileFormData {
   spouse_life_expectancy_age: string;
   spouse_social_security_estimate: string;
   spouse_annual_contribution: string;
+  spouse_annual_contribution_401k: string;
+  spouse_annual_contribution_roth: string;
   yearly_income: string;
   spouse_yearly_income: string;
   monthly_essential_expenses: string;
@@ -369,12 +374,16 @@ function ProfileForm({
     inflation_rate: initial?.inflation_rate ?? "3",
     safe_withdrawal_rate: initial?.safe_withdrawal_rate ?? "4",
     annual_contribution: initial?.annual_contribution ?? "0",
+    annual_contribution_401k: initial?.annual_contribution_401k ?? "0",
+    annual_contribution_roth: initial?.annual_contribution_roth ?? "0",
     include_spouse: initial?.include_spouse ?? false,
     spouse_birth_year: initial?.spouse_birth_year ?? String(currentYear - 38),
     spouse_retirement_age: initial?.spouse_retirement_age ?? "65",
     spouse_life_expectancy_age: initial?.spouse_life_expectancy_age ?? "90",
     spouse_social_security_estimate: initial?.spouse_social_security_estimate ?? "",
     spouse_annual_contribution: initial?.spouse_annual_contribution ?? "0",
+    spouse_annual_contribution_401k: initial?.spouse_annual_contribution_401k ?? "0",
+    spouse_annual_contribution_roth: initial?.spouse_annual_contribution_roth ?? "0",
     yearly_income: initial?.yearly_income ?? "",
     spouse_yearly_income: initial?.spouse_yearly_income ?? "",
     monthly_essential_expenses: initial?.monthly_essential_expenses ?? "",
@@ -402,6 +411,16 @@ function ProfileForm({
   const currentAge = currentYear - parseInt(form.birth_year || "0");
   const yearsLeft = parseInt(form.retirement_age || "65") - currentAge;
   const spouseAge = currentYear - parseInt(form.spouse_birth_year || "0");
+
+  const bucketOverflow =
+    parseFloat(form.annual_contribution_401k || "0") +
+    parseFloat(form.annual_contribution_roth || "0") >
+    parseFloat(form.annual_contribution || "0");
+  const spouseBucketOverflow =
+    form.include_spouse &&
+    parseFloat(form.spouse_annual_contribution_401k || "0") +
+    parseFloat(form.spouse_annual_contribution_roth || "0") >
+    parseFloat(form.spouse_annual_contribution || "0");
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -440,6 +459,24 @@ function ProfileForm({
             <input type="number" title="Your annual contribution" value={form.annual_contribution} onChange={(e) => fs("annual_contribution", e.target.value)}
               className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
               min="0" required />
+            <div className="bg-slate-700/30 rounded-lg p-3 mt-2 space-y-2">
+              <div>
+                <label className="block text-xs text-blue-300 mb-1">401k / Tax-deferred ($)</label>
+                <input type="number" title="401k contribution" value={form.annual_contribution_401k} onChange={(e) => fs("annual_contribution_401k", e.target.value)}
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                  min="0" />
+              </div>
+              <div>
+                <label className="block text-xs text-emerald-300 mb-1">Roth / Tax-exempt ($)</label>
+                <input type="number" title="Roth contribution" value={form.annual_contribution_roth} onChange={(e) => fs("annual_contribution_roth", e.target.value)}
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                  min="0" />
+              </div>
+              <p className="text-xs text-amber-300">
+                Brokerage (taxable): ${Math.max(0, parseFloat(form.annual_contribution || "0") - parseFloat(form.annual_contribution_401k || "0") - parseFloat(form.annual_contribution_roth || "0")).toLocaleString()}
+              </p>
+              {bucketOverflow && <p className="text-xs text-red-400">401k + Roth cannot exceed total contribution</p>}
+            </div>
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1">Your Social Security Estimate ($/yr, optional)</label>
@@ -456,13 +493,13 @@ function ProfileForm({
         <p className="text-xs text-slate-500 mb-3">If set, these drive your income target instead of a single desired income figure.</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Essential Expenses ($/mo)</label>
-            <input type="number" title="Monthly essential expenses" value={form.monthly_essential_expenses} onChange={(e) => fs("monthly_essential_expenses", e.target.value)}
+            <label className="block text-xs text-slate-400 mb-1">Essential Expenses at Retirement ($/mo)</label>
+            <input type="number" title="Monthly essential expenses at retirement" value={form.monthly_essential_expenses} onChange={(e) => fs("monthly_essential_expenses", e.target.value)}
               placeholder="e.g. 5000 (housing, food, healthcare)" className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
               min="0" />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Non-Essential Expenses ($/mo, optional)</label>
+            <label className="block text-xs text-slate-400 mb-1">Non-Essential Expenses at Retirement ($/mo, optional)</label>
             <input type="number" title="Monthly non-essential expenses" value={form.monthly_non_essential_expenses} onChange={(e) => fs("monthly_non_essential_expenses", e.target.value)}
               placeholder="e.g. 2000 (travel, dining, hobbies)" className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
               min="0" />
@@ -557,6 +594,24 @@ function ProfileForm({
               <input type="number" title="Spouse annual contribution" value={form.spouse_annual_contribution} onChange={(e) => fs("spouse_annual_contribution", e.target.value)}
                 placeholder="e.g. 12000" className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
                 min="0" />
+              <div className="bg-slate-700/30 rounded-lg p-3 mt-2 space-y-2">
+                <div>
+                  <label className="block text-xs text-blue-300 mb-1">Spouse 401k / Tax-deferred ($)</label>
+                  <input type="number" title="Spouse 401k contribution" value={form.spouse_annual_contribution_401k} onChange={(e) => fs("spouse_annual_contribution_401k", e.target.value)}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                    min="0" />
+                </div>
+                <div>
+                  <label className="block text-xs text-emerald-300 mb-1">Spouse Roth / Tax-exempt ($)</label>
+                  <input type="number" title="Spouse Roth contribution" value={form.spouse_annual_contribution_roth} onChange={(e) => fs("spouse_annual_contribution_roth", e.target.value)}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                    min="0" />
+                </div>
+                <p className="text-xs text-amber-300">
+                  Spouse Brokerage (taxable): ${Math.max(0, parseFloat(form.spouse_annual_contribution || "0") - parseFloat(form.spouse_annual_contribution_401k || "0") - parseFloat(form.spouse_annual_contribution_roth || "0")).toLocaleString()}
+                </p>
+                {spouseBucketOverflow && <p className="text-xs text-red-400">Spouse 401k + Roth cannot exceed total contribution</p>}
+              </div>
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">Spouse Social Security Estimate ($/yr, optional)</label>
@@ -571,7 +626,7 @@ function ProfileForm({
       {formError && <p className="text-red-400 text-sm">{formError}</p>}
 
       <div className="flex gap-3 pt-1">
-        <button type="submit" disabled={saving}
+        <button type="submit" disabled={saving || bucketOverflow || !!spouseBucketOverflow}
           className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition disabled:opacity-50">
           {saving ? "Saving…" : "Save & Calculate"}
         </button>
@@ -649,16 +704,20 @@ type RowDef =
 const YEAR_BY_YEAR_ROWS: RowDef[] = [
   { kind: "data",    label: "Your age",              key: "age" },
   { kind: "data",    label: "Partner age",           key: "spouse_age" },
-  { kind: "data",    label: "Savings start of year", key: "savings_start_of_year" },
+  { kind: "section", label: "Savings start of year", totalKey: "savings_start_of_year" },
+  { kind: "data",    label: "Tax-deferred (401k/IRA)",  key: "tax_deferred_savings",  indent: true },
+  { kind: "data",    label: "Tax-free (Roth)",           key: "tax_exempt_savings",    indent: true },
+  { kind: "data",    label: "Brokerage (taxable)",       key: "taxable_savings",       indent: true },
   { kind: "section", label: "Total expenses",        totalKey: "total_expenses" },
   { kind: "data",    label: "Essential",             key: "essential_expenses",     indent: true },
   { kind: "data",    label: "Non-essential",         key: "non_essential_expenses", indent: true },
   { kind: "data",    label: "Taxes",                 key: "estimated_taxes",        indent: true },
   { kind: "section", label: "Total income",          totalKey: "total_income" },
-  { kind: "data",    label: "Earned",                key: "earned_income",          indent: true },
-  { kind: "data",    label: "Other (SS + rental)",   key: "other_income",           indent: true },
+  { kind: "data",    label: "Earned",                key: "earned_income",             indent: true },
+  { kind: "data",    label: "Dividend & Interest",   key: "dividend_interest_income",  indent: true },
+  { kind: "data",    label: "Other (SS + rental)",   key: "other_income",              indent: true },
+  { kind: "data",    label: "RMD (taxable dist.)",   key: "rmd_amount",                indent: true },
   { kind: "section", label: "Savings withdrawals",   totalKey: "savings_withdrawals" },
-  { kind: "data",    label: "RMD",                   key: "rmd_amount",             indent: true },
   { kind: "data",    label: "Withdrawal %",          key: "withdrawal_pct",         indent: true },
   { kind: "data",    label: "Savings at year end",   key: "savings_end_of_year" },
   { kind: "data",    label: "Net surplus / deficit", key: "net_surplus_deficit" },
@@ -666,12 +725,16 @@ const YEAR_BY_YEAR_ROWS: RowDef[] = [
 
 function YearByYearTable({
   rows,
+  anchoredToReturn,
+  taxReturnYear,
   loading,
   isRefreshing,
   onRefresh,
   retirementAge,
 }: {
   rows: YearlyPlanRow[] | null;
+  anchoredToReturn: boolean;
+  taxReturnYear: number | null;
   loading: boolean;
   isRefreshing: boolean;
   onRefresh: () => void;
@@ -694,7 +757,7 @@ function YearByYearTable({
     if (def.key === "savings_end_of_year") {
       return row.savings_end_of_year <= 0 ? "text-red-400" : "text-slate-200";
     }
-    if (def.key === "earned_income" || def.key === "other_income") return "text-emerald-300";
+    if (def.key === "earned_income" || def.key === "dividend_interest_income" || def.key === "other_income" || def.key === "rmd_amount") return "text-emerald-300";
     return "text-slate-200";
   }
 
@@ -704,7 +767,12 @@ function YearByYearTable({
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
         <div>
           <h2 className="text-base font-semibold text-white">Year-by-Year Retirement Plan</h2>
-          <p className="text-slate-400 text-xs mt-0.5">Base scenario · nominal (future) dollars — all amounts grow with inflation each year</p>
+          <p className="text-slate-400 text-xs mt-0.5">
+            Base scenario · nominal (future) dollars — all amounts grow with inflation each year
+            {anchoredToReturn && taxReturnYear && (
+              <span className="ml-2 text-blue-400">· Anchored to {taxReturnYear} tax return</span>
+            )}
+          </p>
         </div>
         <button
           type="button"
@@ -818,7 +886,7 @@ export default function RetirementPage() {
   const [projectionError, setProjectionError] = useState("");
   const [lastPriceRefresh, setLastPriceRefresh] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "year-by-year">("overview");
-  const [yearlyPlan, setYearlyPlan] = useState<YearlyPlanRow[] | null>(null);
+  const [yearlyPlan, setYearlyPlan] = useState<YearlyPlanResponse | null>(null);
   const [yearlyLoading, setYearlyLoading] = useState(false);
   const [planRefreshing, setPlanRefreshing] = useState(false);
 
@@ -889,12 +957,16 @@ export default function RetirementPage() {
       inflation_rate: parseFloat(formData.inflation_rate) / 100,
       safe_withdrawal_rate: parseFloat(formData.safe_withdrawal_rate) / 100,
       annual_contribution: parseFloat(formData.annual_contribution),
+      annual_contribution_401k: parseFloat(formData.annual_contribution_401k || "0"),
+      annual_contribution_roth: parseFloat(formData.annual_contribution_roth || "0"),
       include_spouse: formData.include_spouse,
       spouse_birth_year: formData.include_spouse && formData.spouse_birth_year ? parseInt(formData.spouse_birth_year) : null,
       spouse_retirement_age: formData.include_spouse && formData.spouse_retirement_age ? parseInt(formData.spouse_retirement_age) : null,
       spouse_life_expectancy_age: formData.include_spouse && formData.spouse_life_expectancy_age ? parseInt(formData.spouse_life_expectancy_age) : null,
       spouse_social_security_estimate: formData.include_spouse && formData.spouse_social_security_estimate ? parseFloat(formData.spouse_social_security_estimate) : null,
       spouse_annual_contribution: formData.include_spouse && formData.spouse_annual_contribution ? parseFloat(formData.spouse_annual_contribution) : null,
+      spouse_annual_contribution_401k: formData.include_spouse ? parseFloat(formData.spouse_annual_contribution_401k || "0") : null,
+      spouse_annual_contribution_roth: formData.include_spouse ? parseFloat(formData.spouse_annual_contribution_roth || "0") : null,
       yearly_income: formData.yearly_income ? parseFloat(formData.yearly_income) : null,
       spouse_yearly_income: formData.include_spouse && formData.spouse_yearly_income ? parseFloat(formData.spouse_yearly_income) : null,
       monthly_essential_expenses: formData.monthly_essential_expenses ? parseFloat(formData.monthly_essential_expenses) : null,
@@ -1033,12 +1105,16 @@ export default function RetirementPage() {
     inflation_rate: String(Math.round(parseFloat(prof.inflation_rate as unknown as string) * 100)),
     safe_withdrawal_rate: prof.safe_withdrawal_rate ? String(parseFloat(prof.safe_withdrawal_rate as unknown as string) * 100) : "4",
     annual_contribution: String(Math.round(parseFloat(prof.annual_contribution as unknown as string))),
+    annual_contribution_401k: String(Math.round(parseFloat(prof.annual_contribution_401k as unknown as string) || 0)),
+    annual_contribution_roth: String(Math.round(parseFloat(prof.annual_contribution_roth as unknown as string) || 0)),
     include_spouse: prof.include_spouse,
     spouse_birth_year: prof.spouse_birth_year ? String(prof.spouse_birth_year) : String(currentYear - 38),
     spouse_retirement_age: prof.spouse_retirement_age ? String(prof.spouse_retirement_age) : "65",
     spouse_life_expectancy_age: prof.spouse_life_expectancy_age ? String(prof.spouse_life_expectancy_age) : "90",
     spouse_social_security_estimate: prof.spouse_social_security_estimate ? String(Math.round(parseFloat(prof.spouse_social_security_estimate as unknown as string))) : "",
     spouse_annual_contribution: prof.spouse_annual_contribution ? String(Math.round(parseFloat(prof.spouse_annual_contribution as unknown as string))) : "0",
+    spouse_annual_contribution_401k: prof.spouse_annual_contribution_401k ? String(Math.round(parseFloat(prof.spouse_annual_contribution_401k as unknown as string))) : "0",
+    spouse_annual_contribution_roth: prof.spouse_annual_contribution_roth ? String(Math.round(parseFloat(prof.spouse_annual_contribution_roth as unknown as string))) : "0",
     yearly_income: prof.yearly_income ? String(Math.round(parseFloat(prof.yearly_income as unknown as string))) : "",
     spouse_yearly_income: prof.spouse_yearly_income ? String(Math.round(parseFloat(prof.spouse_yearly_income as unknown as string))) : "",
     monthly_essential_expenses: prof.monthly_essential_expenses ? String(Math.round(parseFloat(prof.monthly_essential_expenses as unknown as string))) : "",
@@ -1117,7 +1193,9 @@ export default function RetirementPage() {
         {/* ── Year-by-Year tab ─────────────────────────────────────────── */}
         {activeTab === "year-by-year" && (
           <YearByYearTable
-            rows={yearlyPlan}
+            rows={yearlyPlan?.rows ?? null}
+            anchoredToReturn={yearlyPlan?.anchored_to_return ?? false}
+            taxReturnYear={yearlyPlan?.tax_return_year ?? null}
             loading={yearlyLoading}
             isRefreshing={planRefreshing}
             onRefresh={handlePlanRefresh}

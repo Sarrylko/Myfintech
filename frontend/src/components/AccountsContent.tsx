@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useCurrency } from "@/lib/currency";
 import { useRouter, useSearchParams } from "next/navigation";
+import InstitutionLogo from "@/components/InstitutionLogo";
 import {
   getLinkToken,
   exchangePublicToken,
@@ -1026,6 +1027,7 @@ PLAID_ENV=sandbox`}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <div>
                 <div className="flex items-center gap-2">
+                  <InstitutionLogo name={conn.brokerage_name} size={28} />
                   <h3 className="font-semibold text-gray-900">{conn.brokerage_name ?? "Brokerage"}</h3>
                   <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2 py-0.5 rounded-full font-medium">Via SnapTrade</span>
                 </div>
@@ -1080,6 +1082,7 @@ PLAID_ENV=sandbox`}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <div>
                 <div className="flex items-center gap-2">
+                  <InstitutionLogo name={item.institution_name} size={28} />
                   <h3 className="font-semibold text-gray-900">{item.institution_name ?? "Bank"}</h3>
                   <span className="text-xs bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-full font-medium">Via Plaid</span>
                 </div>

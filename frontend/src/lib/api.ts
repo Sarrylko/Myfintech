@@ -2592,12 +2592,16 @@ export interface RetirementProfile {
   inflation_rate: string;
   safe_withdrawal_rate: string;
   annual_contribution: string;
+  annual_contribution_401k: string;
+  annual_contribution_roth: string;
   include_spouse: boolean;
   spouse_birth_year: number | null;
   spouse_retirement_age: number | null;
   spouse_life_expectancy_age: number | null;
   spouse_social_security_estimate: string | null;
   spouse_annual_contribution: string | null;
+  spouse_annual_contribution_401k: string | null;
+  spouse_annual_contribution_roth: string | null;
   yearly_income: string | null;
   spouse_yearly_income: string | null;
   monthly_essential_expenses: string | null;
@@ -2681,12 +2685,16 @@ export async function upsertRetirementProfile(data: {
   inflation_rate: number;
   safe_withdrawal_rate?: number;
   annual_contribution: number;
+  annual_contribution_401k?: number;
+  annual_contribution_roth?: number;
   include_spouse?: boolean;
   spouse_birth_year?: number | null;
   spouse_retirement_age?: number | null;
   spouse_life_expectancy_age?: number | null;
   spouse_social_security_estimate?: number | null;
   spouse_annual_contribution?: number | null;
+  spouse_annual_contribution_401k?: number | null;
+  spouse_annual_contribution_roth?: number | null;
   yearly_income?: number | null;
   spouse_yearly_income?: number | null;
   monthly_essential_expenses?: number | null;
@@ -2718,11 +2726,15 @@ export interface YearlyPlanRow {
   age: number;
   spouse_age: number | null;
   savings_start_of_year: number;
+  tax_deferred_savings: number;
+  tax_exempt_savings: number;
+  taxable_savings: number;
   essential_expenses: number;
   non_essential_expenses: number;
   estimated_taxes: number;
   total_expenses: number;
   earned_income: number;
+  dividend_interest_income: number;
   other_income: number;
   total_income: number;
   savings_withdrawals: number;
@@ -2732,8 +2744,16 @@ export interface YearlyPlanRow {
   net_surplus_deficit: number;
 }
 
-export async function getRetirementYearlyPlan(): Promise<YearlyPlanRow[]> {
-  return apiFetch<YearlyPlanRow[]>("/api/v1/retirement/yearly-plan");
+export interface YearlyPlanResponse {
+  rows: YearlyPlanRow[];
+  anchored_to_return: boolean;
+  tax_return_year: number | null;
+  tax_return_agi: number | null;
+  tax_return_w2: number | null;
+}
+
+export async function getRetirementYearlyPlan(): Promise<YearlyPlanResponse> {
+  return apiFetch<YearlyPlanResponse>("/api/v1/retirement/yearly-plan");
 }
 
 // ─── Analytics ───────────────────────────────────────────────────────────────
