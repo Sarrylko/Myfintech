@@ -796,11 +796,12 @@ async def tax_export(
     Generate a CSV tax report for all properties for the given year.
     Format matches IRS Schedule E (Supplemental Income and Loss).
     """
-    # Get all rental properties for the household (exclude primary residence)
+    # Get US rental properties for the household (exclude primary residence + non-US)
     props_result = await db.execute(
         select(Property).where(
             Property.household_id == user.household_id,
             Property.is_primary_residence == False,
+            or_(Property.country.is_(None), Property.country == "US"),
         )
     )
     properties = list(props_result.scalars().all())

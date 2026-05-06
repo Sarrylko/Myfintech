@@ -30,7 +30,7 @@ from app.models.account import Account
 from app.models.financial_document import FinancialDocument
 from app.models.insurance import InsurancePolicy
 from app.models.property import Property
-from app.models.property_details import Loan
+from app.models.property_details import Loan, PropertyCost
 from app.models.rental import Lease, Unit
 from app.models.retirement import RetirementProfile
 from app.models.user import User
@@ -614,16 +614,43 @@ async def _load_rental_income_annual(
     db: AsyncSession,
     household_id,
 ) -> float:
-    monthly = (await db.execute(
+    """Return net annual rental income (gross rent minus operating costs) for
+    non-primary rental properties only."""
+    gross_monthly = (await db.execute(
         select(func.coalesce(func.sum(Lease.monthly_rent), 0))
         .join(Unit, Lease.unit_id == Unit.id)
         .join(Property, Unit.property_id == Property.id)
         .where(
             Property.household_id == household_id,
+            Property.is_primary_residence == False,  # noqa: E712
             Lease.status == "active",
         )
     )).scalar()
-    return float(monthly) * 12
+    gross_annual = float(gross_monthly) * 12
+
+    # Annualize active, non-escrowed property costs for non-primary properties
+    costs_rows = (await db.execute(
+        select(PropertyCost.amount, PropertyCost.frequency)
+        .join(Property, PropertyCost.property_id == Property.id)
+        .where(
+            Property.household_id == household_id,
+            Property.is_primary_residence == False,  # noqa: E712
+            PropertyCost.is_active == True,  # noqa: E712
+            PropertyCost.is_escrowed == False,  # noqa: E712
+            PropertyCost.frequency.in_(["monthly", "quarterly", "annual"]),
+        )
+    )).all()
+
+    annual_costs = 0.0
+    for amount, frequency in costs_rows:
+        if frequency == "monthly":
+            annual_costs += float(amount) * 12
+        elif frequency == "quarterly":
+            annual_costs += float(amount) * 4
+        else:
+            annual_costs += float(amount)
+
+    return max(gross_annual - annual_costs, 0.0)
 
 
 async def _load_has_life_insurance(db: AsyncSession, household_id) -> bool:
