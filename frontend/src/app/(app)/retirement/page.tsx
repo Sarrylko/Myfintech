@@ -35,7 +35,7 @@ function ProbabilityGauge({ value }: { value: number }) {
   return (
     <div className="relative inline-flex items-center justify-center">
       <svg width={128} height={128} style={{ transform: "rotate(-90deg)" }}>
-        <circle cx={64} cy={64} r={r} fill="none" stroke="#1e293b" strokeWidth={12} />
+        <circle cx={64} cy={64} r={r} fill="none" stroke="#1e2e48" strokeWidth={12} />
         <circle cx={64} cy={64} r={r} fill="none" stroke={color} strokeWidth={12}
           strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
           style={{ transition: "stroke-dasharray 1s ease" }} />
@@ -649,21 +649,21 @@ function ScenarioChart({ data, retirementYear }: { data: ScenarioProjection[]; r
       <AreaChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
         <defs>
           <linearGradient id="gradOpt" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.25} />
-            <stop offset="95%" stopColor="#38bdf8" stopOpacity={0.05} />
+            <stop offset="5%"  stopColor="#8b5cf6" stopOpacity={0.18} />
+            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
           </linearGradient>
           <linearGradient id="gradBase" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.35} />
-            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.08} />
+            <stop offset="5%"  stopColor="#003366" stopOpacity={0.18} />
+            <stop offset="95%" stopColor="#003366" stopOpacity={0} />
           </linearGradient>
           <linearGradient id="gradPess" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#1e3a5f" stopOpacity={0.8} />
-            <stop offset="95%" stopColor="#1e3a5f" stopOpacity={0.4} />
+            <stop offset="5%"  stopColor="#f43f5e" stopOpacity={0.15} />
+            <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-        <XAxis dataKey="age" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
-        <YAxis tickFormatter={(v) => `$${(v / 1000000).toFixed(1)}M`} tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} width={56} />
+        <CartesianGrid strokeDasharray="4 4" stroke="#e4e8ed" strokeOpacity={0.5} vertical={false} />
+        <XAxis dataKey="age" tick={{ fill: "#7a8fa6", fontSize: 11 }} axisLine={false} tickLine={false} />
+        <YAxis tickFormatter={(v) => `$${(v / 1000000).toFixed(1)}M`} tick={{ fill: "#7a8fa6", fontSize: 11 }} axisLine={false} tickLine={false} width={56} />
         <Tooltip content={<ScenarioTooltip />} />
         <ReferenceLine x={data.find(d => d.year === retirementYear)?.age ?? undefined}
           stroke="#f59e0b" strokeDasharray="4 3" label={{ value: "Retirement", fill: "#f59e0b", fontSize: 10, position: "top" }} />
@@ -671,9 +671,9 @@ function ScenarioChart({ data, retirementYear }: { data: ScenarioProjection[]; r
         <Area type="monotone" dataKey="required" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="5 3"
           fill="none" dot={false} name="required" />
         {/* Scenario bands — render pessimistic first (bottom), then base, then optimistic (widest) */}
-        <Area type="monotone" dataKey="pessimistic" stroke="#1d4ed8" strokeWidth={1} fill="url(#gradPess)" dot={false} name="pessimistic" />
-        <Area type="monotone" dataKey="base" stroke="#3b82f6" strokeWidth={2} fill="url(#gradBase)" dot={false} name="base" />
-        <Area type="monotone" dataKey="optimistic" stroke="#38bdf8" strokeWidth={1} fill="url(#gradOpt)" dot={false} name="optimistic" />
+        <Area type="monotone" dataKey="pessimistic" stroke="#f43f5e" strokeWidth={1.5} fill="url(#gradPess)" dot={false} name="pessimistic" />
+        <Area type="monotone" dataKey="base" stroke="#003366" strokeWidth={2} fill="url(#gradBase)" dot={false} name="base" />
+        <Area type="monotone" dataKey="optimistic" stroke="#8b5cf6" strokeWidth={1.5} fill="url(#gradOpt)" dot={false} name="optimistic" />
       </AreaChart>
     </ResponsiveContainer>
   );

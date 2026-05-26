@@ -600,11 +600,11 @@ function SankeyDashboardSection() {
 type TimeRange = "30D" | "90D" | "1Y" | "All";
 
 const METRICS = [
-  { key: "net_worth",        label: "Net Worth",    color: "#6366f1" },
-  { key: "total_cash",       label: "Cash",         color: "#22c55e" },
-  { key: "total_investments",label: "Investments",  color: "#3b82f6" },
+  { key: "net_worth",        label: "Net Worth",    color: "#003366" },
+  { key: "total_cash",       label: "Cash",         color: "#007A33" },
+  { key: "total_investments",label: "Investments",  color: "#0ea5e9" },
   { key: "total_real_estate",label: "Real Estate",  color: "#f59e0b" },
-  { key: "total_debts",      label: "Liabilities",  color: "#ef4444" },
+  { key: "total_debts",      label: "Liabilities",  color: "#f43f5e" },
 ] as const;
 
 function HistoryTooltip({ active, payload, label }: { active?: boolean; payload?: {name: string; value: number; color: string}[]; label?: string }) {
@@ -797,13 +797,13 @@ function FinancialHistorySection({
             </defs>
             <CartesianGrid
               strokeDasharray="4 4"
-              stroke="#f0f0f0"
-              strokeOpacity={0.7}
+              stroke="#e4e8ed"
+              strokeOpacity={0.5}
               vertical={false}
             />
             <XAxis
               dataKey="date"
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tick={{ fontSize: 11, fill: "#7a8fa6" }}
               tickLine={false}
               axisLine={false}
               interval="preserveStartEnd"
@@ -811,14 +811,14 @@ function FinancialHistorySection({
             />
             <YAxis
               tickFormatter={fmtCompact}
-              tick={{ fontSize: 10, fill: "#9ca3af" }}
+              tick={{ fontSize: 11, fill: "#7a8fa6" }}
               tickLine={false}
               axisLine={false}
               width={60}
             />
             <Tooltip
               content={<HistoryTooltip />}
-              cursor={{ stroke: "#6366f1", strokeWidth: 1, strokeDasharray: "4 2", strokeOpacity: 0.4 }}
+              cursor={{ stroke: "#a0b3c4", strokeWidth: 1, strokeDasharray: "4 4", strokeOpacity: 0.6 }}
             />
             {/* Area fills */}
             {METRICS.filter(({ key }) => visible.has(key)).map(({ key, label, color }) => (
@@ -978,19 +978,18 @@ function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
             <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="gradThis" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.2} />
-                  <stop offset="80%" stopColor="#3b82f6" stopOpacity={0.04} />
-                  <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+                  <stop offset="5%"  stopColor="#007A33" stopOpacity={0.18} />
+                  <stop offset="95%" stopColor="#007A33" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradLast" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#94a3b8" stopOpacity={0.1} />
-                  <stop offset="100%" stopColor="#94a3b8" stopOpacity={0} />
+                  <stop offset="5%"  stopColor="#94a3b8" stopOpacity={0.12} />
+                  <stop offset="95%" stopColor="#94a3b8" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="4 4" stroke="#f0f0f0" strokeOpacity={0.6} vertical={false} />
+              <CartesianGrid strokeDasharray="4 4" stroke="#e4e8ed" strokeOpacity={0.5} vertical={false} />
               <XAxis
                 dataKey="day"
-                tick={{ fontSize: 10, fill: "#9ca3af" }}
+                tick={{ fontSize: 11, fill: "#7a8fa6" }}
                 tickLine={false}
                 axisLine={false}
                 ticks={[1, 7, 14, 21, 28]}
@@ -1000,15 +999,15 @@ function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
               {/* Today vertical reference line */}
               <ReferenceLine
                 x={todayDay}
-                stroke="#3b82f6"
+                stroke="#007A33"
                 strokeWidth={1.5}
                 strokeDasharray="3 3"
                 strokeOpacity={0.4}
-                label={{ value: "Today", position: "top", fontSize: 9, fill: "#3b82f6", fontWeight: 600 }}
+                label={{ value: "Today", position: "top", fontSize: 9, fill: "#007A33", fontWeight: 600 }}
               />
               <Tooltip
                 content={<CustomTooltip />}
-                cursor={{ stroke: "#3b82f6", strokeWidth: 1, strokeDasharray: "4 2", strokeOpacity: 0.3 }}
+                cursor={{ stroke: "#a0b3c4", strokeWidth: 1, strokeDasharray: "4 4", strokeOpacity: 0.5 }}
               />
               <Area
                 type="monotone"
@@ -1024,19 +1023,19 @@ function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
               <Area
                 type="monotone"
                 dataKey="thisMonth"
-                stroke="#3b82f6"
+                stroke="#007A33"
                 strokeWidth={2}
                 fill="url(#gradThis)"
                 dot={false}
                 connectNulls
                 name="thisMonth"
-                activeDot={{ r: 5, stroke: "white", strokeWidth: 2, fill: "#3b82f6" }}
+                activeDot={{ r: 5, stroke: "white", strokeWidth: 2, fill: "#007A33" }}
               />
               {/* Trendline for this month */}
               <Line
                 type="linear"
                 dataKey="trend"
-                stroke="#6366f1"
+                stroke="#8b5cf6"
                 strokeWidth={1.5}
                 strokeDasharray="5 4"
                 strokeOpacity={0.7}
@@ -1054,7 +1053,7 @@ function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
       {/* Legend */}
       <div className="flex items-center gap-4 mt-3 pt-3 border-t border-gray-50 dark:border-slate-700">
         <div className="flex items-center gap-1.5">
-          <div className="w-5 h-0.5 bg-blue-500 rounded" />
+          <div className="w-5 h-0.5 rounded bg-finance-500" />
           <span className="text-xs text-gray-500 dark:text-gray-400">{monthName}</span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -1062,7 +1061,7 @@ function CurrentSpendChart({ transactions }: { transactions: Transaction[] }) {
           <span className="text-xs text-gray-500 dark:text-gray-400">{lastMonthName}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <svg width="20" height="2" className="overflow-visible"><line x1="0" y1="1" x2="20" y2="1" stroke="#6366f1" strokeWidth="1.5" strokeDasharray="5 4" strokeOpacity="0.7" /></svg>
+          <svg width="20" height="2" className="overflow-visible"><line x1="0" y1="1" x2="20" y2="1" stroke="#8b5cf6" strokeWidth="1.5" strokeDasharray="5 4" strokeOpacity="0.7" /></svg>
           <span className="text-xs text-gray-500 dark:text-gray-400">Trend</span>
         </div>
       </div>

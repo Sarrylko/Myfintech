@@ -990,6 +990,42 @@ async def _sync_account_balance(account_id: uuid.UUID, db: AsyncSession) -> None
     if acct and acct.is_manual:
         acct.current_balance = total
 
+
+async def _consolidate_ticker_holdings(
+    account_id: uuid.UUID,
+    ticker: str,
+    db: AsyncSession,
+) -> "Holding | None":
+    """Merge all Holding rows for ticker in account into the oldest row. Idempotent."""
+    from decimal import Decimal
+    from sqlalchemy import delete as sa_delete
+
+    result = await db.execute(
+        select(Holding)
+        .where(Holding.account_id == account_id, Holding.ticker_symbol == ticker)
+        .order_by(Holding.created_at)
+    )
+    rows: list[Holding] = result.scalars().all()
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+
+    keeper = rows[0]
+    keeper.quantity      = sum(Decimal(str(r.quantity)) for r in rows)
+    keeper.current_value = sum(r.current_value or Decimal(0) for r in rows)
+    costs = [r.cost_basis for r in rows if r.cost_basis is not None]
+    keeper.cost_basis    = sum(costs) if costs else None
+    keeper.as_of_date    = datetime.now(timezone.utc)
+    await db.flush()
+
+    extra_ids = [r.id for r in rows[1:]]
+    await db.execute(sa_delete(Holding).where(Holding.id.in_(extra_ids)))
+    await db.flush()
+    await _sync_account_balance(account_id, db)
+    return keeper
+
+
 @router.post("/{account_id}/holdings", response_model=HoldingResponse, status_code=201)
 async def create_holding(
     account_id: uuid.UUID,
@@ -997,7 +1033,8 @@ async def create_holding(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Add a manual holding to a manual investment account."""
+    """Add or update a manual holding. If a holding for ticker_symbol already
+    exists in this account, the quantities and costs are merged into it."""
     acct_result = await db.execute(
         select(Account).where(
             Account.id == account_id,
@@ -1013,25 +1050,97 @@ async def create_holding(
             detail="Holdings can only be added manually to manual accounts; Plaid accounts are synced automatically.",
         )
 
-    holding = Holding(
-        account_id=account_id,
-        household_id=user.household_id,
-        ticker_symbol=payload.ticker_symbol,
-        name=payload.name,
-        quantity=payload.quantity,
-        cost_basis=payload.cost_basis,
-        current_value=payload.current_value,
-        currency_code=payload.currency_code,
-        asset_class=payload.asset_class,
-        coingecko_id=payload.coingecko_id,
-        as_of_date=datetime.now(timezone.utc),
+    ticker = (payload.ticker_symbol or "").strip().upper() or None
+
+    existing = None
+    if ticker:
+        dup = await db.execute(
+            select(Holding).where(
+                Holding.account_id == account_id,
+                Holding.ticker_symbol == ticker,
+            ).limit(1)
+        )
+        existing = dup.scalar_one_or_none()
+
+    if existing:
+        new_row = Holding(
+            account_id=account_id,
+            household_id=user.household_id,
+            ticker_symbol=ticker,
+            name=payload.name or existing.name,
+            quantity=payload.quantity,
+            cost_basis=payload.cost_basis,
+            current_value=payload.current_value,
+            currency_code=payload.currency_code or existing.currency_code,
+            asset_class=payload.asset_class or existing.asset_class,
+            coingecko_id=payload.coingecko_id or existing.coingecko_id,
+            as_of_date=datetime.now(timezone.utc),
+        )
+        db.add(new_row)
+        await db.flush()
+        merged = await _consolidate_ticker_holdings(account_id, ticker, db)
+        await db.commit()
+        return merged
+    else:
+        holding = Holding(
+            account_id=account_id,
+            household_id=user.household_id,
+            ticker_symbol=ticker,
+            name=payload.name,
+            quantity=payload.quantity,
+            cost_basis=payload.cost_basis,
+            current_value=payload.current_value,
+            currency_code=payload.currency_code,
+            asset_class=payload.asset_class,
+            coingecko_id=payload.coingecko_id,
+            as_of_date=datetime.now(timezone.utc),
+        )
+        db.add(holding)
+        await db.flush()
+        await db.refresh(holding)
+        await _sync_account_balance(account_id, db)
+        await db.commit()
+        return holding
+
+
+@router.post("/{account_id}/holdings/consolidate", status_code=200)
+async def consolidate_holdings(
+    account_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Idempotent: merge all duplicate-ticker holdings for this account."""
+    from sqlalchemy import func
+    acct_result = await db.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.household_id == user.household_id,
+        )
     )
-    db.add(holding)
-    await db.flush()
-    await db.refresh(holding)
-    await _sync_account_balance(account_id, db)
+    if not acct_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    dup_result = await db.execute(
+        select(Holding.ticker_symbol, func.count(Holding.id).label("cnt"))
+        .where(Holding.account_id == account_id, Holding.ticker_symbol.isnot(None))
+        .group_by(Holding.ticker_symbol)
+        .having(func.count(Holding.id) > 1)
+    )
+    duplicate_tickers = [row.ticker_symbol for row in dup_result.all()]
+    if not duplicate_tickers:
+        await db.commit()
+        return {"merged_tickers": [], "holdings_removed": 0}
+
+    before = await db.scalar(
+        select(func.count(Holding.id)).where(
+            Holding.account_id == account_id,
+            Holding.ticker_symbol.in_(duplicate_tickers),
+        )
+    ) or 0
+    for ticker in duplicate_tickers:
+        await _consolidate_ticker_holdings(account_id, ticker, db)
     await db.commit()
-    return holding
+    return {"merged_tickers": duplicate_tickers, "holdings_removed": before - len(duplicate_tickers)}
 
 
 @router.patch("/holdings/{holding_id}", response_model=HoldingResponse)

@@ -4,7 +4,7 @@ import CountryGate from "@/components/CountryGate";
 import MerchantLogo from "@/components/MerchantLogo";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid,
   PieChart, Pie, Cell,
 } from "recharts";
 import { useRouter } from "next/navigation";
@@ -1664,8 +1664,8 @@ export default function TransactionsPage() {
                       <p className="text-xs text-gray-400 mt-0.5">Income vs expenses over time</p>
                     </div>
                     <div className="flex items-center gap-3 text-xs text-gray-500">
-                      <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-400 inline-block" />Income</span>
-                      <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-400 inline-block" />Expenses</span>
+                      <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-finance-500 inline-block" />Income</span>
+                      <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" />Expenses</span>
                     </div>
                   </div>
                   {monthlyTrend.length === 0 ? (
@@ -1673,11 +1673,12 @@ export default function TransactionsPage() {
                   ) : (
                     <ResponsiveContainer width="100%" height={200}>
                       <BarChart data={monthlyTrend} barSize={12} barCategoryGap="35%">
-                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
-                        <YAxis tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} width={42} tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
-                        <Tooltip formatter={(v: number, name: string) => [fmt(v), name.charAt(0).toUpperCase() + name.slice(1)]} contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e5e7eb", boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }} cursor={{ fill: "rgba(0,0,0,0.03)" }} />
-                        <Bar dataKey="income"   name="income"   fill="#34d399" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="expenses" name="expenses" fill="#fb7185" radius={[4, 4, 0, 0]} />
+                        <CartesianGrid strokeDasharray="4 4" stroke="#e4e8ed" strokeOpacity={0.5} vertical={false} />
+                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} />
+                        <YAxis tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} width={42} tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} />
+                        <Tooltip formatter={(v: number, name: string) => [fmt(v), name.charAt(0).toUpperCase() + name.slice(1)]} contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #c8d2db", boxShadow: "0 4px 12px rgba(0,51,102,0.08)" }} cursor={{ fill: "rgba(0,51,102,0.03)" }} />
+                        <Bar dataKey="income"   name="income"   fill="#007A33" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="expenses" name="expenses" fill="#f43f5e" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
@@ -1725,7 +1726,7 @@ export default function TransactionsPage() {
 
               {/* Row 2: Top Merchants by Spending */}
               {merchantSpend.length > 0 && (() => {
-                const MERCHANT_COLORS = ["#6366f1", "#8b5cf6", "#3b82f6", "#06b6d4", "#10b981", "#94a3b8"];
+                const MERCHANT_COLORS = ["#003366", "#007A33", "#0ea5e9", "#8b5cf6", "#14b8a6", "#94a3b8"];
                 const merchantTotal = merchantSpend.reduce((s, m) => s + m.amount, 0);
                 return (
                   <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-sm p-5">

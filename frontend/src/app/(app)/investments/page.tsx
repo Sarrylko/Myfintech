@@ -10,6 +10,7 @@ import {
   createHolding,
   updateHolding,
   deleteHolding,
+  consolidateHoldings,
   getTickerInfo,
   cryptoSearch,
   getRefreshStatus,
@@ -353,8 +354,39 @@ function HoldingsTable({
   // Shared inline input style
   const inp = "border border-gray-300 rounded px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-blue-500";
 
+  // Detect duplicate tickers so we can show a merge banner
+  const tickerCounts: Record<string, number> = {};
+  for (const h of holdings) {
+    if (h.ticker_symbol) {
+      const k = h.ticker_symbol.toUpperCase();
+      tickerCounts[k] = (tickerCounts[k] ?? 0) + 1;
+    }
+  }
+  const hasDuplicates = isManual && Object.values(tickerCounts).some((c) => c > 1);
+
   return (
     <div className="overflow-x-auto">
+      {hasDuplicates && (
+        <div className="mx-4 mt-3 mb-1 flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
+          <p className="text-xs text-amber-800 font-medium">
+            Duplicate positions detected for the same ticker — merge them into single rows.
+          </p>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true);
+              try { await consolidateHoldings(accountId); onChanged(); }
+              catch { /* user can retry */ }
+              finally { setSaving(false); }
+            }}
+            className="shrink-0 px-3 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 transition"
+          >
+            Merge duplicates
+          </button>
+        </div>
+      )}
+
       {holdings.length === 0 && !showAddForm && (
         <div className="px-5 py-4 text-center text-sm text-gray-400">
           {isManual ? "No positions yet — add your first holding below." : "No holdings data — sync with Plaid to import positions."}
@@ -1065,27 +1097,54 @@ function TransactionActivityView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary]);
 
-  async function handleSyncToPositions() {
-    if (!summary) return;
-    const toSync = summary.positions.filter((p) => Number(p.net_shares) > 0);
+  // Build a map of ticker → holding.id (first/oldest wins — matches consolidation survivor)
+  const existingHoldingByTicker: Record<string, string> = {};
+  for (const h of holdings) {
+    if (h.ticker_symbol) {
+      const key = h.ticker_symbol.toUpperCase();
+      if (!existingHoldingByTicker[key]) existingHoldingByTicker[key] = h.id;
+    }
+  }
+
+  // Upsert positions: update existing holdings, create new ones
+  async function upsertPositions(
+    positions: TickerRollup[],
+    prices: Record<string, number | null>,
+    triggerParentRefresh: boolean,
+  ) {
+    const toSync = positions.filter((p) => Number(p.net_shares) > 0);
     if (toSync.length === 0) return;
-    setSyncing(true);
-    try {
-      await Promise.all(
-        toSync.map((pos) => {
-          const netShares = Number(pos.net_shares);
-          const livePrice = priceMap[pos.ticker_symbol] ?? null;
-          const currentValue = livePrice !== null ? (livePrice * netShares).toFixed(2) : null;
-          return createHolding(accountId, {
-            ticker_symbol: pos.ticker_symbol,
-            name: pos.name,
+    await Promise.all(
+      toSync.map((pos) => {
+        const netShares = Number(pos.net_shares);
+        const livePrice = prices[pos.ticker_symbol] ?? null;
+        const currentValue = livePrice !== null ? (livePrice * netShares).toFixed(2) : null;
+        const existingId = existingHoldingByTicker[pos.ticker_symbol.toUpperCase()];
+        if (existingId) {
+          return updateHolding(existingId, {
             quantity: String(pos.net_shares),
             cost_basis: pos.total_cost_basis ? String(pos.total_cost_basis) : null,
-            current_value: currentValue,
+            ...(currentValue !== null ? { current_value: currentValue } : {}),
           });
-        })
-      );
-      onSyncedToPositions?.();
+        }
+        return createHolding(accountId, {
+          ticker_symbol: pos.ticker_symbol,
+          name: pos.name,
+          quantity: String(pos.net_shares),
+          cost_basis: pos.total_cost_basis ? String(pos.total_cost_basis) : null,
+          current_value: currentValue,
+        });
+      })
+    );
+    if (triggerParentRefresh) onSyncedToPositions?.();
+  }
+
+  async function handleSyncToPositions() {
+    if (!summary) return;
+    setSyncing(true);
+    setSyncError("");
+    try {
+      await upsertPositions(summary.positions, priceMap, true);
     } catch (e) {
       setSyncError(e instanceof Error ? e.message : "Sync failed — check console");
     } finally {
@@ -1093,11 +1152,31 @@ function TransactionActivityView({
     }
   }
 
+  // After a transaction is saved/deleted, refresh rollup and auto-update any
+  // tickers that already exist in Positions so cost basis stays in sync.
+  async function handleTransactionChanged() {
+    setLoading(true);
+    try {
+      const newSummary = await listInvestmentTransactionRollup(accountId);
+      setSummary(newSummary);
+      const affected = newSummary.positions.filter(
+        (p) => Number(p.net_shares) > 0 && existingHoldingByTicker[p.ticker_symbol.toUpperCase()],
+      );
+      if (affected.length > 0) {
+        await upsertPositions(affected, priceMap, true);
+      }
+    } catch {
+      // rollup failure shown elsewhere; swallow auto-sync error
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleDeleteTxn(txnId: string) {
     if (!window.confirm("Delete this transaction?")) return;
     try {
       await deleteInvestmentTransaction(txnId);
-      fetchRollup();
+      handleTransactionChanged();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Delete failed");
     }
@@ -1263,14 +1342,14 @@ function TransactionActivityView({
           accountId={accountId}
           initial={editingTxn}
           onClose={() => { setShowAddModal(false); setEditingTxn(null); }}
-          onSaved={fetchRollup}
+          onSaved={handleTransactionChanged}
         />
       )}
       {showCSVModal && (
         <CSVImportModal
           accountId={accountId}
           onClose={() => setShowCSVModal(false)}
-          onImported={fetchRollup}
+          onImported={handleTransactionChanged}
         />
       )}
     </div>

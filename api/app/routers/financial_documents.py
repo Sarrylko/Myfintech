@@ -133,6 +133,8 @@ async def upload_financial_document(
     file_path.write_bytes(content)
 
     extracted_text = extract_pdf_text(str(file_path))
+    if extracted_text:
+        extracted_text = extracted_text.replace("\x00", "")
 
     doc = FinancialDocument(
         household_id=user.household_id,

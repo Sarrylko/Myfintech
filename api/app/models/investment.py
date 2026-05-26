@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, text
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,6 +11,9 @@ from app.core.database import Base
 
 class Holding(Base):
     __tablename__ = "holdings"
+    __table_args__ = (
+        UniqueConstraint("account_id", "ticker_symbol", name="uq_holdings_account_ticker"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

@@ -51,7 +51,8 @@
       "Bash(ssh sarvjeet@192.168.1.26 \"cd ~/dev/Myfintech && docker compose --profile dev up -d --build 2>&1 | tail -30\")",
       "Bash(ssh sarvjeet@192.168.1.26 \"which docker-compose; docker-compose version; ls ~/.docker/cli-plugins/ 2>/dev/null || echo 'no cli-plugins dir'\")",
       "Bash(ssh sarvjeet@192.168.1.26 \"docker ps --format 'table {{.Names}}\\\\t{{.Status}}'\")",
-      "Bash(ssh sarvjeet@192.168.1.26 \"docker logs myfintech-proxy-1 2>&1 | tail -20\")"
+      "Bash(ssh sarvjeet@192.168.1.26 \"docker logs myfintech-proxy-1 2>&1 | tail -20\")",
+      "Bash(xargs wc -l)"
     ]
   }
 }

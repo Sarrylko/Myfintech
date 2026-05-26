@@ -1326,6 +1326,18 @@ export async function deleteHolding(holdingId: string): Promise<void> {
   return apiFetch<void>(`/api/v1/accounts/holdings/${holdingId}`, { method: "DELETE" });
 }
 
+export interface ConsolidateResult {
+  merged_tickers: string[];
+  holdings_removed: number;
+}
+
+export async function consolidateHoldings(accountId: string): Promise<ConsolidateResult> {
+  return apiFetch<ConsolidateResult>(
+    `/api/v1/accounts/${accountId}/holdings/consolidate`,
+    { method: "POST" }
+  );
+}
+
 // ─── Investment Transactions ─────────────────────────────────────────────────
 
 export interface InvestmentTransaction {

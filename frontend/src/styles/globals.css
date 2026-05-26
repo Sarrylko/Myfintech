@@ -117,6 +117,22 @@ body {
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   RECHARTS OVERRIDES — Finance Clarity design system
+   ═══════════════════════════════════════════════════════════════ */
+.recharts-cartesian-axis-tick text {
+  font-family: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+}
+.recharts-tooltip-cursor {
+  stroke: var(--border-strong);
+  stroke-width: 1px;
+  stroke-dasharray: 4 4;
+}
+.recharts-legend-item-text {
+  font-size: 12px !important;
+  color: var(--text-secondary) !important;
+}
+
 /* Interactive elements: snappy, include color + shadow */
 button, a, input, select, textarea {
   transition: background-color 0.1s ease, border-color 0.1s ease,

@@ -24,6 +24,7 @@ from app.models.account import Account
 from app.models.networth import NetWorthSnapshot
 from app.models.property import Property
 from app.models.property_details import Loan
+from app.models.snaptrade import SnapTradeConnection  # noqa: F401 — ensures Account mapper resolves this relationship
 from app.models.user import Household, HouseholdCountryProfile
 from app.worker import celery_app
 
@@ -41,11 +42,12 @@ def _compute_metrics(db: Session, household_id: uuid.UUID) -> dict:
     ).scalar_one_or_none()
     home_currency = household.default_currency if household else "USD"
 
-    # Accounts
+    # Accounts — only include accounts denominated in the household's home currency
     accounts = db.execute(
         select(Account).where(
             Account.household_id == household_id,
             Account.is_hidden == False,  # noqa: E712
+            Account.currency_code == home_currency,
         )
     ).scalars().all()
 

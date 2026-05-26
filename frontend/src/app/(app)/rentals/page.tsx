@@ -1912,19 +1912,19 @@ function ReportsTab({
             <p className="text-xs text-gray-400 mb-4">{chartTitle}</p>
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }} barCategoryGap="35%">
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={fmtTick} tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} width={52} />
+                <CartesianGrid strokeDasharray="4 4" stroke="#e4e8ed" strokeOpacity={0.5} vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={fmtTick} tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} width={52} />
                 <ChartTooltip
                   formatter={(value: number, name: string) => [
                     fmtM(value),
                     name,
                   ]}
-                  contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+                  contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #c8d2db", boxShadow: "0 4px 12px rgba(0,51,102,0.08)" }}
                 />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                {/* Payments bar — standalone green */}
-                <Bar dataKey="Payments" name="Payments (Collected)" fill="#22c55e" radius={[4, 4, 0, 0]} maxBarSize={80} />
+                {/* Payments bar — teal */}
+                <Bar dataKey="Payments" name="Payments (Collected)" fill="#14b8a6" radius={[4, 4, 0, 0]} maxBarSize={80} />
                 {/* Stacked expense breakdown bars */}
                 {activeExpBars.map((b, i) => (
                   <Bar

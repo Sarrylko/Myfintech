@@ -53,7 +53,7 @@ import {
   PremiumFrequency,
   PropertyCreate,
 } from "@/lib/api";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useCurrency } from "@/lib/currency";
 import { COUNTRIES, CURRENCIES } from "@/lib/countries";
 import { fmtInCurrency, convertToUSD } from "@/lib/forex";
@@ -2380,10 +2380,17 @@ function ValuationsTab({
         <div className="mb-4 bg-gray-50 rounded-lg p-4 border border-gray-100">
           <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold mb-3">Value Over Time</p>
           <ResponsiveContainer width="100%" height={160}>
-            <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-              <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
+            <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="gradPropertyVal" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor="#0ea5e9" stopOpacity={0.18} />
+                  <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="4 4" stroke="#e4e8ed" strokeOpacity={0.5} vertical={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} />
               <YAxis
-                tick={{ fontSize: 11, fill: "#9ca3af" }}
+                tick={{ fontSize: 11, fill: "#7a8fa6" }}
                 axisLine={false}
                 tickLine={false}
                 tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
@@ -2391,17 +2398,18 @@ function ValuationsTab({
               />
               <Tooltip
                 formatter={(v: number) => [fmt(v), "Value"]}
-                contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+                contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #c8d2db", boxShadow: "0 4px 12px rgba(0,51,102,0.08)" }}
               />
-              <Line
+              <Area
                 type="monotone"
                 dataKey="value"
-                stroke="#6366f1"
+                stroke="#0ea5e9"
                 strokeWidth={2}
-                dot={{ r: 3, fill: "#6366f1" }}
-                activeDot={{ r: 5 }}
+                fill="url(#gradPropertyVal)"
+                dot={{ r: 3, fill: "#0ea5e9", stroke: "white", strokeWidth: 1.5 }}
+                activeDot={{ r: 5, stroke: "white", strokeWidth: 2, fill: "#0ea5e9" }}
               />
-            </LineChart>
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       )}
