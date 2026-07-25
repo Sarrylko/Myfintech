@@ -4,14 +4,16 @@ import uuid
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.account import Account, Transaction, TransactionSplit
+from app.models.account import Account, PlaidItem, Transaction, TransactionSplit
 from app.models.property_details import Loan
 from app.models.rule import CategorizationRule
+from app.models.snaptrade import SnapTradeConnection
 from app.models.user import User
 from app.models.investment import Holding, InvestmentTransaction
 from app.schemas.account import (
@@ -25,6 +27,7 @@ from app.schemas.account import (
     TransactionUpdate,
 )
 from app.schemas.transaction_split import TransactionSplitRequest, TransactionSplitResponse
+from app.services.account_health import classify_connection
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -118,6 +121,85 @@ async def list_all_transactions(
         .offset(offset)
     )
     return result.scalars().all()
+
+
+# ─── Sync Health ───────────────────────────────────────────────────────────────
+# Registered before /{account_id} so "sync-health" isn't swallowed as a UUID path param.
+
+class ConnectionHealth(BaseModel):
+    connection_id: str
+    connection_type: str  # "plaid" | "snaptrade"
+    name: str
+    accounts: list[str]
+    is_active: bool
+    last_synced_at: datetime | None
+    error_message: str | None
+    refresh_interval_hours: int
+    status: str  # "ok" | "error" | "never_synced" | "stale" | "disabled"
+    status_detail: str | None
+
+
+def _account_labels(accounts: list[Account]) -> list[str]:
+    return [f"{a.name} (…{a.mask})" if a.mask else a.name for a in accounts]
+
+
+@router.get("/sync-health", response_model=list[ConnectionHealth])
+async def get_sync_health(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return sync status for every Plaid/SnapTrade connection in this household."""
+    out: list[ConnectionHealth] = []
+
+    plaid_result = await db.execute(
+        select(PlaidItem).where(PlaidItem.household_id == user.household_id)
+    )
+    for item in plaid_result.scalars().all():
+        acct_result = await db.execute(
+            select(Account).where(Account.plaid_item_id == item.id)
+        )
+        status, detail = classify_connection(
+            item.error_code, item.is_active, item.last_synced_at, item.created_at
+        )
+        out.append(ConnectionHealth(
+            connection_id=str(item.id),
+            connection_type="plaid",
+            name=item.institution_name or "Bank connection",
+            accounts=_account_labels(acct_result.scalars().all()),
+            is_active=item.is_active,
+            last_synced_at=item.last_synced_at,
+            error_message=item.error_code,
+            refresh_interval_hours=item.refresh_interval_hours,
+            status=status,
+            status_detail=detail,
+        ))
+
+    snap_result = await db.execute(
+        select(SnapTradeConnection).where(SnapTradeConnection.household_id == user.household_id)
+    )
+    for conn in snap_result.scalars().all():
+        acct_result = await db.execute(
+            select(Account).where(Account.snaptrade_connection_id == conn.id)
+        )
+        status, detail = classify_connection(
+            conn.error_code, conn.is_active, conn.last_synced_at, conn.created_at
+        )
+        out.append(ConnectionHealth(
+            connection_id=str(conn.id),
+            connection_type="snaptrade",
+            name=conn.brokerage_name or "Brokerage connection",
+            accounts=_account_labels(acct_result.scalars().all()),
+            is_active=conn.is_active,
+            last_synced_at=conn.last_synced_at,
+            error_message=conn.error_code,
+            refresh_interval_hours=conn.refresh_interval_hours,
+            status=status,
+            status_detail=detail,
+        ))
+
+    _status_rank = {"error": 0, "never_synced": 1, "stale": 2, "disabled": 3, "ok": 4}
+    out.sort(key=lambda c: _status_rank.get(c.status, 5))
+    return out
 
 
 @router.get("/{account_id}", response_model=AccountResponse)
@@ -1196,3 +1278,89 @@ async def delete_holding(
     if account_id:
         await _sync_account_balance(account_id, db)
     await db.commit()
+
+
+# ─── Account Refresh Endpoints ────────────────────────────────────────────────
+
+class RefreshAllResponse(BaseModel):
+    status: str
+    task_ids: list[str]
+    connections_queued: int
+
+
+class SingleRefreshResponse(BaseModel):
+    status: str
+    task_id: str
+    connection_type: str  # "plaid" | "snaptrade"
+
+
+@router.post("/refresh-all", response_model=RefreshAllResponse)
+async def refresh_all_accounts(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue background sync for all active Plaid and SnapTrade connections in this household."""
+    from app.services.plaid_sync import sync_single_plaid_item
+    from app.services.snaptrade_sync import sync_single_snaptrade_connection
+
+    task_ids: list[str] = []
+
+    plaid_result = await db.execute(
+        select(PlaidItem).where(
+            PlaidItem.household_id == user.household_id,
+            PlaidItem.is_active == True,  # noqa: E712
+        )
+    )
+    for item in plaid_result.scalars().all():
+        task = sync_single_plaid_item.delay(str(item.id))
+        task_ids.append(task.id)
+
+    snap_result = await db.execute(
+        select(SnapTradeConnection).where(
+            SnapTradeConnection.household_id == user.household_id,
+            SnapTradeConnection.is_active == True,  # noqa: E712
+        )
+    )
+    for conn in snap_result.scalars().all():
+        task = sync_single_snaptrade_connection.delay(str(conn.id))
+        task_ids.append(task.id)
+
+    return RefreshAllResponse(
+        status="queued",
+        task_ids=task_ids,
+        connections_queued=len(task_ids),
+    )
+
+
+@router.post("/{account_id}/refresh", response_model=SingleRefreshResponse)
+async def refresh_single_account(
+    account_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue background sync for the connection behind a specific account."""
+    from app.services.plaid_sync import sync_single_plaid_item
+    from app.services.snaptrade_sync import sync_single_snaptrade_connection
+
+    result = await db.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.household_id == user.household_id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if account.plaid_item_id:
+        task = sync_single_plaid_item.delay(str(account.plaid_item_id))
+        return SingleRefreshResponse(status="queued", task_id=task.id, connection_type="plaid")
+
+    if account.snaptrade_connection_id:
+        task = sync_single_snaptrade_connection.delay(str(account.snaptrade_connection_id))
+        return SingleRefreshResponse(status="queued", task_id=task.id, connection_type="snaptrade")
+
+    raise HTTPException(
+        status_code=400,
+        detail="This account is manual and cannot be refreshed automatically",
+    )

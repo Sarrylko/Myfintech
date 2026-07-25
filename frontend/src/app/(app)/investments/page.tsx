@@ -105,6 +105,115 @@ function totalBalance(accounts: Account[]): number {
   return accounts.reduce((sum, a) => sum + (a.current_balance ? Number(a.current_balance) : 0), 0);
 }
 
+// ─── Ticker aggregation for Top Movers ────────────────────────────────────────
+
+interface TickerMover {
+  ticker: string;
+  name: string;
+  currentValue: number;
+  prevValue: number;
+  dayGain: number;
+  dayPct: number;
+  accountNames: string[];
+}
+
+function buildTickerMovers(accounts: Account[], holdingsMap: Record<string, Holding[]>): TickerMover[] {
+  const map = new Map<string, { name: string; currentValue: number; prevValue: number; dayGain: number; accountNames: Set<string> }>();
+  for (const acc of accounts) {
+    const holdings = holdingsMap[acc.id] ?? [];
+    for (const h of holdings) {
+      const qty = Number(h.quantity);
+      const prevClose = h.previous_close ? Number(h.previous_close) : null;
+      if (!h.ticker_symbol || !qty || qty <= 0 || !prevClose || prevClose <= 0) continue;
+      const value = Number(h.current_value ?? 0);
+      const prevValue = prevClose * qty;
+      const key = h.ticker_symbol.toUpperCase();
+      const existing = map.get(key);
+      if (existing) {
+        existing.currentValue += value;
+        existing.prevValue += prevValue;
+        existing.dayGain += value - prevValue;
+        existing.accountNames.add(acc.name);
+      } else {
+        map.set(key, {
+          name: h.name ?? key,
+          currentValue: value,
+          prevValue,
+          dayGain: value - prevValue,
+          accountNames: new Set([acc.name]),
+        });
+      }
+    }
+  }
+  return Array.from(map.entries()).map(([ticker, v]) => ({
+    ticker,
+    name: v.name,
+    currentValue: v.currentValue,
+    prevValue: v.prevValue,
+    dayGain: v.dayGain,
+    dayPct: v.prevValue > 0 ? (v.dayGain / v.prevValue) * 100 : 0,
+    accountNames: Array.from(v.accountNames),
+  }));
+}
+
+function TopMoversPanel({
+  title, movers, accentPositive, pnlMode, fmt,
+}: {
+  title: string;
+  movers: TickerMover[];
+  accentPositive: boolean;
+  pnlMode: "dollar" | "percent";
+  fmt: (val: number, decimals?: number) => string;
+}) {
+  const color = accentPositive ? "text-emerald-600" : "text-red-600";
+  const badgeBg = accentPositive ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600";
+  return (
+    <div className="bg-white rounded-xl shadow border border-gray-100 flex-1 min-w-[280px]">
+      <div className="px-4 py-3 border-b border-gray-100">
+        <h4 className="text-sm font-semibold text-gray-900">{title}</h4>
+      </div>
+      {movers.length === 0 ? (
+        <p className="px-4 py-6 text-center text-xs text-gray-400">No movers yet today</p>
+      ) : (
+        <ul>
+          {movers.map((m) => (
+            <li key={m.ticker} className="px-4 py-2.5 flex items-center justify-between gap-3 border-t border-gray-50 first:border-0">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono font-semibold text-sm text-gray-800">{m.ticker}</span>
+                  <span className="text-xs text-gray-400 truncate max-w-[120px]">{m.name}</span>
+                </div>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {m.accountNames.map((n) => (
+                    <span key={n} className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">{n}</span>
+                  ))}
+                </div>
+              </div>
+              <div className={`text-right shrink-0 text-sm font-bold tabular-nums ${color}`}>
+                {pnlMode === "dollar" ? (
+                  <>
+                    <div>{m.dayGain >= 0 ? "+" : ""}{fmt(m.dayGain, 2)}</div>
+                    <div className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${badgeBg}`}>
+                      {m.dayGain >= 0 ? "+" : ""}{m.dayPct.toFixed(2)}%
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>{m.dayGain >= 0 ? "+" : ""}{m.dayPct.toFixed(2)}%</div>
+                    <div className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${badgeBg}`}>
+                      {m.dayGain >= 0 ? "+" : ""}{fmt(m.dayGain, 2)}
+                    </div>
+                  </>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // ─── Holdings Table ───────────────────────────────────────────────────────────
 
 const BLANK_ADD: HoldingCreate = { ticker_symbol: "", name: "", quantity: "", cost_basis: "", current_value: "", asset_class: null, coingecko_id: null };
@@ -1558,6 +1667,7 @@ export default function InvestmentsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [members, setMembers] = useState<UserResponse[]>([]);
   const [ownerFilter, setOwnerFilter] = useState<string>("all");
+  const [pnlMode, setPnlMode] = useState<"dollar" | "percent">("dollar");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -1591,6 +1701,23 @@ export default function InvestmentsPage() {
     const interval = setInterval(fetchStatus, 60_000);
     return () => clearInterval(interval);
   }, []);
+
+  // Eagerly load holdings for every investment account (not just the expanded
+  // one) so the portfolio-wide Today's P&L / Total P&L strip below is always
+  // accurate instead of only reflecting whichever accounts happen to be expanded.
+  useEffect(() => {
+    accounts.forEach((a) => {
+      setHoldingsMap((m) => {
+        if (m[a.id] !== undefined) return m;
+        setHoldingsLoadingMap((lm) => ({ ...lm, [a.id]: true }));
+        listHoldings(a.id)
+          .then((h) => setHoldingsMap((cur) => ({ ...cur, [a.id]: h })))
+          .catch(() => setHoldingsMap((cur) => ({ ...cur, [a.id]: [] })))
+          .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [a.id]: false })));
+        return m;
+      });
+    });
+  }, [accounts]);
 
   function refetchHoldings(accountId: string) {
     setHoldingsLoadingMap((lm) => ({ ...lm, [accountId]: true }));
@@ -1674,23 +1801,46 @@ export default function InvestmentsPage() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h2 className="text-2xl font-bold">Investments</h2>
-        {members.length > 1 && (
+        <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-500">Owner:</label>
-            <select
-              value={ownerFilter}
-              onChange={(e) => setOwnerFilter(e.target.value)}
-              aria-label="Filter by owner"
-              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
-            >
-              <option value="all">All Members</option>
-              <option value="shared">Shared / Unassigned</option>
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>{m.full_name}</option>
-              ))}
-            </select>
+            <label className="text-sm text-gray-500">Show:</label>
+            <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setPnlMode("dollar")}
+                aria-pressed={pnlMode === "dollar" ? "true" : "false"}
+                className={`px-2.5 py-1.5 transition ${pnlMode === "dollar" ? "bg-blue-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
+              >
+                $
+              </button>
+              <button
+                type="button"
+                onClick={() => setPnlMode("percent")}
+                aria-pressed={pnlMode === "percent" ? "true" : "false"}
+                className={`px-2.5 py-1.5 transition border-l border-gray-300 ${pnlMode === "percent" ? "bg-blue-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
+              >
+                %
+              </button>
+            </div>
           </div>
-        )}
+          {members.length > 1 && (
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-500">Owner:</label>
+              <select
+                value={ownerFilter}
+                onChange={(e) => setOwnerFilter(e.target.value)}
+                aria-label="Filter by owner"
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
+              >
+                <option value="all">All Members</option>
+                <option value="shared">Shared / Unassigned</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>{m.full_name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -1728,7 +1878,17 @@ export default function InvestmentsPage() {
         const allHoldings = Object.values(holdingsMap).flat();
         const withPrev = allHoldings.filter((h) => h.previous_close && Number(h.previous_close) > 0 && Number(h.quantity) > 0);
         const withCost = allHoldings.filter((h) => h.cost_basis && Number(h.cost_basis) > 0);
-        if (withPrev.length === 0 && withCost.length === 0) return null;
+        if (withPrev.length === 0 && withCost.length === 0) {
+          const allLoaded = accounts.every((a) => holdingsMap[a.id] !== undefined);
+          if (accounts.length > 0 && !allLoaded) {
+            return (
+              <div className="flex items-center gap-2 mb-5 bg-white rounded-xl border border-gray-100 shadow px-5 py-4 text-xs text-gray-400">
+                Loading portfolio P&amp;L…
+              </div>
+            );
+          }
+          return null;
+        }
 
         const dayGainTotal = withPrev.reduce((s, h) => {
           const qty = Number(h.quantity);
@@ -1754,11 +1914,18 @@ export default function InvestmentsPage() {
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Today&apos;s P&amp;L</p>
                   <div className="flex items-baseline gap-1.5 mt-0.5">
                     <span className={`text-lg font-bold tabular-nums ${dayGainTotal >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {dayGainTotal >= 0 ? "+" : ""}{fmt(dayGainTotal, 2)}
+                      {pnlMode === "dollar"
+                        ? `${dayGainTotal >= 0 ? "+" : ""}${fmt(dayGainTotal, 2)}`
+                        : dayPct !== null ? `${dayGainTotal >= 0 ? "+" : ""}${dayPct.toFixed(2)}%` : "—"}
                     </span>
-                    {dayPct !== null && (
+                    {pnlMode === "dollar" && dayPct !== null && (
                       <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${dayGainTotal >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"}`}>
                         {dayGainTotal >= 0 ? "+" : ""}{dayPct.toFixed(2)}%
+                      </span>
+                    )}
+                    {pnlMode === "percent" && (
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${dayGainTotal >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"}`}>
+                        {dayGainTotal >= 0 ? "+" : ""}{fmt(dayGainTotal, 2)}
                       </span>
                     )}
                   </div>
@@ -1775,11 +1942,18 @@ export default function InvestmentsPage() {
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total P&amp;L (All-Time)</p>
                   <div className="flex items-baseline gap-1.5 mt-0.5">
                     <span className={`text-lg font-bold tabular-nums ${totalGainAll >= 0 ? "text-indigo-600" : "text-red-600"}`}>
-                      {totalGainAll >= 0 ? "+" : ""}{fmt(totalGainAll, 2)}
+                      {pnlMode === "dollar"
+                        ? `${totalGainAll >= 0 ? "+" : ""}${fmt(totalGainAll, 2)}`
+                        : totalGainPct !== null ? `${totalGainAll >= 0 ? "+" : ""}${totalGainPct.toFixed(2)}%` : "—"}
                     </span>
-                    {totalGainPct !== null && (
+                    {pnlMode === "dollar" && totalGainPct !== null && (
                       <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${totalGainAll >= 0 ? "bg-indigo-50 text-indigo-600" : "bg-red-50 text-red-600"}`}>
                         {totalGainAll >= 0 ? "+" : ""}{totalGainPct.toFixed(2)}%
+                      </span>
+                    )}
+                    {pnlMode === "percent" && (
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${totalGainAll >= 0 ? "bg-indigo-50 text-indigo-600" : "bg-red-50 text-red-600"}`}>
+                        {totalGainAll >= 0 ? "+" : ""}{fmt(totalGainAll, 2)}
                       </span>
                     )}
                   </div>
@@ -1787,8 +1961,25 @@ export default function InvestmentsPage() {
               </div>
             )}
             <div className="ml-auto self-center">
-              <p className="text-[10px] text-gray-400">{withPrev.length > 0 ? `${withPrev.length} position${withPrev.length !== 1 ? "s" : ""} with live prices` : "Expand accounts to load P&L"}</p>
+              <p className="text-[10px] text-gray-400">{withPrev.length > 0 ? `${withPrev.length} position${withPrev.length !== 1 ? "s" : ""} with live prices` : "Loading P&L…"}</p>
             </div>
+          </div>
+        );
+      })()}
+
+      {/* Today's Top Movers — computed from loaded holdings, aggregated by ticker across accounts */}
+      {!loading && (() => {
+        const movers = buildTickerMovers(filtered, holdingsMap);
+        if (movers.length === 0) return null;
+        const sorted = [...movers].sort((a, b) =>
+          pnlMode === "dollar" ? b.dayGain - a.dayGain : b.dayPct - a.dayPct
+        );
+        const gainers = sorted.filter((m) => m.dayGain > 0).slice(0, 5);
+        const losers = sorted.filter((m) => m.dayGain < 0).slice(-5).reverse();
+        return (
+          <div className="flex flex-wrap gap-4 mb-5">
+            <TopMoversPanel title="Top 5 Gainers Today" movers={gainers} accentPositive pnlMode={pnlMode} fmt={fmt} />
+            <TopMoversPanel title="Top 5 Losers Today" movers={losers} accentPositive={false} pnlMode={pnlMode} fmt={fmt} />
           </div>
         );
       })()}

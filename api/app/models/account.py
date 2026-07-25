@@ -33,6 +33,7 @@ class PlaidItem(Base):
         DateTime(timezone=True), server_default=text("now()")
     )
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    refresh_interval_hours: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
 
     accounts: Mapped[list["Account"]] = relationship(back_populates="plaid_item")
 

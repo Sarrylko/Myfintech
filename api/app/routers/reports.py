@@ -895,11 +895,17 @@ async def tax_export(
             )
             rent_charged = float(charges_result.scalar() or 0)
 
-        # Get active property costs
+        # Get property costs in effect during the tax year (exclude costs that
+        # took effect after this year — e.g. a 2027 rate increase shouldn't
+        # inflate a 2026 report)
         costs_result = await db.execute(
             select(PropertyCost).where(
                 PropertyCost.property_id == prop.id,
                 PropertyCost.is_active == True,
+                or_(
+                    PropertyCost.effective_date.is_(None),
+                    PropertyCost.effective_date <= year_end,
+                ),
             )
         )
         costs = list(costs_result.scalars().all())
@@ -916,11 +922,20 @@ async def tax_export(
             else:  # one_time
                 return amt
 
-        # Also pull premiums from insurance_policies linked to this property
+        # Also pull premiums from insurance_policies linked to this property,
+        # limited to policies that were actually in force during the tax year
         policies_result = await db.execute(
             select(InsurancePolicy).where(
                 InsurancePolicy.property_id == prop.id,
                 InsurancePolicy.is_active == True,
+                or_(
+                    InsurancePolicy.start_date.is_(None),
+                    InsurancePolicy.start_date <= year_end,
+                ),
+                or_(
+                    InsurancePolicy.renewal_date.is_(None),
+                    InsurancePolicy.renewal_date >= year_start,
+                ),
             )
         )
         linked_policies = list(policies_result.scalars().all())

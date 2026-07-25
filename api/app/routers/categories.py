@@ -63,6 +63,8 @@ _DEFAULT_EXPENSE_CATEGORIES: list[dict[str, Any]] = [
     {"name": "Travel",         "icon": "✈️", "color": "#0ea5e9"},
     {"name": "Gifts & Charity","icon": "🎁", "color": "#a855f7"},
     {"name": "Pets",           "icon": "🐾", "color": "#78716c"},
+    {"name": "Property Tax",   "icon": "🏛️", "color": "#475569"},
+    {"name": "Income Tax",     "icon": "🧾", "color": "#334155"},
 ]
 
 _DEFAULT_INCOME_CATEGORIES: list[dict[str, Any]] = [

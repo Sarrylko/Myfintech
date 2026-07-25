@@ -17,6 +17,10 @@ import {
   listUnitLeases,
   createLease,
   updateLease,
+  listLeaseDocuments,
+  uploadLeaseDocument,
+  downloadLeaseDocument,
+  deleteLeaseDocument,
   listPayments,
   createPayment,
   updatePayment,
@@ -32,6 +36,7 @@ import {
   Unit,
   Tenant,
   Lease,
+  LeaseDocument,
   Payment,
   UnitCreate,
   TenantCreate,
@@ -392,6 +397,21 @@ function UnitsLeasesTab({
   const [editLeaseForm, setEditLeaseForm] = useState<Record<string, any>>({});
   const [savingLeaseEdit, setSavingLeaseEdit] = useState(false);
 
+  // Lease documents
+  const [leaseDocs, setLeaseDocs] = useState<Record<string, LeaseDocument[]>>({});
+  const [expandedDocsLease, setExpandedDocsLease] = useState<string | null>(null);
+
+  async function toggleLeaseDocs(leaseId: string) {
+    if (expandedDocsLease === leaseId) { setExpandedDocsLease(null); return; }
+    setExpandedDocsLease(leaseId);
+    if (!leaseDocs[leaseId]) {
+      try {
+        const docs = await listLeaseDocuments(leaseId);
+        setLeaseDocs((prev) => ({ ...prev, [leaseId]: docs }));
+      } catch { /* ignore */ }
+    }
+  }
+
   useEffect(() => {
     if (selectedPropId) loadUnits(selectedPropId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -721,36 +741,55 @@ function UnitsLeasesTab({
                               );
                             }
 
+                            const docsCount = leaseDocs[l.id]?.length;
+
                             return (
-                              <div key={l.id} className="flex items-start justify-between p-3 bg-gray-50 rounded-lg gap-3">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-medium text-gray-800">{t?.name ?? "—"}</p>
-                                  <p className="text-xs text-gray-400 mt-0.5">
-                                    {fmtDate(l.lease_start)} – {l.lease_end ? fmtDate(l.lease_end) : "ongoing"}
-                                    {" · "}{fmt(l.monthly_rent)}/mo
-                                    {l.deposit ? ` · Deposit: ${fmt(l.deposit)}` : ""}
-                                  </p>
-                                  {l.notes && <p className="text-xs text-gray-400 mt-0.5 italic">{l.notes}</p>}
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <span className={`text-xs px-2 py-0.5 rounded-full ${l.status === "active" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-                                    {l.status}
-                                  </span>
-                                  <button
-                                    onClick={() => openEditLease(l)}
-                                    className="text-xs text-primary-600 hover:text-primary-700 font-medium"
-                                  >
-                                    Edit
-                                  </button>
-                                  {l.status === "active" && (
+                              <div key={l.id} className="bg-gray-50 rounded-lg overflow-hidden">
+                                <div className="flex items-start justify-between p-3 gap-3">
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium text-gray-800">{t?.name ?? "—"}</p>
+                                    <p className="text-xs text-gray-400 mt-0.5">
+                                      {fmtDate(l.lease_start)} – {l.lease_end ? fmtDate(l.lease_end) : "ongoing"}
+                                      {" · "}{fmt(l.monthly_rent)}/mo
+                                      {l.deposit ? ` · Deposit: ${fmt(l.deposit)}` : ""}
+                                    </p>
+                                    {l.notes && <p className="text-xs text-gray-400 mt-0.5 italic">{l.notes}</p>}
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className={`text-xs px-2 py-0.5 rounded-full ${l.status === "active" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                                      {l.status}
+                                    </span>
                                     <button
-                                      onClick={() => handleEndLease(l)}
-                                      className="text-xs text-red-400 hover:text-red-600 font-medium"
+                                      onClick={() => toggleLeaseDocs(l.id)}
+                                      className="text-xs text-primary-600 hover:text-primary-700 font-medium"
                                     >
-                                      End
+                                      Docs{docsCount ? ` (${docsCount})` : ""}
                                     </button>
-                                  )}
+                                    <button
+                                      onClick={() => openEditLease(l)}
+                                      className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                                    >
+                                      Edit
+                                    </button>
+                                    {l.status === "active" && (
+                                      <button
+                                        onClick={() => handleEndLease(l)}
+                                        className="text-xs text-red-400 hover:text-red-600 font-medium"
+                                      >
+                                        End
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
+                                {expandedDocsLease === l.id && (
+                                  <div className="border-t border-gray-200 px-3 pb-3">
+                                    <LeaseDocumentsPanel
+                                      leaseId={l.id}
+                                      docs={leaseDocs[l.id] ?? []}
+                                      onUpdate={(updated) => setLeaseDocs((prev) => ({ ...prev, [l.id]: updated }))}
+                                    />
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -816,6 +855,161 @@ function UnitsLeasesTab({
           </div>
         )}
       </SectionCard>
+    </div>
+  );
+}
+
+// ─── Lease Documents Panel ─────────────────────────────────────────────────
+
+const LEASE_DOC_CATEGORIES = [
+  { value: "signed_lease", label: "Signed Lease" },
+  { value: "addendum", label: "Addendum" },
+  { value: "move_in_checklist", label: "Move-in Checklist" },
+  { value: "id_verification", label: "ID / Verification" },
+  { value: "other", label: "Other" },
+];
+
+function leaseDocCategoryLabel(cat: string | null): string {
+  if (!cat) return "";
+  return LEASE_DOC_CATEGORIES.find((c) => c.value === cat)?.label ?? cat;
+}
+
+function fmtLeaseDocSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function LeaseDocumentsPanel({
+  leaseId, docs, onUpdate,
+}: {
+  leaseId: string;
+  docs: LeaseDocument[];
+  onUpdate: (updated: LeaseDocument[]) => void;
+}) {
+  const { locale } = useCurrency();
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [category, setCategory] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [deletingDoc, setDeletingDoc] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+
+  async function handleUpload() {
+    if (!selectedFile) return;
+    setUploading(true);
+    setErr("");
+    try {
+      const doc = await uploadLeaseDocument(leaseId, selectedFile, category || null, null);
+      onUpdate([doc, ...docs]);
+      setSelectedFile(null);
+      setCategory("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleDownload(doc: LeaseDocument) {
+    setDownloading(doc.id);
+    try {
+      await downloadLeaseDocument(leaseId, doc.id, doc.filename);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Download failed");
+    } finally {
+      setDownloading(null);
+    }
+  }
+
+  async function handleDelete(docId: string) {
+    if (!confirm("Delete this document? This cannot be undone.")) return;
+    setDeletingDoc(docId);
+    try {
+      await deleteLeaseDocument(leaseId, docId);
+      onUpdate(docs.filter((d) => d.id !== docId));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeletingDoc(null);
+    }
+  }
+
+  return (
+    <div className="pt-3 space-y-3">
+      <div className="flex items-center gap-3 flex-wrap">
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          title="Document category"
+          className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+        >
+          <option value="">— Category —</option>
+          {LEASE_DOC_CATEGORIES.map((c) => (
+            <option key={c.value} value={c.value}>{c.label}</option>
+          ))}
+        </select>
+        <input
+          type="file"
+          onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+          title="Choose lease document to upload"
+          className="text-xs text-gray-600 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-white file:text-primary-600 file:hover:bg-gray-50 file:cursor-pointer"
+        />
+        <button
+          type="button"
+          onClick={handleUpload}
+          disabled={!selectedFile || uploading}
+          className="bg-primary-600 text-white px-3 py-1 rounded-lg text-xs font-medium hover:bg-primary-700 disabled:opacity-50 shrink-0"
+        >
+          {uploading ? "Uploading..." : "Upload"}
+        </button>
+      </div>
+      {err && <p className="text-xs text-red-600">{err}</p>}
+
+      {docs.length === 0 ? (
+        <p className="text-xs text-gray-400 italic">
+          No documents yet. Attach the signed lease, addenda, or move-in checklist.
+        </p>
+      ) : (
+        <div className="divide-y divide-gray-200">
+          {docs.map((doc) => (
+            <div key={doc.id} className="flex items-center gap-3 py-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-gray-800 truncate">{doc.filename}</p>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  {doc.category && (
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-600">
+                      {leaseDocCategoryLabel(doc.category)}
+                    </span>
+                  )}
+                  <span className="text-xs text-gray-400">{fmtLeaseDocSize(doc.file_size)}</span>
+                  <span className="text-xs text-gray-400">
+                    {new Date(doc.uploaded_at).toLocaleDateString(locale)}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleDownload(doc)}
+                  disabled={downloading === doc.id}
+                  className="text-xs text-primary-600 hover:text-primary-800 font-medium px-2 py-1 rounded hover:bg-primary-50 transition disabled:opacity-50"
+                >
+                  {downloading === doc.id ? "..." : "Download"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(doc.id)}
+                  disabled={deletingDoc === doc.id}
+                  className="text-xs text-red-400 hover:text-red-600 font-medium px-2 py-1 rounded hover:bg-red-50 transition disabled:opacity-50"
+                >
+                  {deletingDoc === doc.id ? "..." : "Delete"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1158,6 +1352,126 @@ const TT = {
   avgMonthlyCf:   "Average monthly Cash Flow over the full lifetime period. LTD Cash Flow ÷ Months tracked.",
 };
 
+// ── Plain-language risk assessment ────────────────────────────────────────────
+type RiskLevel = "Low" | "Medium" | "High";
+const RISK_ORDER: Record<RiskLevel, number> = { Low: 0, Medium: 1, High: 2 };
+
+function computeRisk(occupancyPct: number, delinqPct: number, turnoverCount: number): { level: RiskLevel; reasons: string[] } {
+  let level: RiskLevel = "Low";
+  const reasons: string[] = [];
+  function bump(next: RiskLevel) {
+    if (RISK_ORDER[next] > RISK_ORDER[level]) level = next;
+  }
+  if (occupancyPct < 75) { bump("High"); reasons.push(`Occupancy is low at ${occupancyPct.toFixed(0)}%`); }
+  else if (occupancyPct < 90) { bump("Medium"); reasons.push(`Occupancy is below target at ${occupancyPct.toFixed(0)}%`); }
+
+  if (delinqPct > 5) { bump("High"); reasons.push(`${delinqPct.toFixed(0)}% of rent due hasn't been collected yet`); }
+  else if (delinqPct > 2) { bump("Medium"); reasons.push(`${delinqPct.toFixed(0)}% of rent due hasn't been collected yet`); }
+
+  if (turnoverCount >= 3) { bump("High"); reasons.push(`${turnoverCount} leases turned over recently`); }
+  else if (turnoverCount === 2) { bump("Medium"); reasons.push(`${turnoverCount} leases turned over recently`); }
+
+  return { level, reasons };
+}
+
+function RiskBadge({ level }: { level: RiskLevel }) {
+  const styles: Record<RiskLevel, string> = {
+    Low: "bg-green-100 text-green-700",
+    Medium: "bg-yellow-100 text-yellow-700",
+    High: "bg-red-100 text-red-700",
+  };
+  const icons: Record<RiskLevel, string> = { Low: "✓", Medium: "⚠", High: "⚠" };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full whitespace-nowrap ${styles[level]}`}>
+      {icons[level]} {level} risk
+    </span>
+  );
+}
+
+function SimpleStat({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: "green" | "red" }) {
+  const color = accent === "green" ? "text-green-600" : accent === "red" ? "text-red-600" : "text-gray-900";
+  return (
+    <div>
+      <p className="text-xs text-gray-400 mb-0.5">{label}</p>
+      <p className={`text-lg font-bold ${color}`}>{value}</p>
+      {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+function SimpleSummaryCard({
+  periodLabel, expected, collected, outstanding, occupancyPct, occupiedUnits, rentableUnits,
+  cashFlow, risk, fmtM,
+}: {
+  periodLabel: string;
+  expected: number;
+  collected: number;
+  outstanding: number;
+  occupancyPct: number;
+  occupiedUnits: number;
+  rentableUnits: number;
+  cashFlow: number;
+  risk: { level: RiskLevel; reasons: string[] };
+  fmtM: (n: number | null | undefined) => string;
+}) {
+  const pctCollected = expected > 0 ? Math.min(100, (collected / expected) * 100) : 100;
+  const outstandingPct = expected > 0 && outstanding > 0 ? (outstanding / expected) * 100 : 0;
+
+  return (
+    <div className="bg-white rounded-xl shadow border border-gray-100 p-6">
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{periodLabel}</p>
+          <p className="text-lg font-bold text-gray-900 mt-0.5">
+            {fmtM(collected)} collected of {fmtM(expected)} expected
+          </p>
+        </div>
+        <RiskBadge level={risk.level} />
+      </div>
+
+      <div className="w-full bg-gray-100 rounded-full h-2.5 mb-5 overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${outstanding > 0 ? "bg-amber-400" : "bg-green-500"}`}
+          style={{ width: `${pctCollected}%` }}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <SimpleStat label="Expected" value={fmtM(expected)} />
+        <SimpleStat label="Collected" value={fmtM(collected)} accent="green" />
+        <SimpleStat
+          label="Still Owed"
+          value={outstanding > 0 ? fmtM(outstanding) : "Nothing owed"}
+          accent={outstanding > 0 ? "red" : "green"}
+          sub={outstanding > 0 ? `${outstandingPct.toFixed(0)}% behind` : undefined}
+        />
+        <SimpleStat
+          label="Occupancy"
+          value={`${occupancyPct.toFixed(0)}%`}
+          sub={`${occupiedUnits}/${rentableUnits} units filled`}
+        />
+      </div>
+
+      <p className="text-sm text-gray-500 mt-4 pt-4 border-t border-gray-50">
+        Net cash flow after expenses: {" "}
+        <span className={`font-semibold ${cashFlow >= 0 ? "text-green-600" : "text-red-600"}`}>
+          {cashFlow >= 0 ? "+" : ""}{fmtM(cashFlow)}
+        </span>
+      </p>
+
+      {risk.reasons.length > 0 && (
+        <ul className="mt-3 space-y-1">
+          {risk.reasons.map((r, i) => (
+            <li key={i} className="text-xs text-gray-500 flex items-start gap-1.5">
+              <span className="text-amber-500 shrink-0">⚠</span>{r}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function ReportsTab({
   properties,
   activeCountryCode,
@@ -1181,6 +1495,7 @@ function ReportsTab({
   const [portfolio, setPortfolio] = useState<PortfolioReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showDetails, setShowDetails] = useState(false);
 
   // Time-series data for YTD/LastYear/LTD monthly/yearly breakdown charts
   const [timeSeriesData, setTimeSeriesData] = useState<{ label: string; data: PropertyReport | PortfolioReport }[] | null>(null);
@@ -1362,8 +1677,35 @@ function ReportsTab({
       ? `YTD — Jan–${MONTHS[month - 1]} ${year}`
       : `Annual — ${year}`;
 
+    // Plain-language summary — use lifetime totals for LTD, otherwise the current period
+    const summarySource = (preset === "LTD" && lt) ? lt : m;
+    const risk = computeRisk(m.occupancy_pct, deliqPct, q.turnover_count);
+    const summaryLabel = preset === "LTD" ? "Lifetime to Date" : monthLabel;
+
     return (
       <div className="space-y-6">
+        <SimpleSummaryCard
+          periodLabel={summaryLabel}
+          expected={summarySource.rent_charged}
+          collected={summarySource.rent_collected}
+          outstanding={summarySource.delinquency}
+          occupancyPct={m.occupancy_pct}
+          occupiedUnits={m.occupied_units}
+          rentableUnits={m.rentable_units}
+          cashFlow={summarySource.cash_flow}
+          risk={risk}
+          fmtM={fmtM}
+        />
+
+        <button
+          onClick={() => setShowDetails((v) => !v)}
+          className="text-sm text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1"
+        >
+          {showDetails ? "▲ Hide detailed metrics" : "▼ Show detailed metrics (NOI, cap rate, IRR, quarterly breakdown...)"}
+        </button>
+
+        {showDetails && (
+        <div className="space-y-6">
         {/* Lifetime section (LTD only) */}
         {preset === "LTD" && lt && (
           <div>
@@ -1594,6 +1936,8 @@ function ReportsTab({
             </div>
           )}
         </div>
+        </div>
+        )}
       </div>
     );
   }
@@ -1604,8 +1948,68 @@ function ReportsTab({
     const m = (preset === "YTD" && tot.ytd) ? tot.ytd : tot.monthly;
     const a = tot.annual;
     const occ = m.rentable_units > 0 ? (m.occupied_units / m.rentable_units * 100) : 0;
+    const deliqPct = m.rent_charged > 0 ? (m.delinquency / m.rent_charged) * 100 : 0;
+    const totalTurnover = p.properties.reduce((s, pr) => s + pr.quarterly.turnover_count, 0);
+    const risk = computeRisk(occ, deliqPct, totalTurnover);
+    const summaryLabel = preset === "YTD"
+      ? `Portfolio YTD — Jan–${MONTHS[month - 1]} ${year}`
+      : `Portfolio MTD — ${MONTHS[month - 1]} ${year}`;
     return (
       <div className="space-y-6">
+        <SimpleSummaryCard
+          periodLabel={summaryLabel}
+          expected={m.rent_charged}
+          collected={m.rent_collected}
+          outstanding={m.delinquency}
+          occupancyPct={occ}
+          occupiedUnits={m.occupied_units}
+          rentableUnits={m.rentable_units}
+          cashFlow={m.cash_flow}
+          risk={risk}
+          fmtM={fmtM}
+        />
+
+        {/* Per-property breakdown */}
+        {p.properties.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Per Property</p>
+            <div className="space-y-2">
+              {p.properties.map((pr) => {
+                const prm = (preset === "YTD" && pr.ytd) ? pr.ytd : pr.monthly;
+                return (
+                <div key={pr.property_id} className="bg-white border border-gray-200 rounded-lg px-4 py-3 grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div className="md:col-span-2">
+                    <p className="text-sm font-medium text-gray-800 truncate">{pr.property_address}</p>
+                    <p className="text-xs text-gray-400">{prm.occupied_units}/{prm.rentable_units} units occupied</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-400">Collected</p>
+                    <p className="text-sm font-semibold text-green-600">{fmtM(prm.rent_collected)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-400">NOI</p>
+                    <p className={`text-sm font-semibold ${prm.noi >= 0 ? "text-green-600" : "text-red-600"}`}>{fmtM(prm.noi)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-400">Cash Flow</p>
+                    <p className={`text-sm font-semibold ${prm.cash_flow >= 0 ? "text-green-600" : "text-red-600"}`}>{fmtM(prm.cash_flow)}</p>
+                  </div>
+                </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <button
+          onClick={() => setShowDetails((v) => !v)}
+          className="text-sm text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1"
+        >
+          {showDetails ? "▲ Hide detailed metrics" : "▼ Show detailed metrics (NOI, cap rate, equity...)"}
+        </button>
+
+        {showDetails && (
+        <div className="space-y-6">
         {/* Portfolio totals */}
         <div>
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
@@ -1650,36 +2054,7 @@ function ReportsTab({
               higherIsBetter={true} trend={null} tooltip={TT.equity} />
           </div>
         </div>
-        {/* Per-property breakdown */}
-        {p.properties.length > 0 && (
-          <div>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Per Property</p>
-            <div className="space-y-2">
-              {p.properties.map((pr) => {
-                const prm = (preset === "YTD" && pr.ytd) ? pr.ytd : pr.monthly;
-                return (
-                <div key={pr.property_id} className="bg-white border border-gray-200 rounded-lg px-4 py-3 grid grid-cols-2 md:grid-cols-5 gap-4">
-                  <div className="md:col-span-2">
-                    <p className="text-sm font-medium text-gray-800 truncate">{pr.property_address}</p>
-                    <p className="text-xs text-gray-400">{prm.occupied_units}/{prm.rentable_units} units occupied</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-gray-400">Collected</p>
-                    <p className="text-sm font-semibold text-green-600">{fmtM(prm.rent_collected)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-gray-400">NOI</p>
-                    <p className={`text-sm font-semibold ${prm.noi >= 0 ? "text-green-600" : "text-red-600"}`}>{fmtM(prm.noi)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-gray-400">Cash Flow</p>
-                    <p className={`text-sm font-semibold ${prm.cash_flow >= 0 ? "text-green-600" : "text-red-600"}`}>{fmtM(prm.cash_flow)}</p>
-                  </div>
-                </div>
-                );
-              })}
-            </div>
-          </div>
+        </div>
         )}
       </div>
     );

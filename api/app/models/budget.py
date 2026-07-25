@@ -21,6 +21,12 @@ class Budget(Base):
     category_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("categories.id")
     )
+    # Optional: track this budget's progress from a dedicated account's balance
+    # (e.g. a sinking-fund brokerage account for property tax) instead of
+    # transaction-category matching.
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     currency_code: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")
     country: Mapped[str] = mapped_column(String(2), server_default="US")
@@ -39,3 +45,4 @@ class Budget(Base):
 
     # lazy="selectin" is required for async SQLAlchemy — avoids greenlet issues
     category: Mapped["Category"] = relationship(lazy="selectin")  # type: ignore[name-defined]
+    account: Mapped["Account | None"] = relationship(lazy="selectin")  # type: ignore[name-defined]

@@ -344,6 +344,12 @@ export async function syncPlaidItem(itemId: string): Promise<void> {
   return apiFetch(`/api/v1/plaid/items/${itemId}/sync`, { method: "POST" });
 }
 
+// Update-mode link token — re-authenticate an existing item (e.g. password changed)
+// without creating a duplicate connection.
+export async function getPlaidUpdateLinkToken(itemId: string): Promise<{ link_token: string }> {
+  return apiFetch(`/api/v1/plaid/items/${itemId}/link-token`, { method: "POST" });
+}
+
 export async function deletePlaidItem(
   itemId: string,
   deleteTransactions: boolean
@@ -351,6 +357,25 @@ export async function deletePlaidItem(
   return apiFetch<void>(`/api/v1/plaid/items/${itemId}?delete_transactions=${deleteTransactions}`, {
     method: "DELETE",
   });
+}
+
+// ─── Sync Health ────────────────────────────────────────────────────────────
+
+export interface ConnectionHealth {
+  connection_id: string;
+  connection_type: "plaid" | "snaptrade";
+  name: string;
+  accounts: string[];
+  is_active: boolean;
+  last_synced_at: string | null;
+  error_message: string | null;
+  refresh_interval_hours: number;
+  status: "ok" | "error" | "never_synced" | "stale" | "disabled";
+  status_detail: string | null;
+}
+
+export async function getSyncHealth(): Promise<ConnectionHealth[]> {
+  return apiFetch<ConnectionHealth[]>("/api/v1/accounts/sync-health", {});
 }
 
 export async function listAccounts(): Promise<Account[]> {
@@ -866,6 +891,68 @@ export async function updateLease(id: string, data: LeaseUpdate): Promise<Lease>
 }
 export async function deleteLease(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/leases/${id}`, { method: "DELETE" });
+}
+
+// Lease Documents
+export interface LeaseDocument {
+  id: string;
+  lease_id: string;
+  filename: string;
+  file_size: number;
+  content_type: string;
+  category: string | null;
+  description: string | null;
+  uploaded_at: string;
+}
+
+export async function listLeaseDocuments(leaseId: string): Promise<LeaseDocument[]> {
+  return apiFetch<LeaseDocument[]>(`/api/v1/leases/${leaseId}/documents`, {});
+}
+
+export async function uploadLeaseDocument(
+  leaseId: string,
+  file: File,
+  category: string | null,
+  description: string | null
+): Promise<LeaseDocument> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (category) formData.append("category", category);
+  if (description) formData.append("description", description);
+  const res = await fetch(`/api/v1/leases/${leaseId}/documents`, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function downloadLeaseDocument(
+  leaseId: string,
+  docId: string,
+  filename: string
+): Promise<void> {
+  const res = await fetch(`/api/v1/leases/${leaseId}/documents/${docId}/download`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function deleteLeaseDocument(leaseId: string, docId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/leases/${leaseId}/documents/${docId}`, {
+    method: "DELETE",
+  });
 }
 
 // Charges
@@ -1834,6 +1921,17 @@ export async function deleteSnapTradeConnection(
   });
 }
 
+// Reconnect URL — re-authenticate an existing brokerage connection (e.g. password
+// changed) via the SnapTrade portal, reusing the same authorization.
+export async function getSnapTradeReconnectUrl(
+  connectionId: string
+): Promise<{ redirect_url: string }> {
+  return apiFetch<{ redirect_url: string }>(
+    `/api/v1/snaptrade/connections/${connectionId}/reconnect-url`,
+    { method: "POST" }
+  );
+}
+
 // ─── Budgets ──────────────────────────────────────────────────────────────────
 
 export type BudgetType = 'monthly' | 'annual' | 'quarterly' | 'custom';
@@ -1844,6 +1942,14 @@ export interface BudgetCategory {
   icon: string | null;
   color: string | null;
   is_income: boolean;
+}
+
+export interface BudgetAccount {
+  id: string;
+  name: string;
+  institution_name: string | null;
+  mask: string | null;
+  current_balance: string | null; // Decimal as string
 }
 
 export interface BudgetCreate {
@@ -1857,12 +1963,16 @@ export interface BudgetCreate {
   rollover_enabled?: boolean;
   alert_threshold?: number;
   country?: string;
+  // Optional: track progress from this account's balance instead of transaction
+  // matching (e.g. a dedicated sinking-fund account for property tax).
+  account_id?: string | null;
 }
 
 export interface BudgetUpdate {
   amount?: number;
   rollover_enabled?: boolean;
   alert_threshold?: number;
+  account_id?: string | null; // pass null to unlink
 }
 
 export interface Budget {
@@ -1870,6 +1980,8 @@ export interface Budget {
   household_id: string;
   category_id: string;
   category: BudgetCategory;
+  account_id: string | null;
+  account: BudgetAccount | null;
   amount: string; // Decimal serialized as string
   budget_type: BudgetType;
   country: string;

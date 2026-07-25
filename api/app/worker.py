@@ -26,6 +26,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.services.sync.sync_all_items",
         "schedule": crontab(hour=6, minute=0),
     },
+    "sync-snaptrade-connections-daily": {
+        "task": "app.services.snaptrade_sync.sync_all_snaptrade_connections",
+        "schedule": crontab(hour=6, minute=30),  # 30 min after Plaid sync starts
+    },
     "net-worth-snapshot-daily": {
         "task": "app.services.networth.take_snapshot_all",
         "schedule": crontab(hour=7, minute=0),
@@ -51,6 +55,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.services.notifications.check_bill_reminders",
         "schedule": crontab(hour=9, minute=5),
     },
+    "check-account-health": {
+        "task": "app.services.notifications.check_account_health",
+        "schedule": crontab(hour=9, minute=10),  # Daily at 09:10 UTC
+    },
     "send-monthly-report": {
         "task": "app.services.notifications.send_monthly_report",
         "schedule": crontab(hour=8, minute=30, day_of_month=1),  # 1st of month 08:30 UTC
@@ -67,6 +75,8 @@ celery_app.conf.beat_schedule = {
 celery_app.conf.include = [
     "app.services.price_refresh",
     "app.services.sync",
+    "app.services.plaid_sync",
+    "app.services.snaptrade_sync",
     "app.services.networth",
     "app.services.property",
     "app.services.notifications",

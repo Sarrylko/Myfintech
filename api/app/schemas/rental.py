@@ -116,6 +116,21 @@ class LeaseResponse(BaseModel):
     created_at: datetime
 
 
+# ─── LeaseDocument ─────────────────────────────────────────────────────────
+
+class LeaseDocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    lease_id: uuid.UUID
+    filename: str
+    file_size: int
+    content_type: str
+    category: str | None
+    description: str | None
+    uploaded_at: datetime
+
+
 # ─── RentCharge ────────────────────────────────────────────────────────────
 
 class RentChargeCreate(BaseModel):

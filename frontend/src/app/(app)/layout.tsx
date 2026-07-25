@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   Zap,
   Bot,
+  ShieldCheck,
   Settings2,
   Menu,
   X,
@@ -76,6 +77,7 @@ const navSections: NavSection[] = [
     items: [
       { href: "/rules", label: "Rules", icon: Zap },
       { href: "/ai", label: "AI Assistant", icon: Bot },
+      { href: "/sync-health", label: "Sync Health", icon: ShieldCheck },
     ],
   },
 ];

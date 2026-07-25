@@ -726,8 +726,8 @@ export default function TaxCenterPage() {
   const { fmt } = useCurrency();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
-  const [currentYear] = useState(2026); // Fixed year to avoid hydration issues
-  const [selectedYear, setSelectedYear] = useState(2025); // Default to 2025
+  const [currentYear] = useState(() => new Date().getFullYear());
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
   const [activeTab, setActiveTab] = useState<"summary" | "documents" | "picture">("summary");
 
   // Summary tab state

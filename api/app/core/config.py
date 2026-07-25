@@ -47,10 +47,6 @@ class Settings(BaseSettings):
     # ─── File Storage ─────────────────────────────
     upload_dir: str = "/app/uploads"
 
-    # ─── Inbox Watcher ────────────────────────────
-    inbox_dir: str = "/app/inbox"
-    inbox_poll_seconds: int = 30
-
     # ─── WhatsApp Bot ─────────────────────────────
     whatsapp_bot_url: str = "http://whatsapp-bot:3000"
     whatsapp_enabled: bool = True

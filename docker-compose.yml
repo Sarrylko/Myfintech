@@ -167,29 +167,6 @@ services:
       retries: 5
     profiles: ["default", "dev", "prod"]
 
-  # ─── Inbox file watcher (optional — start manually with --profile files) ─────
-  file-watcher:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-      target: ${ENVIRONMENT:-development}
-    command: python -m app.watcher_main
-    restart: "no"
-    environment:
-      <<: *common-env
-      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
-      INBOX_POLL_SECONDS: ${INBOX_POLL_SECONDS:-30}
-    volumes:
-      - ./api/app:/app/app:delegated
-      - ${UPLOADS_HOST_PATH:-C:/MyFintechUploads}:/app/uploads
-      - ${INBOX_HOST_PATH:-C:/MyFintechInbox}:/app/inbox
-    networks:
-      - private
-    depends_on:
-      api:
-        condition: service_healthy
-    profiles: ["files"]
-
   # ─── WhatsApp notification bot ──────────────
   whatsapp-bot:
     build:

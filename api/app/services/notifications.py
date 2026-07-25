@@ -33,6 +33,7 @@ from app.models.property import Property
 from app.models.property_cost_status import PropertyCostStatus
 from app.models.snaptrade import SnapTradeConnection  # noqa: F401 — ensures Account mapper resolves this relationship
 from app.models.user import Household, User
+from app.services.account_health import classify_connection
 from app.services.whatsapp import send_whatsapp_bulk
 from app.worker import celery_app
 
@@ -617,3 +618,89 @@ def _send_monthly_report_for_household(
     lines.append("\n_View details in your MyFinTech app._")
 
     send_whatsapp_bulk(phones, "\n".join(lines))
+
+
+# ── Account health check ──────────────────────────────────────────────────────
+
+@celery_app.task(name="app.services.notifications.check_account_health")
+def check_account_health():
+    """Daily check: alert households about broken or stale bank/brokerage connections.
+
+    A connection is flagged if:
+    - Its error_code is set (Plaid/SnapTrade returned an error on last sync), OR
+    - It has never synced AND was created more than 60 days ago, OR
+    - Its last_synced_at is older than 60 days
+    """
+    from app.models.account import PlaidItem
+
+    logger.info("check_account_health: starting")
+
+    with Session(_engine) as db:
+        household_ids = db.execute(select(Household.id)).scalars().all()
+
+        for hid in household_ids:
+            phones = _phones_for_household(db, hid, "notif_account_health")
+            if not phones:
+                continue
+
+            issues: list[str] = []
+
+            # ── Check Plaid items ─────────────────────────────────────
+            plaid_items = db.execute(
+                select(PlaidItem).where(
+                    PlaidItem.household_id == hid,
+                    PlaidItem.is_active == True,  # noqa: E712
+                )
+            ).scalars().all()
+
+            for item in plaid_items:
+                accts = db.execute(
+                    select(Account.name, Account.mask).where(Account.plaid_item_id == item.id)
+                ).all()
+                acct_detail = ", ".join(
+                    f"{n} (…{m})" if m else n for n, m in accts if n
+                )
+                base = item.institution_name or f"Bank (item {str(item.id)[:8]})"
+                label = f"{base} — {acct_detail}" if acct_detail else base
+                status, detail = classify_connection(
+                    item.error_code, item.is_active, item.last_synced_at, item.created_at
+                )
+                if status != "ok" and detail:
+                    issues.append(f"  • *{label}* — {detail}")
+
+            # ── Check SnapTrade connections ───────────────────────────
+            snap_conns = db.execute(
+                select(SnapTradeConnection).where(
+                    SnapTradeConnection.household_id == hid,
+                    SnapTradeConnection.is_active == True,  # noqa: E712
+                )
+            ).scalars().all()
+
+            for conn in snap_conns:
+                accts = db.execute(
+                    select(Account.name, Account.mask).where(Account.snaptrade_connection_id == conn.id)
+                ).all()
+                acct_detail = ", ".join(
+                    f"{n} (…{m})" if m else n for n, m in accts if n
+                )
+                base = conn.brokerage_name or f"Brokerage (conn {str(conn.id)[:8]})"
+                label = f"{base} — {acct_detail}" if acct_detail else base
+                status, detail = classify_connection(
+                    conn.error_code, conn.is_active, conn.last_synced_at, conn.created_at
+                )
+                if status != "ok" and detail:
+                    issues.append(f"  • *{label}* — {detail}")
+
+            if not issues:
+                continue
+
+            msg = (
+                "*⚠️ Account Health Alert*\n\n"
+                "The following connections need attention:\n\n"
+                + "\n".join(issues)
+                + "\n\n_Open MyFinTech → Accounts to reconnect or sync manually._"
+            )
+            send_whatsapp_bulk(phones, msg)
+            logger.info("check_account_health: sent alert to household %s (%d issue(s))", hid, len(issues))
+
+    logger.info("check_account_health: done")

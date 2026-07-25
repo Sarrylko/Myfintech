@@ -54,13 +54,16 @@ function ScenarioTooltip({ active, payload, label }: { active?: boolean; payload
   const { fmt: fmtRaw, fmtCompact } = useCurrency();
   function fmt(n: number, compact = false): string { return compact ? fmtCompact(n) : fmtRaw(n); }
   if (!active || !payload?.length) return null;
+  // Filter out the invisible band-floor area; show only Expected and Target
+  const visible = payload.filter(p => p.name === "Expected" || p.name === "Target");
+  if (!visible.length) return null;
   return (
     <div className="bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 shadow-xl text-sm">
       <p className="text-slate-400 font-medium mb-2">Age {label}</p>
-      {payload.map((p) => (
+      {visible.map((p) => (
         <div key={p.name} className="flex items-center gap-2 mb-1">
           <span className="w-2 h-2 rounded-full inline-block" style={{ background: p.color }} />
-          <span className="text-slate-300 capitalize">{p.name}:</span>
+          <span className="text-slate-300">{p.name}:</span>
           <span className="text-white font-semibold">{fmt(p.value, true)}</span>
         </div>
       ))}
@@ -643,37 +646,44 @@ function ProfileForm({
 
 // ─── Scenario Chart ──────────────────────────────────────────────────────────
 
-function ScenarioChart({ data, retirementYear }: { data: ScenarioProjection[]; retirementYear: number }) {
+function ScenarioChart({ data, retirementAge }: { data: ScenarioProjection[]; retirementAge: number }) {
+  const chartData = data.map(d => ({
+    ...d,
+    bandTop: Math.max(0, d.optimistic - d.pessimistic),
+  }));
   return (
-    <ResponsiveContainer width="100%" height={280}>
-      <AreaChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
+    <ResponsiveContainer width="100%" height={300}>
+      <AreaChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
         <defs>
-          <linearGradient id="gradOpt" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%"  stopColor="#8b5cf6" stopOpacity={0.18} />
-            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+          {/* Invisible floor — just pushes the stacked band up */}
+          <linearGradient id="gradFloor" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#1e293b" stopOpacity={0} />
+            <stop offset="100%" stopColor="#1e293b" stopOpacity={0} />
           </linearGradient>
-          <linearGradient id="gradBase" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%"  stopColor="#003366" stopOpacity={0.18} />
-            <stop offset="95%" stopColor="#003366" stopOpacity={0} />
-          </linearGradient>
-          <linearGradient id="gradPess" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%"  stopColor="#f43f5e" stopOpacity={0.15} />
-            <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+          {/* Visible band between pessimistic and optimistic */}
+          <linearGradient id="gradBand" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.3} />
+            <stop offset="95%" stopColor="#6366f1" stopOpacity={0.05} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="4 4" stroke="#e4e8ed" strokeOpacity={0.5} vertical={false} />
+        <CartesianGrid strokeDasharray="4 4" stroke="#334155" strokeOpacity={0.6} vertical={false} />
         <XAxis dataKey="age" tick={{ fill: "#7a8fa6", fontSize: 11 }} axisLine={false} tickLine={false} />
-        <YAxis tickFormatter={(v) => `$${(v / 1000000).toFixed(1)}M`} tick={{ fill: "#7a8fa6", fontSize: 11 }} axisLine={false} tickLine={false} width={56} />
+        <YAxis tickFormatter={(v) => `$${(v / 1_000_000).toFixed(1)}M`} tick={{ fill: "#7a8fa6", fontSize: 11 }} axisLine={false} tickLine={false} width={56} />
         <Tooltip content={<ScenarioTooltip />} />
-        <ReferenceLine x={data.find(d => d.year === retirementYear)?.age ?? undefined}
-          stroke="#f59e0b" strokeDasharray="4 3" label={{ value: "Retirement", fill: "#f59e0b", fontSize: 10, position: "top" }} />
-        {/* Required wealth line */}
-        <Area type="monotone" dataKey="required" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="5 3"
-          fill="none" dot={false} name="required" />
-        {/* Scenario bands — render pessimistic first (bottom), then base, then optimistic (widest) */}
-        <Area type="monotone" dataKey="pessimistic" stroke="#f43f5e" strokeWidth={1.5} fill="url(#gradPess)" dot={false} name="pessimistic" />
-        <Area type="monotone" dataKey="base" stroke="#003366" strokeWidth={2} fill="url(#gradBase)" dot={false} name="base" />
-        <Area type="monotone" dataKey="optimistic" stroke="#8b5cf6" strokeWidth={1.5} fill="url(#gradOpt)" dot={false} name="optimistic" />
+        <ReferenceLine x={retirementAge} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 3"
+          label={{ value: `Retire ${retirementAge}`, fill: "#f59e0b", fontSize: 10, position: "insideTopRight" }} />
+        {/* Target wealth dashed line */}
+        <Area type="monotone" dataKey="required" stroke="#f59e0b" strokeWidth={1.5}
+          strokeDasharray="5 3" fill="none" dot={false} name="Target" />
+        {/* Band floor (pessimistic) — transparent fill, acts as base for stacking */}
+        <Area type="monotone" dataKey="pessimistic" stroke="none"
+          fill="url(#gradFloor)" dot={false} name="Poor Market" stackId="band" />
+        {/* Band top (optimistic − pessimistic) — visible colored band */}
+        <Area type="monotone" dataKey="bandTop" stroke="none"
+          fill="url(#gradBand)" dot={false} name="Strong Market" stackId="band" />
+        {/* Expected/median line drawn on top, no fill */}
+        <Area type="monotone" dataKey="base" stroke="#818cf8" strokeWidth={2.5}
+          fill="none" dot={false} name="Expected" />
       </AreaChart>
     </ResponsiveContainer>
   );
@@ -889,6 +899,7 @@ export default function RetirementPage() {
   const [yearlyPlan, setYearlyPlan] = useState<YearlyPlanResponse | null>(null);
   const [yearlyLoading, setYearlyLoading] = useState(false);
   const [planRefreshing, setPlanRefreshing] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1095,6 +1106,26 @@ export default function RetirementPage() {
     ? `Your plan succeeds in average markets. A below-average market could create a shortfall — consider increasing contributions.`
     : `Your plan only succeeds in above-average markets. Significant additional saving or a later retirement date is recommended.`;
 
+  const swr = parseFloat(prof.safe_withdrawal_rate as unknown as string) || 0.04;
+  const projectedMonthlyIncome = Math.round((p.projected_wealth_at_retirement * swr) / 12);
+  const optimisticMonthlyIncome = Math.round((p.optimistic_wealth_at_retirement * swr) / 12);
+  const pessimisticMonthlyIncome = Math.round((p.pessimistic_wealth_at_retirement * swr) / 12);
+  const progressPct = p.retirement_wealth_target > 0
+    ? Math.min(100, (p.current_retirement_assets / p.retirement_wealth_target) * 100) : 0;
+  const statusLabel = p.probability_of_success >= 80 ? "On Track"
+    : p.probability_of_success >= 55 ? "Needs Attention" : "Off Track";
+  const statusColor = p.probability_of_success >= 80 ? "text-emerald-400"
+    : p.probability_of_success >= 55 ? "text-amber-400" : "text-red-400";
+  const statusBorderBg = p.probability_of_success >= 80
+    ? "bg-emerald-900/20 border-emerald-700/50"
+    : p.probability_of_success >= 55
+    ? "bg-amber-900/20 border-amber-700/50"
+    : "bg-red-900/20 border-red-700/50";
+  const totalMonthlyIncome = Math.round(totalIncome / 12);
+  const inflationRateVal = parseFloat(prof.inflation_rate as unknown as string) || 0.03;
+  const pessimisticMeetsTarget = p.pessimistic_wealth_at_retirement >= p.retirement_wealth_target;
+  const baseMeetsTarget = p.projected_wealth_at_retirement >= p.retirement_wealth_target;
+
   const profileFormInitial: Partial<ProfileFormData> = {
     birth_year: String(prof.birth_year),
     retirement_age: String(prof.retirement_age),
@@ -1203,549 +1234,659 @@ export default function RetirementPage() {
           />
         )}
 
-        {activeTab === "overview" && (<>{/* ── Asset Projection Chart ───────────────────────────────────── */}
-        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6">
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h2 className="text-base font-semibold text-white">Asset Projection</h2>
-              <p className="text-slate-400 text-xs mt-0.5">
-                Displaying today&apos;s dollars · from now until end of plan · 3 market scenarios
-              </p>
-            </div>
-            {/* Legend */}
-            <div className="flex gap-3 text-xs flex-wrap justify-end">
-              <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-sky-400 inline-block" />Average market</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-blue-500 inline-block" />Below average</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-blue-900 inline-block rounded" />Sig. below average</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 border-t border-dashed border-amber-400 inline-block" />Target</span>
-            </div>
-          </div>
+        {activeTab === "overview" && (
+        <div className="space-y-6">
 
-          <ScenarioChart data={p.scenario_projections} retirementYear={retirementYear} />
+          {/* ── 1. HERO: Retirement Snapshot ─────────────────────────────── */}
+          <div className={`rounded-2xl border p-6 ${statusBorderBg}`}>
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-5">Your Retirement Snapshot</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
 
-          {/* End-of-plan values */}
-          <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-700">
-            <div className="text-center">
-              <p className="text-slate-500 text-xs mb-1">Sig. Below Average</p>
-              <p className="text-slate-300 text-lg font-bold">{fmt(p.pessimistic_wealth_at_retirement, true)}</p>
-              <p className="text-slate-600 text-xs">at retirement</p>
-            </div>
-            <div className="text-center border-x border-slate-700">
-              <p className="text-blue-400 text-xs mb-1">Below Average</p>
-              <p className="text-white text-xl font-extrabold">{fmt(p.projected_wealth_at_retirement, true)}</p>
-              <p className="text-slate-500 text-xs">at retirement</p>
-            </div>
-            <div className="text-center">
-              <p className="text-sky-400 text-xs mb-1">Average Market</p>
-              <p className="text-sky-300 text-lg font-bold">{fmt(p.optimistic_wealth_at_retirement, true)}</p>
-              <p className="text-slate-600 text-xs">at retirement</p>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Household Profile + How are you doing? ───────────────────── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-          {/* Household Profile */}
-          <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6">
-            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Household Profile</h2>
-            <div className="space-y-4">
-              {/* Primary */}
-              <div className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-full bg-blue-900 flex items-center justify-center text-sm font-bold text-blue-300 flex-shrink-0">Y</div>
-                <div className="flex-1">
-                  <p className="text-white text-sm font-semibold">You · Age {p.current_age}</p>
-                  <p className="text-slate-400 text-xs">Currently working</p>
-                  {prof.yearly_income && (
-                    <p className="text-slate-300 text-xs mt-0.5">
-                      {fmt(parseFloat(prof.yearly_income as unknown as string), true)}/yr income
-                    </p>
-                  )}
-                  <p className="text-slate-500 text-xs mt-0.5">
-                    Retires at {prof.retirement_age} · Planning to {prof.life_expectancy_age}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-blue-400 text-xs">+{p.years_to_retirement} yrs</p>
+              {/* Left: Gauge + status */}
+              <div className="flex flex-col items-center gap-3">
+                <ProbabilityGauge value={p.probability_of_success} />
+                <div className="text-center">
+                  <p className={`text-lg font-bold ${statusColor}`}>{statusLabel}</p>
+                  <p className="text-slate-400 text-xs mt-0.5">{p.probability_of_success.toFixed(0)}% plan success rate</p>
                 </div>
               </div>
 
-              {prof.include_spouse && prof.spouse_birth_year && (
-                <>
-                  <div className="border-t border-slate-700" />
-                  <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-full bg-violet-900 flex items-center justify-center text-sm font-bold text-violet-300 flex-shrink-0">S</div>
-                    <div className="flex-1">
-                      <p className="text-white text-sm font-semibold">Spouse · Age {currentYear - prof.spouse_birth_year}</p>
-                      <p className="text-slate-400 text-xs">Currently working</p>
-                      {prof.spouse_yearly_income && (
-                        <p className="text-slate-300 text-xs mt-0.5">
-                          {fmt(parseFloat(prof.spouse_yearly_income as unknown as string), true)}/yr income
-                        </p>
-                      )}
-                      <p className="text-slate-500 text-xs mt-0.5">
-                        Retires at {prof.spouse_retirement_age ?? 65}
-                      </p>
-                    </div>
-                  </div>
-                </>
+              {/* Center: 3 key numbers */}
+              <div className="space-y-4 md:border-x md:border-slate-700/50 md:px-6">
+                <div>
+                  <p className="text-slate-400 text-xs mb-1">Projected Monthly Income</p>
+                  <p className="text-white text-2xl font-extrabold">
+                    {fmt(projectedMonthlyIncome)}<span className="text-slate-500 text-sm font-normal">/mo</span>
+                  </p>
+                  <p className="text-slate-500 text-xs">Expected scenario · {(swr * 100).toFixed(1)}% withdrawal rate</p>
+                </div>
+                <div className="border-t border-slate-700/50 pt-3">
+                  <p className="text-slate-400 text-xs mb-1">Years to Retirement</p>
+                  <p className="text-white text-2xl font-extrabold">
+                    {p.years_to_retirement}<span className="text-slate-500 text-sm font-normal"> yrs</span>
+                  </p>
+                  <p className="text-slate-500 text-xs">Retire at age {prof.retirement_age} · {retirementYear}</p>
+                </div>
+                <div className="border-t border-slate-700/50 pt-3">
+                  <p className="text-slate-400 text-xs mb-1">Saved So Far</p>
+                  <p className="text-white text-2xl font-extrabold">{fmt(p.current_retirement_assets, true)}</p>
+                  <p className="text-slate-500 text-xs">In retirement accounts</p>
+                </div>
+              </div>
+
+              {/* Right: Gap / Surplus CTA */}
+              {p.gap > 0 ? (
+                <div className="bg-amber-900/20 border border-amber-700/50 rounded-xl p-5">
+                  <p className="text-amber-400 text-xs font-semibold uppercase tracking-wider mb-2">Funding Gap</p>
+                  <p className="text-white text-xl font-bold mb-1">
+                    {fmt(p.monthly_saving_needed)}<span className="text-slate-400 text-sm font-normal">/mo more</span>
+                  </p>
+                  <p className="text-slate-300 text-xs leading-relaxed">
+                    Saving this amount monthly would close a {fmt(p.gap, true)} gap and put you on track for retirement.
+                  </p>
+                  <button type="button" onClick={() => setShowForm(true)}
+                    className="mt-3 text-xs text-amber-400 hover:text-amber-300 transition font-medium">
+                    Update contributions →
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-emerald-900/20 border border-emerald-700/50 rounded-xl p-5">
+                  <p className="text-emerald-400 text-xs font-semibold uppercase tracking-wider mb-2">On Track</p>
+                  <p className="text-white text-xl font-bold mb-1">
+                    {fmt(Math.abs(p.gap), true)}<span className="text-slate-400 text-sm font-normal"> surplus</span>
+                  </p>
+                  <p className="text-slate-300 text-xs leading-relaxed">
+                    Your projected savings exceed your retirement target. You have a comfortable buffer.
+                  </p>
+                </div>
               )}
             </div>
-            <button type="button" onClick={() => setShowForm(true)}
-              className="mt-4 text-xs text-blue-400 hover:text-blue-300 transition">
-              Edit profile →
-            </button>
           </div>
 
-          {/* How are you doing? */}
+          {/* ── 2. PROJECTION CHART ──────────────────────────────────────── */}
           <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6">
-            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">How Are You Doing?</h2>
-            <div className="flex items-center gap-6">
-              <ProbabilityGauge value={p.probability_of_success} />
+            <div className="flex items-start justify-between mb-1">
               <div>
-                <p className={`text-2xl font-extrabold mb-1 ${probColor}`}>{p.probability_of_success.toFixed(0)}%+</p>
-                <p className="text-slate-400 text-xs leading-relaxed max-w-xs">{probDesc}</p>
-                <div className="mt-3 space-y-1">
-                  {p.gap > 0 ? (
-                    <p className="text-amber-400 text-xs">Gap: {fmt(p.gap, true)} · Save {fmt(p.monthly_saving_needed, true)}/mo more</p>
-                  ) : (
-                    <p className="text-emerald-400 text-xs">Surplus: {fmt(Math.abs(p.gap), true)} ahead of target</p>
-                  )}
-                  <p className="text-slate-500 text-xs">Target: {fmt(p.retirement_wealth_target, true)}</p>
-                </div>
+                <h2 className="text-base font-semibold text-white">How Your Wealth Could Grow</h2>
+                <p className="text-slate-400 text-xs mt-0.5">
+                  Range of outcomes across market conditions · today&apos;s dollars
+                </p>
+              </div>
+              <div className="flex gap-4 text-xs flex-wrap justify-end text-slate-400">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-8 h-2 rounded inline-block" style={{ background: "rgba(99,102,241,0.3)", border: "1px solid rgba(99,102,241,0.5)" }} />
+                  Market range
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-4 h-0.5 bg-indigo-400 inline-block rounded" />
+                  Expected
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-4 h-0.5 border-t border-dashed border-amber-400 inline-block" />
+                  Target
+                </span>
+              </div>
+            </div>
+
+            <ScenarioChart data={p.scenario_projections} retirementAge={prof.retirement_age} />
+
+            <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-700">
+              <div className="text-center">
+                <p className="text-slate-400 text-xs mb-1">Poor Market</p>
+                <p className="text-slate-200 text-lg font-bold">{fmt(p.pessimistic_wealth_at_retirement, true)}</p>
+                <p className="text-slate-500 text-xs">{fmt(pessimisticMonthlyIncome)}/mo income</p>
+              </div>
+              <div className="text-center border-x border-slate-700">
+                <p className="text-indigo-400 text-xs mb-1">Expected</p>
+                <p className="text-white text-xl font-extrabold">{fmt(p.projected_wealth_at_retirement, true)}</p>
+                <p className="text-slate-400 text-xs">{fmt(projectedMonthlyIncome)}/mo income</p>
+              </div>
+              <div className="text-center">
+                <p className="text-sky-400 text-xs mb-1">Strong Market</p>
+                <p className="text-sky-300 text-lg font-bold">{fmt(p.optimistic_wealth_at_retirement, true)}</p>
+                <p className="text-slate-500 text-xs">{fmt(optimisticMonthlyIncome)}/mo income</p>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* ── Goal Details ─────────────────────────────────────────────── */}
-        <div>
-          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Goal Details</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
-            {/* Total Saved */}
-            <div className="bg-slate-800 rounded-2xl border border-slate-700 p-5">
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs text-slate-400 font-medium">Total Saved</p>
-                <span className="text-slate-500 text-xs">{p.current_retirement_assets > 0 ? "Retirement accounts" : "No accounts found"}</span>
-              </div>
-              <p className="text-2xl font-extrabold text-white mb-4">{fmt(p.current_retirement_assets, true)}</p>
-              {taxTotal > 0 ? (
-                <div className="space-y-2">
-                  <TaxBar label="Tax-deferred (401k, IRA)" amount={p.tax_deferred_balance} total={taxTotal} color="#3b82f6" />
-                  <TaxBar label="Taxable investments" amount={p.taxable_investment_balance} total={taxTotal} color="#f59e0b" />
-                  <TaxBar label="Tax-exempt (Roth)" amount={p.tax_exempt_balance} total={taxTotal} color="#22c55e" />
-                  {/* Bar visualization */}
-                  <div className="h-2 rounded-full overflow-hidden flex mt-2">
-                    <div className="bg-blue-500 h-full" style={{ width: `${taxTotal > 0 ? (p.tax_deferred_balance / taxTotal) * 100 : 0}%` }} />
-                    <div className="bg-amber-500 h-full" style={{ width: `${taxTotal > 0 ? (p.taxable_investment_balance / taxTotal) * 100 : 0}%` }} />
-                    <div className="bg-emerald-500 h-full" style={{ width: `${taxTotal > 0 ? (p.tax_exempt_balance / taxTotal) * 100 : 0}%` }} />
-                  </div>
-                </div>
-              ) : (
-                <p className="text-slate-500 text-xs">Link retirement accounts to see tax breakdown.</p>
-              )}
+          {/* ── 3. PROGRESS TOWARD GOAL ──────────────────────────────────── */}
+          <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-base font-semibold text-white">Progress Toward Goal</h2>
+              <span className={`text-sm font-bold ${probColor}`}>{progressPct.toFixed(0)}% saved</span>
             </div>
-
-            {/* Retirement Profile */}
-            <div className="bg-slate-800 rounded-2xl border border-slate-700 p-5">
-              <p className="text-xs text-slate-400 font-medium mb-1">Retirement Profile</p>
-              <p className="text-2xl font-extrabold text-white mb-4">{retirementYear}</p>
-              <div className="space-y-2 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Your retirement age</span>
-                  <span className="text-slate-200 font-medium">{prof.retirement_age} <span className="text-slate-500">(planning to {prof.life_expectancy_age})</span></span>
-                </div>
-                {prof.include_spouse && prof.spouse_birth_year && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Spouse&apos;s retirement age</span>
-                    <span className="text-slate-200 font-medium">{prof.spouse_retirement_age ?? 65}</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Expected return</span>
-                  <span className="text-slate-200 font-medium">{(parseFloat(prof.expected_return_rate as unknown as string) * 100).toFixed(1)}%/yr</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Inflation assumption</span>
-                  <span className="text-slate-200 font-medium">{(parseFloat(prof.inflation_rate as unknown as string) * 100).toFixed(1)}%/yr</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Years to retirement</span>
-                  <span className="text-slate-200 font-medium">{p.years_to_retirement} years</span>
-                </div>
-                <div className="border-t border-slate-600/50 pt-2 mt-1">
-                  <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1.5">Assumptions</p>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400">Mortgages & home loans</span>
-                    <span className="text-emerald-400 font-medium">Paid off ✓</span>
-                  </div>
-                  <div className="flex justify-between items-center mt-1">
-                    <span className="text-slate-400">Children&apos;s college</span>
-                    <span className="text-emerald-400 font-medium">Fully funded ✓</span>
-                  </div>
-                </div>
-              </div>
+            <div className="relative h-4 bg-slate-700 rounded-full overflow-hidden mb-3">
+              <div
+                className={`h-full rounded-full transition-all duration-700 ${
+                  progressPct >= 80 ? "bg-emerald-500" : progressPct >= 50 ? "bg-amber-500" : "bg-red-500"
+                }`}
+                style={{ width: `${Math.min(100, progressPct)}%` }}
+              />
             </div>
-
-            {/* Expenses */}
-            <div className="bg-slate-800 rounded-2xl border border-slate-700 p-5">
-              <p className="text-xs text-slate-400 font-medium mb-1">Monthly Expenses</p>
-              {p.total_monthly_expenses > 0 ? (
-                <>
-                  <p className="text-2xl font-extrabold text-white mb-4">{fmt(p.total_monthly_expenses, true)}<span className="text-slate-500 text-sm font-normal">/mo</span></p>
-                  <div className="space-y-2 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Essential expenses</span>
-                      <span className="text-slate-200 font-medium">
-                        {prof.monthly_essential_expenses ? fmt(parseFloat(prof.monthly_essential_expenses as unknown as string)) : "—"}/mo
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Non-essential</span>
-                      <span className="text-slate-200 font-medium">
-                        {prof.monthly_non_essential_expenses ? fmt(parseFloat(prof.monthly_non_essential_expenses as unknown as string)) : "—"}/mo
-                      </span>
-                    </div>
-                    <div className="border-t border-slate-700 pt-2 flex justify-between font-semibold">
-                      <span className="text-slate-300">Total annual</span>
-                      <span className="text-white">{fmt(p.total_monthly_expenses * 12, true)}/yr</span>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-2xl font-extrabold text-white mb-4">
-                    {fmt(parseFloat(prof.desired_annual_income as unknown as string) / 12, true)}<span className="text-slate-500 text-sm font-normal">/mo</span>
-                  </p>
-                  <div className="space-y-2 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Annual target income</span>
-                      <span className="text-slate-200 font-medium">{fmt(parseFloat(prof.desired_annual_income as unknown as string), true)}/yr</span>
-                    </div>
-                    <p className="text-slate-600 text-xs mt-2">Add monthly expense breakdown in Edit Profile for detailed planning.</p>
-                  </div>
-                </>
-              )}
+            <div className="flex justify-between text-xs text-slate-400 mb-2">
+              <span>Current: <span className="text-white font-medium">{fmt(p.current_retirement_assets, true)}</span></span>
+              <span>Target: <span className="text-white font-medium">{fmt(p.retirement_wealth_target, true)}</span></span>
             </div>
+            <p className="text-slate-500 text-xs">
+              Based on {(swr * 100).toFixed(1)}% safe withdrawal rate ·
+              Target annual income: {fmt(parseFloat(prof.desired_annual_income as unknown as string), true)}/yr
+              ({fmt(parseFloat(prof.desired_annual_income as unknown as string) / 12)}/mo)
+            </p>
           </div>
-        </div>
 
-        {/* ── Your Strategies ─────────────────────────────────────────── */}
-        {(() => {
-          const profContrib = parseFloat(prof.annual_contribution as unknown as string) || 0;
-          const spouseContrib = prof.include_spouse && prof.spouse_annual_contribution
-            ? parseFloat(prof.spouse_annual_contribution as unknown as string) : 0;
-          const totalContrib = profContrib + spouseContrib;
-          const combinedIncome = (prof.yearly_income ? parseFloat(prof.yearly_income as unknown as string) : 0)
-            + (prof.include_spouse && prof.spouse_yearly_income ? parseFloat(prof.spouse_yearly_income as unknown as string) : 0);
-          const savingsRate = combinedIncome > 0 ? (totalContrib / combinedIncome) * 100 : 0;
-          const onTrackColor = p.on_track_pct >= 80 ? "text-emerald-400 bg-emerald-900/30 border-emerald-800" : p.on_track_pct >= 50 ? "text-amber-400 bg-amber-900/30 border-amber-800" : "text-red-400 bg-red-900/30 border-red-800";
-
-          const ssSources = p.income_sources.filter(s => s.source_type === "social_security");
-          const ssTotal = ssSources.reduce((a, s) => a + s.annual_amount, 0);
-          const rentalSources = p.income_sources.filter(s => s.source_type === "rental");
-          const rentalTotal = rentalSources.reduce((a, s) => a + s.annual_amount, 0);
-          const portfolioSource = p.income_sources.find(s => s.source_type === "portfolio");
-          const guaranteedIncome = ssTotal + rentalTotal;
-          const targetAnnual = p.retirement_wealth_target * 0.04;
-          const guaranteedCoverage = targetAnnual > 0 ? Math.min(100, (guaranteedIncome / targetAnnual) * 100) : 0;
-
-          const taxTotal = p.tax_deferred_balance + p.taxable_investment_balance + p.tax_exempt_balance;
-
-          return (
-            <div>
-              <div className="mb-3">
-                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Your Strategies</h2>
-                <p className="text-slate-500 text-xs mt-0.5">Examine your current contributions, investing mix, and income sources below.</p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
-                {/* Retirement Savings */}
-                <div className="bg-slate-800 rounded-2xl border border-slate-700 p-5 flex flex-col">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-lg">💼</span>
-                    <p className="text-sm font-semibold text-white">Retirement Savings</p>
-                  </div>
-                  <p className="text-slate-500 text-xs leading-relaxed mb-4">
-                    Everyone should have a retirement plan that ensures they do not outlive their assets.
-                  </p>
-                  <div className="space-y-2 text-xs flex-1">
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-400">Your contributions</span>
-                      <span className="text-slate-200 font-medium">{fmt(profContrib, true)}/yr</span>
-                    </div>
-                    {prof.include_spouse && spouseContrib > 0 && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-400">Spouse contributions</span>
-                        <span className="text-slate-200 font-medium">{fmt(spouseContrib, true)}/yr</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between items-center border-t border-slate-700 pt-2">
-                      <span className="text-slate-300 font-medium">Total annual</span>
-                      <span className="text-white font-bold">{fmt(totalContrib, true)}/yr</span>
-                    </div>
-                    {savingsRate > 0 && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-400">Savings rate</span>
-                        <span className="text-slate-200 font-medium">{savingsRate.toFixed(1)}%</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between items-center pt-1">
-                      <span className="text-slate-400">On track</span>
-                      <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${onTrackColor}`}>
-                        {p.on_track_pct.toFixed(0)}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="mt-4 pt-3 border-t border-slate-700 flex gap-3 text-xs">
-                    <button type="button" onClick={() => setShowForm(true)} className="text-blue-400 hover:text-blue-300 transition">Edit profile →</button>
-                    <a href="/accounts" className="text-slate-500 hover:text-slate-300 transition">Edit accounts →</a>
-                  </div>
-                </div>
-
-                {/* Investments */}
-                <div className="bg-slate-800 rounded-2xl border border-slate-700 p-5 flex flex-col">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-lg">📊</span>
-                    <p className="text-sm font-semibold text-white">Investments</p>
-                  </div>
-                  <p className="text-slate-500 text-xs leading-relaxed mb-4">
-                    Tax diversification is critical — balancing pre-tax, taxable, and Roth accounts gives flexibility in retirement.
-                  </p>
-                  <div className="flex-1">
-                    {taxTotal > 0 ? (
-                      <div className="space-y-3">
-                        {[
-                          { label: "Tax-deferred (401k, IRA)", amount: p.tax_deferred_balance, color: "bg-blue-500", textColor: "text-blue-400" },
-                          { label: "Taxable investments", amount: p.taxable_investment_balance, color: "bg-amber-500", textColor: "text-amber-400" },
-                          { label: "Tax-exempt (Roth)", amount: p.tax_exempt_balance, color: "bg-emerald-500", textColor: "text-emerald-400" },
-                        ].map(({ label, amount, color, textColor }) => {
-                          const pct = taxTotal > 0 ? (amount / taxTotal) * 100 : 0;
-                          return (
-                            <div key={label}>
-                              <div className="flex justify-between text-xs mb-1">
-                                <span className="text-slate-400">{label}</span>
-                                <span className={`font-medium ${textColor}`}>{pct.toFixed(0)}%</span>
-                              </div>
-                              <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
-                                <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-                              </div>
-                              <p className="text-slate-600 text-xs mt-0.5">{fmt(amount, true)}</p>
-                            </div>
-                          );
-                        })}
-                        <p className="text-slate-600 text-xs mt-2 leading-relaxed">Diversification does not ensure a profit or guarantee against loss.</p>
-                      </div>
-                    ) : (
-                      <p className="text-slate-500 text-xs">Link your retirement accounts to see your investment mix.</p>
-                    )}
-                  </div>
-                  <div className="mt-4 pt-3 border-t border-slate-700 flex gap-3 text-xs">
-                    <a href="/accounts" className="text-blue-400 hover:text-blue-300 transition">Edit accounts →</a>
-                    <a href="/investments" className="text-slate-500 hover:text-slate-300 transition">View investments →</a>
-                  </div>
-                </div>
-
-                {/* Retirement Income */}
-                <div className="bg-slate-800 rounded-2xl border border-slate-700 p-5 flex flex-col">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-lg">🏛</span>
-                    <p className="text-sm font-semibold text-white">Retirement Income</p>
-                  </div>
-                  <p className="text-slate-500 text-xs leading-relaxed mb-4">
-                    Essential expenses should be covered by reliable lifetime income — Social Security, rental, and annuities — not just portfolio withdrawals.
-                  </p>
-                  <div className="space-y-3 flex-1 text-xs">
-                    <div>
-                      <p className="text-slate-400 font-medium mb-1.5">Lifetime income</p>
-                      {ssSources.length > 0 ? ssSources.map(s => (
-                        <div key={s.label} className="flex justify-between mb-1">
-                          <span className="text-slate-500">{s.label}</span>
-                          <span className="text-slate-300">{fmt(s.annual_amount, true)}/yr</span>
-                        </div>
-                      )) : (
-                        <p className="text-slate-600">Social Security: not set</p>
-                      )}
-                    </div>
-                    {rentalTotal > 0 && (
-                      <div>
-                        <p className="text-slate-400 font-medium mb-1.5">Rental income</p>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Active leases</span>
-                          <span className="text-slate-300">{fmt(rentalTotal, true)}/yr</span>
-                        </div>
-                      </div>
-                    )}
-                    {portfolioSource && (
-                      <div>
-                        <p className="text-slate-400 font-medium mb-1.5">Portfolio</p>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">4% withdrawals</span>
-                          <span className="text-slate-300">{fmt(portfolioSource.annual_amount, true)}/yr</span>
-                        </div>
-                      </div>
-                    )}
-                    <div className="border-t border-slate-700 pt-2">
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-400">Guaranteed income coverage</span>
-                        <span className={`font-semibold ${guaranteedCoverage >= 30 ? "text-emerald-400" : "text-amber-400"}`}>
-                          {guaranteedCoverage.toFixed(0)}%
-                        </span>
-                      </div>
-                      <p className="text-slate-600 text-xs mt-0.5">SS + rental vs. total retirement target</p>
-                    </div>
-                  </div>
-                  <div className="mt-4 pt-3 border-t border-slate-700 flex gap-3 text-xs">
-                    <button type="button" onClick={() => setShowForm(true)} className="text-blue-400 hover:text-blue-300 transition">Edit retirement income →</button>
-                  </div>
-                </div>
-
+          {/* ── 4. INCOME IN RETIREMENT ──────────────────────────────────── */}
+          <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-base font-semibold text-white">Income in Retirement</h2>
+                <p className="text-slate-400 text-xs mt-0.5">
+                  Total: <span className="text-white font-medium">{fmt(totalMonthlyIncome)}/mo</span>
+                  {" · "}
+                  <span className="text-white font-medium">{fmt(totalIncome, true)}/yr</span>
+                  {" · "}
+                  <span className={incomeCoverage >= 100 ? "text-emerald-400" : "text-amber-400"}>
+                    {incomeCoverage.toFixed(0)}% of goal
+                  </span>
+                </p>
               </div>
             </div>
-          );
-        })()}
-
-        {/* ── Assess Your Plan for Risk ──────────────────────────────────── */}
-        {(() => {
-          const inflationRate = parseFloat(prof.inflation_rate as unknown as string) || 0.03;
-          const yearsToRet = p.years_to_retirement;
-          const targetAnnual = p.retirement_wealth_target * 0.04;
-          const inflatedTarget = targetAnnual * Math.pow(1 + inflationRate, yearsToRet);
-          const retirementYears = prof.life_expectancy_age - prof.retirement_age;
-          const pessimisticMeetsTarget = p.pessimistic_wealth_at_retirement >= p.retirement_wealth_target;
-          const baseMeetsTarget = p.projected_wealth_at_retirement >= p.retirement_wealth_target;
-          const marketRange = p.optimistic_wealth_at_retirement - p.pessimistic_wealth_at_retirement;
-          const essentialMonthly = prof.monthly_essential_expenses ? parseFloat(prof.monthly_essential_expenses as unknown as string) : 0;
-
-          const riskCards = [
-            {
-              icon: "🕐",
-              title: "Longevity Risk",
-              color: pessimisticMeetsTarget ? "border-emerald-800/50 bg-emerald-900/10" : baseMeetsTarget ? "border-amber-800/50 bg-amber-900/10" : "border-red-800/50 bg-red-900/10",
-              badge: pessimisticMeetsTarget ? "Low Risk" : baseMeetsTarget ? "Moderate" : "High Risk",
-              badgeColor: pessimisticMeetsTarget ? "text-emerald-400" : baseMeetsTarget ? "text-amber-400" : "text-red-400",
-              text: `Your plan covers ${retirementYears} years of retirement (age ${prof.retirement_age} to ${prof.life_expectancy_age}). ${pessimisticMeetsTarget ? "Even in below-average markets, you appear funded for your full life expectancy." : baseMeetsTarget ? "In average markets you're funded, but a market downturn could create a shortfall late in retirement." : "Consider increasing savings or adjusting your retirement age to reduce longevity risk."}`,
-            },
-            {
-              icon: "📉",
-              title: "Market Volatility",
-              color: pessimisticMeetsTarget ? "border-emerald-800/50 bg-emerald-900/10" : "border-amber-800/50 bg-amber-900/10",
-              badge: pessimisticMeetsTarget ? "Well-cushioned" : "Monitor",
-              badgeColor: pessimisticMeetsTarget ? "text-emerald-400" : "text-amber-400",
-              text: `In a significantly below-average market, your portfolio at retirement could be ${fmt(p.pessimistic_wealth_at_retirement, true)} vs. ${fmt(p.optimistic_wealth_at_retirement, true)} in an average market — a ${fmt(marketRange, true)} range. Diversification helps reduce this spread.`,
-            },
-            {
-              icon: "📊",
-              title: "Inflation Risk",
-              color: inflatedTarget > targetAnnual * 1.5 ? "border-amber-800/50 bg-amber-900/10" : "border-slate-700 bg-slate-800/40",
-              badge: inflatedTarget > targetAnnual * 1.5 ? "Notable" : "Manageable",
-              badgeColor: inflatedTarget > targetAnnual * 1.5 ? "text-amber-400" : "text-slate-400",
-              text: `At ${(inflationRate * 100).toFixed(1)}% annual inflation, your ${fmt(targetAnnual, true)}/yr income target today will require ${fmt(inflatedTarget, true)}/yr in ${yearsToRet} years. The 4% withdrawal rule partially offsets this through portfolio growth.`,
-            },
-            {
-              icon: "🎲",
-              title: "Sequence of Returns",
-              color: "border-amber-800/50 bg-amber-900/10",
-              badge: "Universal Risk",
-              badgeColor: "text-amber-400",
-              text: "Early retirement losses compound negatively — withdrawals from a declining portfolio lock in losses. Consider keeping 1–2 years of expenses in cash or short-term bonds as a buffer when you retire.",
-            },
-            {
-              icon: "🏥",
-              title: "Healthcare Costs",
-              color: "border-amber-800/50 bg-amber-900/10",
-              badge: "Plan Ahead",
-              badgeColor: "text-amber-400",
-              text: `Healthcare is often the largest unexpected retirement expense. ${essentialMonthly > 0 ? `Consider budgeting an additional ${fmt(essentialMonthly * 0.12)}/mo (12% of your essential expenses) for healthcare above your current estimates.` : "Budget 10–15% above your monthly expenses for healthcare to be safe."}`,
-            },
-            ...(p.on_track_pct < 100 ? [{
-              icon: "💰",
-              title: "Contribution Adequacy",
-              color: p.on_track_pct < 50 ? "border-red-800/50 bg-red-900/10" : "border-amber-800/50 bg-amber-900/10",
-              badge: p.on_track_pct < 50 ? "Action Needed" : "Improve",
-              badgeColor: p.on_track_pct < 50 ? "text-red-400" : "text-amber-400",
-              text: `You are currently ${p.on_track_pct.toFixed(0)}% on track. Increasing annual contributions by ${fmt(p.required_additional_annual_saving, true)} could close your retirement gap. Small increases early compound significantly over time.`,
-            }] : []),
-          ];
-
-          return (
-            <div>
-              <div className="mb-3">
-                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Assess Your Plan for Risk</h2>
-                <p className="text-slate-500 text-xs mt-0.5">We&apos;ve analyzed how your plan factors in common retirement risks.</p>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {riskCards.map((card) => (
-                  <div key={card.title} className={`rounded-2xl border p-5 ${card.color}`}>
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg">{card.icon}</span>
-                        <p className="text-sm font-semibold text-white">{card.title}</p>
-                      </div>
-                      <span className={`text-xs font-medium ${card.badgeColor}`}>{card.badge}</span>
-                    </div>
-                    <p className="text-slate-400 text-xs leading-relaxed">{card.text}</p>
-                  </div>
+            {p.income_sources.length === 0 ? (
+              <p className="text-slate-500 text-sm">No income sources calculated. Add accounts, properties, or a Social Security estimate.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {p.income_sources.map((src) => (
+                  <IncomeCard key={src.label} source={src} total={totalIncome} />
                 ))}
               </div>
-            </div>
-          );
-        })()}
-
-        {/* ── Income Sources ───────────────────────────────────────────── */}
-        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6">
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <h2 className="text-base font-semibold text-white">Income Sources in Retirement</h2>
-              <p className="text-slate-400 text-xs mt-0.5">
-                Total {fmt(totalIncome, true)}/yr · {incomeCoverage.toFixed(0)}% of desired {fmt(parseFloat(prof.desired_annual_income as unknown as string), true)}/yr
-              </p>
-            </div>
-            <div className="hidden sm:block w-32">
-              <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${incomeCoverage >= 100 ? "bg-emerald-500" : "bg-amber-500"}`}
-                  style={{ width: `${Math.min(100, incomeCoverage)}%` }} />
-              </div>
-              <p className="text-xs text-slate-500 mt-1 text-right">{incomeCoverage.toFixed(0)}% covered</p>
-            </div>
+            )}
           </div>
-          {p.income_sources.length === 0 ? (
-            <p className="text-slate-500 text-sm">No income sources calculated. Add accounts, properties, or a Social Security estimate.</p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {p.income_sources.map((src) => (
-                <IncomeCard key={src.label} source={src} total={totalIncome} />
-              ))}
-            </div>
-          )}
-        </div>
 
-        {/* ── Insights ─────────────────────────────────────────────────── */}
-        {p.insights.length > 0 && (
-          <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6">
-            <h2 className="text-base font-semibold text-white mb-4">Personalized Insights</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {p.insights.map((insight, i) => (
-                <div key={i} className="flex gap-3 bg-slate-700/40 rounded-xl p-4 border border-slate-600/50">
-                  <span className="text-xl flex-shrink-0 mt-0.5">{insightIcons[i] ?? "💡"}</span>
-                  <p className="text-slate-300 text-sm leading-relaxed">{insight}</p>
+          {/* ── 5. RISK SNAPSHOT ─────────────────────────────────────────── */}
+          {(() => {
+            const yearsToRet = p.years_to_retirement;
+            const retirementYears = prof.life_expectancy_age - prof.retirement_age;
+            const targetAnnual = p.retirement_wealth_target * 0.04;
+            const inflatedTarget = targetAnnual * Math.pow(1 + inflationRateVal, yearsToRet);
+
+            const chips: { label: string; desc: string; status: "green" | "amber" | "red"; badge: string }[] = [
+              {
+                label: "Longevity",
+                desc: `${retirementYears}-year plan (age ${prof.retirement_age}–${prof.life_expectancy_age})`,
+                status: pessimisticMeetsTarget ? "green" : baseMeetsTarget ? "amber" : "red",
+                badge: pessimisticMeetsTarget ? "Low Risk" : baseMeetsTarget ? "Moderate" : "High Risk",
+              },
+              {
+                label: "Market Volatility",
+                desc: `${fmt(p.pessimistic_wealth_at_retirement, true)}–${fmt(p.optimistic_wealth_at_retirement, true)} range`,
+                status: pessimisticMeetsTarget ? "green" : "amber",
+                badge: pessimisticMeetsTarget ? "Cushioned" : "Monitor",
+              },
+              {
+                label: "Inflation",
+                desc: `${(inflationRateVal * 100).toFixed(1)}%/yr · ${fmt(inflatedTarget, true)}/yr in ${yearsToRet} yrs`,
+                status: inflatedTarget > targetAnnual * 1.5 ? "amber" : "green",
+                badge: inflatedTarget > targetAnnual * 1.5 ? "Notable" : "Manageable",
+              },
+              {
+                label: "Sequence Risk",
+                desc: "Early losses lock in portfolio declines",
+                status: "amber",
+                badge: "Universal",
+              },
+              {
+                label: "Healthcare",
+                desc: "Largest unknown retirement cost",
+                status: "amber",
+                badge: "Plan Ahead",
+              },
+              ...(p.on_track_pct < 100 ? [{
+                label: "Contributions",
+                desc: `${p.on_track_pct.toFixed(0)}% of savings goal on track`,
+                status: p.on_track_pct < 50 ? "red" : "amber" as "red" | "amber",
+                badge: p.on_track_pct < 50 ? "Action Needed" : "Improve",
+              }] : []),
+            ];
+
+            const chipStyles: Record<string, string> = {
+              green: "bg-emerald-900/30 border-emerald-700/50",
+              amber: "bg-amber-900/20 border-amber-700/50",
+              red: "bg-red-900/20 border-red-700/50",
+            };
+            const badgeStyles: Record<string, string> = {
+              green: "text-emerald-400",
+              amber: "text-amber-400",
+              red: "text-red-400",
+            };
+
+            return (
+              <div>
+                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Risk Snapshot</h2>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {chips.map((chip) => (
+                    <div key={chip.label} className={`rounded-xl border px-4 py-3 ${chipStyles[chip.status]}`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm font-semibold text-white">{chip.label}</p>
+                        <span className={`text-xs font-medium ${badgeStyles[chip.status]}`}>{chip.badge}</span>
+                      </div>
+                      <p className="text-slate-400 text-xs">{chip.desc}</p>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
+              </div>
+            );
+          })()}
 
-        {/* ── Footer ───────────────────────────────────────────────────── */}
-        <p className="text-center text-slate-600 text-xs pb-4">
-          Projections use the 4% safe withdrawal rule. Scenarios: optimistic (+3%), base, pessimistic (−2%). Not financial advice.
-          Key assumptions: all mortgages and children&apos;s education costs are assumed to be fully paid by retirement.
-          Net worth: {fmt(p.total_net_worth, true)}
-        </p>
-        </>)}
+          {/* ── 6. FULL ANALYSIS ACCORDION ───────────────────────────────── */}
+          <div className="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setDetailsOpen(!detailsOpen)}
+              className="w-full flex items-center justify-between px-6 py-4 text-sm font-medium text-slate-300 hover:text-white transition"
+            >
+              <span>See full analysis</span>
+              <span className={`transition-transform duration-200 inline-block ${detailsOpen ? "rotate-180" : ""}`}>↓</span>
+            </button>
+
+            {detailsOpen && (
+              <div className="px-6 pb-6 space-y-8 border-t border-slate-700">
+
+                {/* Goal Details */}
+                <div className="pt-6">
+                  <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Goal Details</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+                    {/* Total Saved */}
+                    <div className="bg-slate-700/40 rounded-2xl border border-slate-600 p-5">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs text-slate-400 font-medium">Total Saved</p>
+                        <span className="text-slate-500 text-xs">{p.current_retirement_assets > 0 ? "Retirement accounts" : "No accounts found"}</span>
+                      </div>
+                      <p className="text-2xl font-extrabold text-white mb-4">{fmt(p.current_retirement_assets, true)}</p>
+                      {taxTotal > 0 ? (
+                        <div className="space-y-2">
+                          <TaxBar label="Tax-deferred (401k, IRA)" amount={p.tax_deferred_balance} total={taxTotal} color="#3b82f6" />
+                          <TaxBar label="Taxable investments" amount={p.taxable_investment_balance} total={taxTotal} color="#f59e0b" />
+                          <TaxBar label="Tax-exempt (Roth)" amount={p.tax_exempt_balance} total={taxTotal} color="#22c55e" />
+                          <div className="h-2 rounded-full overflow-hidden flex mt-2">
+                            <div className="bg-blue-500 h-full" style={{ width: `${taxTotal > 0 ? (p.tax_deferred_balance / taxTotal) * 100 : 0}%` }} />
+                            <div className="bg-amber-500 h-full" style={{ width: `${taxTotal > 0 ? (p.taxable_investment_balance / taxTotal) * 100 : 0}%` }} />
+                            <div className="bg-emerald-500 h-full" style={{ width: `${taxTotal > 0 ? (p.tax_exempt_balance / taxTotal) * 100 : 0}%` }} />
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-slate-500 text-xs">Link retirement accounts to see tax breakdown.</p>
+                      )}
+                    </div>
+
+                    {/* Retirement Profile */}
+                    <div className="bg-slate-700/40 rounded-2xl border border-slate-600 p-5">
+                      <p className="text-xs text-slate-400 font-medium mb-1">Retirement Profile</p>
+                      <p className="text-2xl font-extrabold text-white mb-4">{retirementYear}</p>
+                      <div className="space-y-2 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Your retirement age</span>
+                          <span className="text-slate-200 font-medium">{prof.retirement_age} <span className="text-slate-500">(to {prof.life_expectancy_age})</span></span>
+                        </div>
+                        {prof.include_spouse && prof.spouse_birth_year && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Spouse&apos;s retirement age</span>
+                            <span className="text-slate-200 font-medium">{prof.spouse_retirement_age ?? 65}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Expected return</span>
+                          <span className="text-slate-200 font-medium">{(parseFloat(prof.expected_return_rate as unknown as string) * 100).toFixed(1)}%/yr</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Inflation assumption</span>
+                          <span className="text-slate-200 font-medium">{(inflationRateVal * 100).toFixed(1)}%/yr</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Years to retirement</span>
+                          <span className="text-slate-200 font-medium">{p.years_to_retirement} years</span>
+                        </div>
+                        <div className="border-t border-slate-600/50 pt-2 mt-1">
+                          <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1.5">Assumptions</p>
+                          <div className="flex justify-between items-center">
+                            <span className="text-slate-400">Mortgages & home loans</span>
+                            <span className="text-emerald-400 font-medium">Paid off ✓</span>
+                          </div>
+                          <div className="flex justify-between items-center mt-1">
+                            <span className="text-slate-400">Children&apos;s college</span>
+                            <span className="text-emerald-400 font-medium">Fully funded ✓</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Expenses */}
+                    <div className="bg-slate-700/40 rounded-2xl border border-slate-600 p-5">
+                      <p className="text-xs text-slate-400 font-medium mb-1">Monthly Expenses</p>
+                      {p.total_monthly_expenses > 0 ? (
+                        <>
+                          <p className="text-2xl font-extrabold text-white mb-4">{fmt(p.total_monthly_expenses, true)}<span className="text-slate-500 text-sm font-normal">/mo</span></p>
+                          <div className="space-y-2 text-xs">
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Essential expenses</span>
+                              <span className="text-slate-200 font-medium">
+                                {prof.monthly_essential_expenses ? fmt(parseFloat(prof.monthly_essential_expenses as unknown as string)) : "—"}/mo
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Non-essential</span>
+                              <span className="text-slate-200 font-medium">
+                                {prof.monthly_non_essential_expenses ? fmt(parseFloat(prof.monthly_non_essential_expenses as unknown as string)) : "—"}/mo
+                              </span>
+                            </div>
+                            <div className="border-t border-slate-700 pt-2 flex justify-between font-semibold">
+                              <span className="text-slate-300">Total annual</span>
+                              <span className="text-white">{fmt(p.total_monthly_expenses * 12, true)}/yr</span>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-2xl font-extrabold text-white mb-4">
+                            {fmt(parseFloat(prof.desired_annual_income as unknown as string) / 12, true)}<span className="text-slate-500 text-sm font-normal">/mo</span>
+                          </p>
+                          <div className="space-y-2 text-xs">
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Annual target income</span>
+                              <span className="text-slate-200 font-medium">{fmt(parseFloat(prof.desired_annual_income as unknown as string), true)}/yr</span>
+                            </div>
+                            <p className="text-slate-600 text-xs mt-2">Add monthly expense breakdown in Edit Profile for detailed planning.</p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Your Strategies */}
+                {(() => {
+                  const profContrib = parseFloat(prof.annual_contribution as unknown as string) || 0;
+                  const spouseContrib = prof.include_spouse && prof.spouse_annual_contribution
+                    ? parseFloat(prof.spouse_annual_contribution as unknown as string) : 0;
+                  const totalContrib = profContrib + spouseContrib;
+                  const combinedIncome = (prof.yearly_income ? parseFloat(prof.yearly_income as unknown as string) : 0)
+                    + (prof.include_spouse && prof.spouse_yearly_income ? parseFloat(prof.spouse_yearly_income as unknown as string) : 0);
+                  const savingsRate = combinedIncome > 0 ? (totalContrib / combinedIncome) * 100 : 0;
+                  const onTrackColor = p.on_track_pct >= 80 ? "text-emerald-400 bg-emerald-900/30 border-emerald-800" : p.on_track_pct >= 50 ? "text-amber-400 bg-amber-900/30 border-amber-800" : "text-red-400 bg-red-900/30 border-red-800";
+                  const ssSources = p.income_sources.filter(s => s.source_type === "social_security");
+                  const rentalSources = p.income_sources.filter(s => s.source_type === "rental");
+                  const rentalTotal = rentalSources.reduce((a, s) => a + s.annual_amount, 0);
+                  const portfolioSource = p.income_sources.find(s => s.source_type === "portfolio");
+                  const guaranteedIncome = ssSources.reduce((a, s) => a + s.annual_amount, 0) + rentalTotal;
+                  const targetAnnual = p.retirement_wealth_target * 0.04;
+                  const guaranteedCoverage = targetAnnual > 0 ? Math.min(100, (guaranteedIncome / targetAnnual) * 100) : 0;
+                  const taxTotalInner = p.tax_deferred_balance + p.taxable_investment_balance + p.tax_exempt_balance;
+
+                  return (
+                    <div>
+                      <div className="mb-3">
+                        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Your Strategies</h3>
+                        <p className="text-slate-500 text-xs mt-0.5">Examine your current contributions, investing mix, and income sources below.</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+                        <div className="bg-slate-700/40 rounded-2xl border border-slate-600 p-5 flex flex-col">
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-lg">💼</span>
+                            <p className="text-sm font-semibold text-white">Retirement Savings</p>
+                          </div>
+                          <p className="text-slate-500 text-xs leading-relaxed mb-4">
+                            Everyone should have a retirement plan that ensures they do not outlive their assets.
+                          </p>
+                          <div className="space-y-2 text-xs flex-1">
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-400">Your contributions</span>
+                              <span className="text-slate-200 font-medium">{fmt(profContrib, true)}/yr</span>
+                            </div>
+                            {prof.include_spouse && spouseContrib > 0 && (
+                              <div className="flex justify-between items-center">
+                                <span className="text-slate-400">Spouse contributions</span>
+                                <span className="text-slate-200 font-medium">{fmt(spouseContrib, true)}/yr</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between items-center border-t border-slate-700 pt-2">
+                              <span className="text-slate-300 font-medium">Total annual</span>
+                              <span className="text-white font-bold">{fmt(totalContrib, true)}/yr</span>
+                            </div>
+                            {savingsRate > 0 && (
+                              <div className="flex justify-between items-center">
+                                <span className="text-slate-400">Savings rate</span>
+                                <span className="text-slate-200 font-medium">{savingsRate.toFixed(1)}%</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between items-center pt-1">
+                              <span className="text-slate-400">On track</span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${onTrackColor}`}>
+                                {p.on_track_pct.toFixed(0)}%
+                              </span>
+                            </div>
+                          </div>
+                          <div className="mt-4 pt-3 border-t border-slate-700 flex gap-3 text-xs">
+                            <button type="button" onClick={() => setShowForm(true)} className="text-blue-400 hover:text-blue-300 transition">Edit profile →</button>
+                            <a href="/accounts" className="text-slate-500 hover:text-slate-300 transition">Edit accounts →</a>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-700/40 rounded-2xl border border-slate-600 p-5 flex flex-col">
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-lg">📊</span>
+                            <p className="text-sm font-semibold text-white">Investments</p>
+                          </div>
+                          <p className="text-slate-500 text-xs leading-relaxed mb-4">
+                            Tax diversification is critical — balancing pre-tax, taxable, and Roth accounts gives flexibility in retirement.
+                          </p>
+                          <div className="flex-1">
+                            {taxTotalInner > 0 ? (
+                              <div className="space-y-3">
+                                {[
+                                  { label: "Tax-deferred (401k, IRA)", amount: p.tax_deferred_balance, color: "bg-blue-500", textColor: "text-blue-400" },
+                                  { label: "Taxable investments", amount: p.taxable_investment_balance, color: "bg-amber-500", textColor: "text-amber-400" },
+                                  { label: "Tax-exempt (Roth)", amount: p.tax_exempt_balance, color: "bg-emerald-500", textColor: "text-emerald-400" },
+                                ].map(({ label, amount, color, textColor }) => {
+                                  const pct = taxTotalInner > 0 ? (amount / taxTotalInner) * 100 : 0;
+                                  return (
+                                    <div key={label}>
+                                      <div className="flex justify-between text-xs mb-1">
+                                        <span className="text-slate-400">{label}</span>
+                                        <span className={`font-medium ${textColor}`}>{pct.toFixed(0)}%</span>
+                                      </div>
+                                      <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                                        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+                                      </div>
+                                      <p className="text-slate-600 text-xs mt-0.5">{fmt(amount, true)}</p>
+                                    </div>
+                                  );
+                                })}
+                                <p className="text-slate-600 text-xs mt-2 leading-relaxed">Diversification does not ensure a profit or guarantee against loss.</p>
+                              </div>
+                            ) : (
+                              <p className="text-slate-500 text-xs">Link your retirement accounts to see your investment mix.</p>
+                            )}
+                          </div>
+                          <div className="mt-4 pt-3 border-t border-slate-700 flex gap-3 text-xs">
+                            <a href="/accounts" className="text-blue-400 hover:text-blue-300 transition">Edit accounts →</a>
+                            <a href="/investments" className="text-slate-500 hover:text-slate-300 transition">View investments →</a>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-700/40 rounded-2xl border border-slate-600 p-5 flex flex-col">
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-lg">🏛</span>
+                            <p className="text-sm font-semibold text-white">Retirement Income</p>
+                          </div>
+                          <p className="text-slate-500 text-xs leading-relaxed mb-4">
+                            Essential expenses should be covered by reliable lifetime income — Social Security, rental, and annuities — not just portfolio withdrawals.
+                          </p>
+                          <div className="space-y-3 flex-1 text-xs">
+                            <div>
+                              <p className="text-slate-400 font-medium mb-1.5">Lifetime income</p>
+                              {ssSources.length > 0 ? ssSources.map(s => (
+                                <div key={s.label} className="flex justify-between mb-1">
+                                  <span className="text-slate-500">{s.label}</span>
+                                  <span className="text-slate-300">{fmt(s.annual_amount, true)}/yr</span>
+                                </div>
+                              )) : (
+                                <p className="text-slate-600">Social Security: not set</p>
+                              )}
+                            </div>
+                            {rentalTotal > 0 && (
+                              <div>
+                                <p className="text-slate-400 font-medium mb-1.5">Rental income</p>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-500">Active leases</span>
+                                  <span className="text-slate-300">{fmt(rentalTotal, true)}/yr</span>
+                                </div>
+                              </div>
+                            )}
+                            {portfolioSource && (
+                              <div>
+                                <p className="text-slate-400 font-medium mb-1.5">Portfolio</p>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-500">{(swr * 100).toFixed(1)}% withdrawals</span>
+                                  <span className="text-slate-300">{fmt(portfolioSource.annual_amount, true)}/yr</span>
+                                </div>
+                              </div>
+                            )}
+                            <div className="border-t border-slate-700 pt-2">
+                              <div className="flex justify-between items-center">
+                                <span className="text-slate-400">Guaranteed income coverage</span>
+                                <span className={`font-semibold ${guaranteedCoverage >= 30 ? "text-emerald-400" : "text-amber-400"}`}>
+                                  {guaranteedCoverage.toFixed(0)}%
+                                </span>
+                              </div>
+                              <p className="text-slate-600 text-xs mt-0.5">SS + rental vs. total retirement target</p>
+                            </div>
+                          </div>
+                          <div className="mt-4 pt-3 border-t border-slate-700 flex gap-3 text-xs">
+                            <button type="button" onClick={() => setShowForm(true)} className="text-blue-400 hover:text-blue-300 transition">Edit retirement income →</button>
+                          </div>
+                        </div>
+
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Detailed Risk Analysis */}
+                {(() => {
+                  const yearsToRetInner = p.years_to_retirement;
+                  const targetAnnualInner = p.retirement_wealth_target * 0.04;
+                  const inflatedTargetInner = targetAnnualInner * Math.pow(1 + inflationRateVal, yearsToRetInner);
+                  const retirementYearsInner = prof.life_expectancy_age - prof.retirement_age;
+                  const marketRange = p.optimistic_wealth_at_retirement - p.pessimistic_wealth_at_retirement;
+                  const essentialMonthly = prof.monthly_essential_expenses ? parseFloat(prof.monthly_essential_expenses as unknown as string) : 0;
+
+                  const riskCards = [
+                    {
+                      icon: "🕐",
+                      title: "Longevity Risk",
+                      color: pessimisticMeetsTarget ? "border-emerald-800/50 bg-emerald-900/10" : baseMeetsTarget ? "border-amber-800/50 bg-amber-900/10" : "border-red-800/50 bg-red-900/10",
+                      badge: pessimisticMeetsTarget ? "Low Risk" : baseMeetsTarget ? "Moderate" : "High Risk",
+                      badgeColor: pessimisticMeetsTarget ? "text-emerald-400" : baseMeetsTarget ? "text-amber-400" : "text-red-400",
+                      text: `Your plan covers ${retirementYearsInner} years of retirement (age ${prof.retirement_age} to ${prof.life_expectancy_age}). ${pessimisticMeetsTarget ? "Even in below-average markets, you appear funded for your full life expectancy." : baseMeetsTarget ? "In average markets you're funded, but a market downturn could create a shortfall late in retirement." : "Consider increasing savings or adjusting your retirement age to reduce longevity risk."}`,
+                    },
+                    {
+                      icon: "📉",
+                      title: "Market Volatility",
+                      color: pessimisticMeetsTarget ? "border-emerald-800/50 bg-emerald-900/10" : "border-amber-800/50 bg-amber-900/10",
+                      badge: pessimisticMeetsTarget ? "Well-cushioned" : "Monitor",
+                      badgeColor: pessimisticMeetsTarget ? "text-emerald-400" : "text-amber-400",
+                      text: `In a significantly below-average market, your portfolio at retirement could be ${fmt(p.pessimistic_wealth_at_retirement, true)} vs. ${fmt(p.optimistic_wealth_at_retirement, true)} in an average market — a ${fmt(marketRange, true)} range. Diversification helps reduce this spread.`,
+                    },
+                    {
+                      icon: "📊",
+                      title: "Inflation Risk",
+                      color: inflatedTargetInner > targetAnnualInner * 1.5 ? "border-amber-800/50 bg-amber-900/10" : "border-slate-700 bg-slate-800/40",
+                      badge: inflatedTargetInner > targetAnnualInner * 1.5 ? "Notable" : "Manageable",
+                      badgeColor: inflatedTargetInner > targetAnnualInner * 1.5 ? "text-amber-400" : "text-slate-400",
+                      text: `At ${(inflationRateVal * 100).toFixed(1)}% annual inflation, your ${fmt(targetAnnualInner, true)}/yr income target today will require ${fmt(inflatedTargetInner, true)}/yr in ${yearsToRetInner} years. The ${(swr * 100).toFixed(1)}% withdrawal rule partially offsets this through portfolio growth.`,
+                    },
+                    {
+                      icon: "🎲",
+                      title: "Sequence of Returns",
+                      color: "border-amber-800/50 bg-amber-900/10",
+                      badge: "Universal Risk",
+                      badgeColor: "text-amber-400",
+                      text: "Early retirement losses compound negatively — withdrawals from a declining portfolio lock in losses. Consider keeping 1–2 years of expenses in cash or short-term bonds as a buffer when you retire.",
+                    },
+                    {
+                      icon: "🏥",
+                      title: "Healthcare Costs",
+                      color: "border-amber-800/50 bg-amber-900/10",
+                      badge: "Plan Ahead",
+                      badgeColor: "text-amber-400",
+                      text: `Healthcare is often the largest unexpected retirement expense. ${essentialMonthly > 0 ? `Consider budgeting an additional ${fmt(essentialMonthly * 0.12)}/mo (12% of your essential expenses) for healthcare above your current estimates.` : "Budget 10–15% above your monthly expenses for healthcare to be safe."}`,
+                    },
+                    ...(p.on_track_pct < 100 ? [{
+                      icon: "💰",
+                      title: "Contribution Adequacy",
+                      color: p.on_track_pct < 50 ? "border-red-800/50 bg-red-900/10" : "border-amber-800/50 bg-amber-900/10",
+                      badge: p.on_track_pct < 50 ? "Action Needed" : "Improve",
+                      badgeColor: p.on_track_pct < 50 ? "text-red-400" : "text-amber-400",
+                      text: `You are currently ${p.on_track_pct.toFixed(0)}% on track. Increasing annual contributions by ${fmt(p.required_additional_annual_saving, true)} could close your retirement gap. Small increases early compound significantly over time.`,
+                    }] : []),
+                  ];
+
+                  return (
+                    <div>
+                      <div className="mb-3">
+                        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Detailed Risk Analysis</h3>
+                        <p className="text-slate-500 text-xs mt-0.5">We&apos;ve analyzed how your plan factors in common retirement risks.</p>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {riskCards.map((card) => (
+                          <div key={card.title} className={`rounded-2xl border p-5 ${card.color}`}>
+                            <div className="flex items-start justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-lg">{card.icon}</span>
+                                <p className="text-sm font-semibold text-white">{card.title}</p>
+                              </div>
+                              <span className={`text-xs font-medium ${card.badgeColor}`}>{card.badge}</span>
+                            </div>
+                            <p className="text-slate-400 text-xs leading-relaxed">{card.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Personalized Insights */}
+                {p.insights.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Personalized Insights</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {p.insights.map((insight, i) => (
+                        <div key={i} className="flex gap-3 bg-slate-700/40 rounded-xl p-4 border border-slate-600/50">
+                          <span className="text-xl flex-shrink-0 mt-0.5">{insightIcons[i] ?? "💡"}</span>
+                          <p className="text-slate-300 text-sm leading-relaxed">{insight}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            )}
+          </div>
+
+          {/* ── Footer ───────────────────────────────────────────────────── */}
+          <p className="text-center text-slate-600 text-xs pb-4">
+            Projections use the {(swr * 100).toFixed(1)}% safe withdrawal rate. Scenarios: strong market (+3%), expected, poor market (−2%). Not financial advice.
+            Key assumptions: all mortgages and children&apos;s education costs are assumed to be fully paid by retirement.
+            Net worth: {fmt(p.total_net_worth, true)}
+          </p>
+
+        </div>
+        )}
 
       </div>
     </div>
     </CountryGate>
   );
 }
+

@@ -2,18 +2,22 @@ import csv
 import io
 import uuid
 from decimal import Decimal, InvalidOperation
+from pathlib import Path as FilePath
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.property import Property
-from app.models.rental import Lease, Payment, RentCharge, Tenant, Unit
+from app.models.rental import Lease, LeaseDocument, Payment, RentCharge, Tenant, Unit
 from app.models.user import User
 from app.schemas.rental import (
     LeaseCreate,
+    LeaseDocumentResponse,
     LeaseResponse,
     LeaseUpdate,
     PaymentCreate,
@@ -30,6 +34,36 @@ from app.schemas.rental import (
 )
 
 router = APIRouter(tags=["rentals"])
+
+MAX_DOC_SIZE = 50 * 1024 * 1024  # 50 MB
+DOC_CHUNK_SIZE = 1024 * 1024  # 1 MB streaming chunks
+
+_ALLOWED_DOC_TYPES: dict[str, str] = {
+    "pdf":  "application/pdf",
+    "doc":  "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls":  "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "csv":  "text/csv",
+    "txt":  "text/plain",
+    "png":  "image/png",
+    "jpg":  "image/jpeg",
+    "jpeg": "image/jpeg",
+    "heic": "image/heic",
+    "webp": "image/webp",
+}
+
+
+def _validate_doc_upload(filename: str) -> str:
+    ext = FilePath(filename).suffix.lstrip(".").lower()
+    mime = _ALLOWED_DOC_TYPES.get(ext)
+    if mime is None:
+        allowed = ", ".join(sorted(_ALLOWED_DOC_TYPES))
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '.{ext}' is not allowed. Allowed: {allowed}",
+        )
+    return mime
 
 
 # ─── Helper: verify property ownership ──────────────────────────────────────
@@ -293,6 +327,133 @@ async def delete_lease(
 ):
     lease = await _get_lease(lease_id, user, db)
     await db.delete(lease)
+
+
+# ─── Lease Documents ──────────────────────────────────────────────────────────
+
+@router.get("/leases/{lease_id}/documents", response_model=list[LeaseDocumentResponse])
+async def list_lease_documents(
+    lease_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_lease(lease_id, user, db)
+    result = await db.execute(
+        select(LeaseDocument)
+        .where(LeaseDocument.lease_id == lease_id)
+        .order_by(LeaseDocument.uploaded_at.desc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/leases/{lease_id}/documents", response_model=LeaseDocumentResponse, status_code=201)
+async def upload_lease_document(
+    lease_id: uuid.UUID,
+    file: UploadFile = File(...),
+    category: str | None = Form(None),
+    description: str | None = Form(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_lease(lease_id, user, db)
+
+    original_name = file.filename or "upload"
+    mime = _validate_doc_upload(original_name)
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(DOC_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_DOC_SIZE:
+            raise HTTPException(status_code=400, detail="File too large (max 50 MB)")
+        chunks.append(chunk)
+    content = b"".join(chunks)
+
+    stored_name = f"{uuid.uuid4()}_{original_name}"
+    dir_path = FilePath(settings.upload_dir) / "leases" / str(lease_id)
+    dir_path.mkdir(parents=True, exist_ok=True)
+    file_path = dir_path / stored_name
+    file_path.write_bytes(content)
+
+    doc = LeaseDocument(
+        lease_id=lease_id,
+        household_id=user.household_id,
+        filename=original_name,
+        stored_filename=stored_name,
+        file_size=total,
+        content_type=mime,
+        category=category or None,
+        description=description or None,
+    )
+    db.add(doc)
+    await db.flush()
+    await db.refresh(doc)
+    return doc
+
+
+@router.get("/leases/{lease_id}/documents/{doc_id}/download")
+async def download_lease_document(
+    lease_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_lease(lease_id, user, db)
+
+    result = await db.execute(
+        select(LeaseDocument).where(
+            LeaseDocument.id == doc_id,
+            LeaseDocument.lease_id == lease_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    base_dir = (FilePath(settings.upload_dir) / "leases" / str(lease_id)).resolve()
+    file_path = (base_dir / doc.stored_filename).resolve()
+    if not str(file_path).startswith(str(base_dir) + "/") and file_path != base_dir:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    return FileResponse(
+        path=str(file_path),
+        filename=doc.filename,
+        media_type=doc.content_type,
+    )
+
+
+@router.delete("/leases/{lease_id}/documents/{doc_id}", status_code=204)
+async def delete_lease_document(
+    lease_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_lease(lease_id, user, db)
+
+    result = await db.execute(
+        select(LeaseDocument).where(
+            LeaseDocument.id == doc_id,
+            LeaseDocument.lease_id == lease_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    file_path = FilePath(settings.upload_dir) / "leases" / str(lease_id) / doc.stored_filename
+    try:
+        file_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    await db.delete(doc)
+    await db.flush()
 
 
 # ─── Rent Charges ─────────────────────────────────────────────────────────────

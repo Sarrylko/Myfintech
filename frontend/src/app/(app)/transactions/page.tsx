@@ -5,7 +5,7 @@ import MerchantLogo from "@/components/MerchantLogo";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid,
-  PieChart, Pie, Cell,
+  PieChart, Pie, Cell, ReferenceLine,
 } from "recharts";
 import { useRouter } from "next/navigation";
 import {
@@ -30,6 +30,7 @@ import {
   createRecurring,
   getRecurringByTransaction,
   unlinkTransactionFromRecurring,
+  listHouseholdMembers,
   Account,
   Transaction,
   TransactionSplit,
@@ -38,6 +39,7 @@ import {
   Unit,
   Lease,
   PropertyExpenseLink,
+  UserResponse,
   RecurringTransaction,
 } from "@/lib/api";
 import { useCurrency } from "@/lib/currency";
@@ -1276,13 +1278,14 @@ export default function TransactionsPage() {
   }
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [members, setMembers] = useState<UserResponse[]>([]);
   const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [selectedAccount, setSelectedAccount] = useState("all");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [datePreset, setDatePreset] = useState("all");
+  const [datePreset, setDatePreset] = useState("this_month");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
@@ -1314,10 +1317,13 @@ export default function TransactionsPage() {
         if (batch.length < PAGE) break;
         offset += PAGE;
       }
-      const [accts, customCats] = await Promise.all([listAccounts(), listCustomCategories()]);
+      const [accts, customCats, householdMembers] = await Promise.all([
+        listAccounts(), listCustomCategories(), listHouseholdMembers(),
+      ]);
       setTransactions(all);
       setAccounts(accts);
       setCustomCategories(customCats);
+      setMembers(householdMembers);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load transactions");
     } finally {
@@ -1408,6 +1414,14 @@ export default function TransactionsPage() {
       .slice(-12);
   }, [filtered]);
 
+  const monthlyTrendAverages = useMemo(() => {
+    if (monthlyTrend.length === 0) return { income: 0, expenses: 0 };
+    return {
+      income: monthlyTrend.reduce((sum, m) => sum + m.income, 0) / monthlyTrend.length,
+      expenses: monthlyTrend.reduce((sum, m) => sum + m.expenses, 0) / monthlyTrend.length,
+    };
+  }, [monthlyTrend]);
+
   const categorySpend = useMemo(() => {
     const spend: Record<string, number> = {};
     for (const t of filtered) {
@@ -1446,6 +1460,48 @@ export default function TransactionsPage() {
     if (othersTotal > 0) top5.push({ name: "Everything Else", amount: othersTotal });
     return top5;
   }, [filtered]);
+
+  const personBreakdown = useMemo(() => {
+    if (members.length === 0) return [];
+    const ownedIncome: Record<string, number> = {};
+    const ownedExpenses: Record<string, number> = {};
+    let sharedIncome = 0;
+    let sharedExpenses = 0;
+    const memberIds = new Set(members.map((m) => m.id));
+
+    for (const t of filtered) {
+      if (t.pending) continue;
+      const amt = parseFloat(t.amount);
+      const ownerId = t.account_id ? accountMap[t.account_id]?.owner_user_id : null;
+      const isKnownOwner = !!ownerId && memberIds.has(ownerId);
+
+      if (amt < 0 && !t.is_transfer && !t.is_rental_income && !t.is_business) {
+        const income = Math.abs(amt);
+        if (isKnownOwner) ownedIncome[ownerId!] = (ownedIncome[ownerId!] || 0) + income;
+        else sharedIncome += income;
+      } else if (amt > 0 && !t.is_transfer && !t.is_property_expense && !t.is_business) {
+        if (isKnownOwner) ownedExpenses[ownerId!] = (ownedExpenses[ownerId!] || 0) + amt;
+        else sharedExpenses += amt;
+      }
+    }
+
+    const totalOwnedIncome = Object.values(ownedIncome).reduce((s, v) => s + v, 0);
+
+    return members
+      .map((m) => {
+        const income = ownedIncome[m.id] || 0;
+        const expenses = ownedExpenses[m.id] || 0;
+        const share = totalOwnedIncome > 0 ? income / totalOwnedIncome : 1 / members.length;
+        return {
+          id: m.id,
+          name: m.full_name,
+          income: income + share * sharedIncome,
+          expenses: expenses + share * sharedExpenses,
+        };
+      })
+      .filter((p) => p.income > 0.01 || p.expenses > 0.01)
+      .sort((a, b) => b.income - a.income);
+  }, [filtered, accountMap, members]);
 
   const sorted = [...filtered].sort((a, b) => {
     const mul = sortDir === "asc" ? 1 : -1;
@@ -1679,6 +1735,22 @@ export default function TransactionsPage() {
                         <Tooltip formatter={(v: number, name: string) => [fmt(v), name.charAt(0).toUpperCase() + name.slice(1)]} contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #c8d2db", boxShadow: "0 4px 12px rgba(0,51,102,0.08)" }} cursor={{ fill: "rgba(0,51,102,0.03)" }} />
                         <Bar dataKey="income"   name="income"   fill="#007A33" radius={[4, 4, 0, 0]} />
                         <Bar dataKey="expenses" name="expenses" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                        <ReferenceLine
+                          y={monthlyTrendAverages.income}
+                          stroke="#007A33"
+                          strokeDasharray="5 4"
+                          strokeWidth={1.5}
+                          ifOverflow="extendDomain"
+                          label={{ value: `Avg ${fmt(monthlyTrendAverages.income)}`, position: "insideTopLeft", fontSize: 10, fill: "#007A33" }}
+                        />
+                        <ReferenceLine
+                          y={monthlyTrendAverages.expenses}
+                          stroke="#f43f5e"
+                          strokeDasharray="5 4"
+                          strokeWidth={1.5}
+                          ifOverflow="extendDomain"
+                          label={{ value: `Avg ${fmt(monthlyTrendAverages.expenses)}`, position: "insideBottomLeft", fontSize: 10, fill: "#f43f5e" }}
+                        />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
@@ -1791,6 +1863,33 @@ export default function TransactionsPage() {
                   </div>
                 );
               })()}
+
+              {/* Row 3: Income & Spending by Person */}
+              {personBreakdown.length > 1 && (
+                <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-sm p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">By Person</p>
+                      <p className="text-xs text-gray-400 mt-0.5">Who's earning and spending this period</p>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-gray-500">
+                      <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-finance-500 inline-block" />Income</span>
+                      <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" />Expenses</span>
+                    </div>
+                  </div>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={personBreakdown} barSize={28} barCategoryGap="25%">
+                      <CartesianGrid strokeDasharray="4 4" stroke="#e4e8ed" strokeOpacity={0.5} vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} />
+                      <YAxis tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} width={42} tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} />
+                      <Tooltip formatter={(v: number, name: string) => [fmt(v), name.charAt(0).toUpperCase() + name.slice(1)]} contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #c8d2db", boxShadow: "0 4px 12px rgba(0,51,102,0.08)" }} cursor={{ fill: "rgba(0,51,102,0.03)" }} />
+                      <Bar dataKey="income"   name="income"   fill="#007A33" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="expenses" name="expenses" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">Joint/shared accounts are split proportionally by each person's income share.</p>
+                </div>
+              )}
 
             </div>
           )}

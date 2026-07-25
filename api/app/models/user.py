@@ -80,6 +80,7 @@ class User(Base):
     notif_bill_reminders: Mapped[bool] = mapped_column(Boolean, default=True)
     notif_monthly_report: Mapped[bool] = mapped_column(Boolean, default=True)
     notif_transaction_alerts: Mapped[bool] = mapped_column(Boolean, default=True)
+    notif_account_health: Mapped[bool] = mapped_column(Boolean, default=True)
     household_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("households.id")
     )

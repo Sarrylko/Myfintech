@@ -9,19 +9,15 @@ SnapTrade flow:
 
 import logging
 import uuid
-from datetime import datetime, timezone
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.security import decrypt_value, encrypt_value
 from app.models.account import Account
-from app.models.investment import Holding
 from app.models.snaptrade import SnapTradeConnection, SnapTradeUser
 from app.models.user import User
 from app.schemas.snaptrade import (
@@ -29,6 +25,12 @@ from app.schemas.snaptrade import (
     SnapTradeConnectionResponse,
     SnapTradeRegisterResponse,
     SnapTradeSyncResponse,
+)
+from app.services.snaptrade_sync import (
+    _attr,
+    _get_auth_id,
+    _get_snaptrade_client,
+    sync_snaptrade_connection,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,14 +44,10 @@ _REDIRECT_URI = "http://localhost:3000/accounts?snaptrade_connected=1"
 # ─── SDK helper ────────────────────────────────────────────────────────────────
 
 def _get_client():
-    if not settings.snaptrade_client_id or not settings.snaptrade_consumer_key:
-        raise HTTPException(status_code=503, detail="SnapTrade is not configured")
-    from snaptrade_client import SnapTrade, Configuration
-    conf = Configuration(
-        consumer_key=settings.snaptrade_consumer_key,
-        client_id=settings.snaptrade_client_id,
-    )
-    return SnapTrade(configuration=conf)
+    try:
+        return _get_snaptrade_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 # ─── Internal helpers ───────────────────────────────────────────────────────────
@@ -90,146 +88,8 @@ async def _sync_connection(
     snap_user: SnapTradeUser,
     db: AsyncSession,
 ) -> dict:
-    """Pull accounts and holdings for one SnapTrade brokerage authorization."""
-    client = _get_client()
-    user_id = snap_user.snaptrade_user_id
-    user_secret = decrypt_value(snap_user.encrypted_user_secret)
-
-    # 1. Fetch all SnapTrade accounts for this user
-    try:
-        accounts_resp = client.account_information.list_user_accounts(
-            user_id=user_id, user_secret=user_secret
-        )
-        all_accounts = accounts_resp.body if isinstance(accounts_resp.body, list) else []
-    except Exception as exc:
-        logger.error("SnapTrade list_user_accounts failed: %s", exc)
-        connection.error_code = str(exc)[:255]
-        return {"accounts_synced": 0, "holdings_synced": 0}
-
-    # Use all accounts — SnapTrade doesn't always populate brokerage_authorization on account objects
-    auth_id = connection.snaptrade_authorization_id
-    snap_accounts = [a for a in all_accounts if _get_auth_id(a) == auth_id] or all_accounts
-
-    accounts_synced = 0
-    holdings_synced = 0
-
-    for sa_acct in snap_accounts:
-        snap_acct_id = _attr(sa_acct, "id")
-        acct_name = _attr(sa_acct, "name") or "Brokerage Account"
-        balance_obj = _attr(sa_acct, "balance")
-        total_val = _safe_decimal(_attr(balance_obj, "total")) if balance_obj else None
-
-        # Upsert account
-        result = await db.execute(
-            select(Account).where(Account.snaptrade_account_id == snap_acct_id)
-        )
-        acct = result.scalar_one_or_none()
-        if acct:
-            acct.current_balance = total_val
-            acct.name = acct_name
-        else:
-            acct = Account(
-                snaptrade_connection_id=connection.id,
-                snaptrade_account_id=snap_acct_id,
-                household_id=connection.household_id,
-                name=acct_name,
-                institution_name=connection.brokerage_name,
-                type="investment",
-                subtype="brokerage",
-                current_balance=total_val,
-                is_manual=False,
-                is_hidden=False,
-            )
-            db.add(acct)
-        await db.flush()
-        await db.refresh(acct)
-        accounts_synced += 1
-
-        # 2. Fetch holdings for this account
-        try:
-            holdings_resp = client.account_information.get_user_holdings(
-                account_id=snap_acct_id,
-                user_id=user_id,
-                user_secret=user_secret,
-            )
-            body = holdings_resp.body if isinstance(holdings_resp.body, dict) else {}
-            positions = body.get("positions") or []
-        except Exception as exc:
-            logger.warning("SnapTrade holdings fetch failed for account %s: %s", snap_acct_id, exc)
-            positions = []
-
-        # Delete stale holdings for this account before re-inserting
-        old_result = await db.execute(select(Holding).where(Holding.account_id == acct.id))
-        for old_h in old_result.scalars().all():
-            await db.delete(old_h)
-        await db.flush()
-
-        for pos in positions:
-            sym_obj = _attr(pos, "symbol")
-            # symbol.symbol may be a nested object with a .symbol attribute
-            inner_sym = _attr(sym_obj, "symbol") if sym_obj else None
-            if inner_sym and not isinstance(inner_sym, str):
-                ticker = _attr(inner_sym, "symbol")
-                name = _attr(inner_sym, "description")
-                # Detect crypto from SnapTrade symbol type
-                sym_type = _attr(inner_sym, "type")
-                is_crypto = _attr(sym_type, "code") == "crypto" if sym_type else False
-            else:
-                ticker = inner_sym
-                name = _attr(sym_obj, "description") if sym_obj else None
-                is_crypto = False
-            units = _safe_decimal(_attr(pos, "units"))
-            avg_price = _safe_decimal(_attr(pos, "average_purchase_price"))
-            mkt_value = _safe_decimal(_attr(pos, "market_value"))
-            cost_basis = (avg_price * units) if avg_price and units else None
-
-            if units is None:
-                continue
-
-            db.add(Holding(
-                account_id=acct.id,
-                household_id=connection.household_id,
-                ticker_symbol=ticker,
-                name=name,
-                quantity=units,
-                cost_basis=cost_basis,
-                current_value=mkt_value,
-                asset_class="crypto" if is_crypto else None,
-                as_of_date=datetime.now(timezone.utc),
-            ))
-            holdings_synced += 1
-
-    connection.last_synced_at = datetime.now(timezone.utc)
-    connection.error_code = None
-    await db.flush()
-
-    return {"accounts_synced": accounts_synced, "holdings_synced": holdings_synced}
-
-
-def _attr(obj, key: str):
-    """Get attribute from dict or object, returning None if missing."""
-    if obj is None:
-        return None
-    if isinstance(obj, dict):
-        return obj.get(key)
-    return getattr(obj, key, None)
-
-
-def _get_auth_id(acct_obj) -> str | None:
-    """Extract brokerage_authorization ID from a SnapTrade account object."""
-    ba = _attr(acct_obj, "brokerage_authorization")
-    if ba is None:
-        return None
-    return _attr(ba, "id")
-
-
-def _safe_decimal(val) -> Decimal | None:
-    if val is None:
-        return None
-    try:
-        return Decimal(str(val))
-    except Exception:
-        return None
+    """Delegate to the snaptrade_sync service."""
+    return await sync_snaptrade_connection(connection, snap_user, db)
 
 
 # ─── Endpoints ─────────────────────────────────────────────────────────────────
@@ -275,6 +135,53 @@ async def get_connect_url(
         raise HTTPException(status_code=502, detail="SnapTrade returned no redirect URL")
 
     await db.commit()
+    return SnapTradeConnectUrlResponse(redirect_url=redirect_url)
+
+
+@router.post("/connections/{connection_id}/reconnect-url", response_model=SnapTradeConnectUrlResponse)
+async def get_reconnect_url(
+    connection_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a SnapTrade portal URL for re-authenticating an existing brokerage
+    connection (e.g. after the brokerage password changed). This reuses the same
+    authorization instead of creating a duplicate connection."""
+    conn_result = await db.execute(
+        select(SnapTradeConnection).where(
+            SnapTradeConnection.id == connection_id,
+            SnapTradeConnection.household_id == user.household_id,
+        )
+    )
+    conn = conn_result.scalar_one_or_none()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    snap_user_result = await db.execute(
+        select(SnapTradeUser).where(SnapTradeUser.household_id == user.household_id)
+    )
+    snap_user = snap_user_result.scalar_one_or_none()
+    if not snap_user:
+        raise HTTPException(status_code=400, detail="SnapTrade user not registered")
+
+    client = _get_client()
+    user_secret = decrypt_value(snap_user.encrypted_user_secret)
+    try:
+        resp = client.authentication.login_snap_trade_user(
+            user_id=snap_user.snaptrade_user_id,
+            user_secret=user_secret,
+            custom_redirect=_REDIRECT_URI,
+            connection_type="read",
+            reconnect=conn.snaptrade_authorization_id,
+        )
+        body = resp.body if isinstance(resp.body, dict) else {}
+        redirect_url = body.get("redirectURI") or body.get("redirect_uri")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"SnapTrade login failed: {exc}")
+
+    if not redirect_url:
+        raise HTTPException(status_code=502, detail="SnapTrade returned no redirect URL")
+
     return SnapTradeConnectUrlResponse(redirect_url=redirect_url)
 
 
@@ -418,7 +325,12 @@ async def sync_connection(
     if not snap_user:
         raise HTTPException(status_code=400, detail="SnapTrade user not registered")
 
-    stats = await _sync_connection(conn, snap_user, db)
+    try:
+        stats = await _sync_connection(conn, snap_user, db)
+    except Exception as exc:
+        conn.error_code = str(exc)[:255]
+        await db.commit()
+        raise HTTPException(status_code=502, detail=str(exc))
     await db.commit()
     return SnapTradeSyncResponse(**stats)
 

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.account import Category, Transaction
+from app.models.account import Account, Category, Transaction
 from app.models.budget import Budget
 from app.models.user import User
 from app.schemas.account import TransactionResponse
@@ -132,6 +132,10 @@ async def _actual_spent(
         for p in ["home improvement", "home services", "property tax", "home insurance"]
     ]
     not_property_expense = not_(or_(*property_expense_conditions))
+    # A transaction explicitly tagged to this budget's category (e.g. a personal
+    # "Property Tax" budget) always counts toward it, even if Plaid auto-tagged it
+    # as a property expense — manual tagging overrides the rental/property P&L exclusion.
+    explicitly_tagged = Transaction.custom_category_id == category_id
 
     from app.models.account import Category as Cat, Account as Acct
     result = await db.execute(
@@ -152,10 +156,11 @@ async def _actual_spent(
             or_(Cat.id.is_(None), Cat.is_rental_income == False),  # noqa: E712
             # exclude property expense custom categories (tracked separately in property P&L)
             or_(Cat.id.is_(None), Cat.is_property_expense == False),  # noqa: E712
-            # exclude plaid-category transfers, rental income, and property expenses
+            # exclude plaid-category transfers and rental income
             not_a_transfer,
             not_rental_income,
-            not_property_expense,
+            # exclude plaid-category property expenses, unless explicitly tagged to this category
+            or_(explicitly_tagged, not_property_expense),
             # exclude transactions from business-entity accounts
             or_(Acct.id.is_(None), and_(Acct.entity_id.is_(None), Acct.account_scope != "business")),
         )
@@ -168,11 +173,21 @@ async def _enrich(
     db: AsyncSession,
     household_id: uuid.UUID,
 ) -> BudgetWithActualResponse:
-    start, end = _date_range(budget)
-    spent = await _actual_spent(
-        db, household_id, budget.category_id,
-        budget.category.name, start, end, budget.category.is_income,
-    )
+    if budget.account_id:
+        # Sinking-fund style tracking: progress comes from the linked account's
+        # balance (e.g. a dedicated brokerage account for property tax) instead
+        # of transaction-category matching.
+        spent = (
+            Decimal(str(budget.account.current_balance))
+            if budget.account and budget.account.current_balance is not None
+            else Decimal("0")
+        )
+    else:
+        start, end = _date_range(budget)
+        spent = await _actual_spent(
+            db, household_id, budget.category_id,
+            budget.category.name, start, end, budget.category.is_income,
+        )
     remaining = budget.amount - spent
     percent = (spent / budget.amount * 100) if budget.amount else Decimal("0")
     return BudgetWithActualResponse(
@@ -180,6 +195,8 @@ async def _enrich(
         household_id=budget.household_id,
         category_id=budget.category_id,
         category=budget.category,
+        account_id=budget.account_id,
+        account=budget.account,
         amount=budget.amount,
         currency_code=budget.currency_code,
         budget_type=budget.budget_type,
@@ -196,17 +213,32 @@ async def _enrich(
     )
 
 
+async def _validate_account(db: AsyncSession, household_id: uuid.UUID, account_id: uuid.UUID | None) -> None:
+    """Raise 404 if account_id is set but doesn't belong to this household."""
+    if account_id is None:
+        return
+    result = await db.execute(
+        select(Account.id).where(Account.id == account_id, Account.household_id == household_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+
 def _duplicate_filters(item: BudgetCreate, household_id: uuid.UUID):
     """Return SQLAlchemy WHERE conditions to detect a duplicate budget."""
     base = [Budget.household_id == household_id, Budget.category_id == item.category_id]
     if item.budget_type.value == "monthly":
         return base + [Budget.month == item.month, Budget.year == item.year,
                        Budget.budget_type == "monthly"]
-    elif item.budget_type.value == "annual":
-        return base + [Budget.budget_type == "annual", Budget.year == item.year]
     else:
-        # quarterly / custom — match on exact date range
-        return base + [Budget.start_date == item.start_date, Budget.end_date == item.end_date]
+        # annual / quarterly / custom — match on exact date range (annual is no
+        # longer forced to calendar-year, so two annual budgets can legitimately
+        # share a start year with different ranges, e.g. Jan-Dec vs Apr-Mar)
+        return base + [
+            Budget.budget_type == item.budget_type.value,
+            Budget.start_date == item.start_date,
+            Budget.end_date == item.end_date,
+        ]
 
 
 # ─── POST /budgets/bulk (BEFORE /{id} to avoid path collision) ────────────────
@@ -220,6 +252,8 @@ async def create_budgets_bulk(
     """Create multiple budgets at once (wizard final step). Silently skips duplicates."""
     created = []
     for item in payload.budgets:
+        await _validate_account(db, user.household_id, item.account_id)
+
         existing = await db.execute(
             select(Budget).where(*_duplicate_filters(item, user.household_id))
         )
@@ -229,6 +263,7 @@ async def create_budgets_bulk(
         budget = Budget(
             household_id=user.household_id,
             category_id=item.category_id,
+            account_id=item.account_id,
             amount=item.amount,
             currency_code=item.currency_code,
             country=item.country,
@@ -242,7 +277,7 @@ async def create_budgets_bulk(
         )
         db.add(budget)
         await db.flush()
-        await db.refresh(budget, attribute_names=["category"])
+        await db.refresh(budget, attribute_names=["category", "account"])
         created.append(await _enrich(budget, db, user.household_id))
 
     return created
@@ -309,7 +344,7 @@ async def copy_from_last_month(
         )
         db.add(new_budget)
         await db.flush()
-        await db.refresh(new_budget, attribute_names=["category"])
+        await db.refresh(new_budget, attribute_names=["category", "account"])
         created.append(await _enrich(new_budget, db, user.household_id))
 
     return created
@@ -328,14 +363,17 @@ async def list_budgets(
     today = date.today()
 
     if budget_type and budget_type != "monthly":
-        # Long-term view: return all non-monthly budgets for the given year
+        # Long-term view: return all non-monthly budgets whose date range overlaps
+        # the given calendar year (so a fiscal-cycle budget spanning two years,
+        # e.g. Jul 2026 - Jun 2027, shows up when browsing either year).
         if year is None:
             year = today.year
         result = await db.execute(
             select(Budget).where(
                 Budget.household_id == user.household_id,
                 Budget.budget_type != "monthly",
-                Budget.year == year,
+                Budget.start_date <= date(year, 12, 31),
+                Budget.end_date >= date(year, 1, 1),
             )
         )
     else:
@@ -365,6 +403,8 @@ async def create_budget(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _validate_account(db, user.household_id, payload.account_id)
+
     existing = await db.execute(
         select(Budget).where(*_duplicate_filters(payload, user.household_id))
     )
@@ -377,6 +417,7 @@ async def create_budget(
     budget = Budget(
         household_id=user.household_id,
         category_id=payload.category_id,
+        account_id=payload.account_id,
         amount=payload.amount,
         budget_type=payload.budget_type.value,
         month=payload.month,
@@ -388,7 +429,7 @@ async def create_budget(
     )
     db.add(budget)
     await db.flush()
-    await db.refresh(budget, attribute_names=["category"])
+    await db.refresh(budget, attribute_names=["category", "account"])
     return await _enrich(budget, db, user.household_id)
 
 
@@ -411,11 +452,15 @@ async def update_budget(
     if not budget:
         raise HTTPException(status_code=404, detail="Budget not found")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if "account_id" in updates:
+        await _validate_account(db, user.household_id, updates["account_id"])
+
+    for field, value in updates.items():
         setattr(budget, field, value)
 
     await db.flush()
-    await db.refresh(budget, attribute_names=["category"])
+    await db.refresh(budget, attribute_names=["category", "account"])
     return await _enrich(budget, db, user.household_id)
 
 
@@ -499,6 +544,10 @@ async def get_budget_transactions(
         for p in ["home improvement", "home services", "property tax", "home insurance"]
     ]
     not_property_expense = not_(or_(*property_expense_conditions))
+    # A transaction explicitly tagged to this budget's category always counts,
+    # even if Plaid auto-tagged it as a property expense — keep this in sync with
+    # the same override in _actual_spent so the transaction list matches the total.
+    explicitly_tagged = Transaction.custom_category_id == category_id
 
     txn_result = await db.execute(
         select(Transaction)
@@ -517,7 +566,7 @@ async def get_budget_transactions(
             or_(Cat.id.is_(None), Cat.is_property_expense == False),  # noqa: E712
             not_a_transfer,
             not_rental_income,
-            not_property_expense,
+            or_(explicitly_tagged, not_property_expense),
             or_(Acct.id.is_(None), and_(Acct.entity_id.is_(None), Acct.account_scope != "business")),
         )
         .order_by(Transaction.date.desc())

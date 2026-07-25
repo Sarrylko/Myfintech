@@ -10,14 +10,17 @@ import {
   deleteBudget,
   copyBudgetsFromLastMonth,
   listCustomCategories,
+  createCustomCategory,
   seedDefaultCategories,
   getBudgetTransactions,
   updateCustomCategory,
+  listAccounts,
   BudgetType,
   BudgetWithActual,
   BudgetUpdate,
   CustomCategory,
   Transaction,
+  Account,
 } from "@/lib/api";
 import { useCurrency } from "@/lib/currency";
 
@@ -43,12 +46,27 @@ function navigateMonth(month: number, year: number, dir: -1 | 1) {
   return { month: m, year: y };
 }
 
+// Given a YYYY-MM-DD start date, returns the end date one year later minus one day
+// (e.g. 2026-07-01 -> 2027-06-30) — used for fiscal-year "annual" budgets.
+function oneYearMinusDay(startDate: string): string {
+  const d = new Date(startDate + "T00:00:00");
+  d.setFullYear(d.getFullYear() + 1);
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 function formatBudgetPeriod(b: BudgetWithActual, locale: string): string {
   if (b.budget_type === "monthly") {
     return `${MONTH_NAMES[(b.month ?? 1) - 1]} ${b.year}`;
   }
-  if (b.budget_type === "annual") {
-    return `${b.year} (Full Year)`;
+  if (b.budget_type === "annual" && b.start_date && b.end_date) {
+    const s = new Date(b.start_date + "T00:00:00");
+    const e = new Date(b.end_date + "T00:00:00");
+    if (s.getMonth() === 0 && s.getDate() === 1 && e.getMonth() === 11 && e.getDate() === 31 && s.getFullYear() === e.getFullYear()) {
+      return `${s.getFullYear()} (Full Year)`;
+    }
+    const fmtMonthYear = (d: Date) => d.toLocaleDateString(locale, { month: "short", year: "numeric" });
+    return `${fmtMonthYear(s)} – ${fmtMonthYear(e)}`;
   }
   if (b.budget_type === "quarterly" && b.start_date) {
     const q = Math.floor(new Date(b.start_date + "T00:00:00").getMonth() / 3) + 1;
@@ -74,6 +92,7 @@ interface WizardAmountEntry {
   amount: string;
   rolloverEnabled: boolean;
   alertThreshold: number;
+  accountId: string; // "" = not linked; track by transactions instead of account balance
   showAdvanced: boolean;
 }
 
@@ -181,6 +200,12 @@ function BudgetRow({
             {showPeriod && (
               <p className="text-xs text-gray-400">{formatBudgetPeriod(budget, locale)}</p>
             )}
+            {budget.account && (
+              <p className="text-xs text-blue-500 truncate" title="Tracked from this account's balance">
+                🔗 {[budget.account.institution_name, budget.account.name].filter(Boolean).join(" · ")}
+                {budget.account.mask ? ` ···${budget.account.mask}` : ""}
+              </p>
+            )}
             {isAtAlert && (
               <p className="text-xs text-yellow-600 flex items-center gap-1">⚠ {budget.alert_threshold}% threshold</p>
             )}
@@ -264,7 +289,11 @@ function BudgetRow({
               Loading transactions…
             </div>
           ) : txns && txns.length === 0 ? (
-            <p className="py-6 text-center text-sm text-gray-400">No transactions found for this period.</p>
+            <p className="py-6 text-center text-sm text-gray-400">
+              {budget.account
+                ? "This budget is tracked from the linked account's balance, not individual transactions."
+                : "No transactions found for this period."}
+            </p>
           ) : (
             <div className="max-h-64 overflow-y-auto">
               <table className="w-full text-sm">
@@ -406,13 +435,21 @@ function WizardStep1({ wizard, setWizard, onNext }: { wizard: WizardState; setWi
         startDate = `${year}${QUARTER_RANGES[prev.quarter][0]}`;
         endDate = `${year}${QUARTER_RANGES[prev.quarter][1]}`;
       } else if (type === "annual") {
+        // Default to a Jan-start calendar year; start month is adjustable in the picker.
         startDate = `${year}-01-01`;
-        endDate = `${year}-12-31`;
+        endDate = oneYearMinusDay(startDate);
       } else {
         startDate = "";
         endDate = "";
       }
       return { ...prev, budgetType: type, startDate, endDate };
+    });
+  }
+
+  function handleAnnualStartChange(month: number, year: number) {
+    setWizard((prev) => {
+      const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+      return { ...prev, year, startDate, endDate: oneYearMinusDay(startDate) };
     });
   }
 
@@ -432,9 +469,6 @@ function WizardStep1({ wizard, setWizard, onNext }: { wizard: WizardState; setWi
       if (prev.budgetType === "quarterly") {
         startDate = `${year}${QUARTER_RANGES[prev.quarter][0]}`;
         endDate = `${year}${QUARTER_RANGES[prev.quarter][1]}`;
-      } else if (prev.budgetType === "annual") {
-        startDate = `${year}-01-01`;
-        endDate = `${year}-12-31`;
       }
       return { ...prev, year, startDate, endDate };
     });
@@ -494,17 +528,33 @@ function WizardStep1({ wizard, setWizard, onNext }: { wizard: WizardState; setWi
       )}
 
       {wizard.budgetType === "annual" && (
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Year</label>
-          <input
-            type="number"
-            value={wizard.year}
-            onChange={(e) => handleYearChange(Number(e.target.value))}
-            min={2020}
-            max={2035}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <p className="text-xs text-gray-400 mt-1">Covers Jan 1 – Dec 31, {wizard.year}</p>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Start Month</label>
+            <select
+              value={wizard.startDate ? Number(wizard.startDate.slice(5, 7)) : 1}
+              onChange={(e) => handleAnnualStartChange(Number(e.target.value), wizard.year)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {MONTH_NAMES.map((name, i) => <option key={i + 1} value={i + 1}>{name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Year</label>
+            <input
+              type="number"
+              value={wizard.year}
+              onChange={(e) => handleAnnualStartChange(wizard.startDate ? Number(wizard.startDate.slice(5, 7)) : 1, Number(e.target.value))}
+              min={2020}
+              max={2035}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <p className="text-xs text-gray-400 col-span-2 -mt-2">
+            {wizard.startDate && wizard.endDate
+              ? `Covers ${new Date(wizard.startDate + "T00:00:00").toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" })} – ${new Date(wizard.endDate + "T00:00:00").toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" })}`
+              : ""}
+          </p>
         </div>
       )}
 
@@ -581,7 +631,7 @@ function WizardStep1({ wizard, setWizard, onNext }: { wizard: WizardState; setWi
 }
 
 function WizardStep2({
-  wizard, setWizard, categories, existingCategoryIds, onBack, onNext, onSeedCategories, seeding,
+  wizard, setWizard, categories, existingCategoryIds, onBack, onNext, onSeedCategories, seeding, onCreateCategory,
 }: {
   wizard: WizardState;
   setWizard: React.Dispatch<React.SetStateAction<WizardState>>;
@@ -591,7 +641,14 @@ function WizardStep2({
   onNext: () => void;
   onSeedCategories: () => void;
   seeding: boolean;
+  onCreateCategory: (name: string, isIncome: boolean) => Promise<CustomCategory>;
 }) {
+  const [showNewCategory, setShowNewCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryIsIncome, setNewCategoryIsIncome] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+
   // Filter out system/placeholder categories not useful for budgeting
   const budgetableCategories = categories.filter(
     (c) => c.name.toLowerCase() !== "uncategorized"
@@ -608,9 +665,37 @@ function WizardStep2({
     });
   }
 
+  async function handleCreateCategory() {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    setCreating(true);
+    setCreateError("");
+    try {
+      const created = await onCreateCategory(name, newCategoryIsIncome);
+      setWizard((prev) => ({
+        ...prev,
+        selectedCategoryIds: new Set(prev.selectedCategoryIds).add(created.id),
+      }));
+      setNewCategoryName("");
+      setNewCategoryIsIncome(false);
+      setShowNewCategory(false);
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : "Failed to create category");
+    } finally {
+      setCreating(false);
+    }
+  }
+
   function periodLabel(): string {
     if (wizard.budgetType === "monthly") return `${MONTH_NAMES[wizard.month - 1]} ${wizard.year}`;
-    if (wizard.budgetType === "annual") return `${wizard.year} (Full Year)`;
+    if (wizard.budgetType === "annual" && wizard.startDate && wizard.endDate) {
+      const s = new Date(wizard.startDate + "T00:00:00");
+      const e = new Date(wizard.endDate + "T00:00:00");
+      if (s.getMonth() === 0 && e.getMonth() === 11 && s.getFullYear() === e.getFullYear()) {
+        return `${s.getFullYear()} (Full Year)`;
+      }
+      return `${s.toLocaleDateString("en-US", { month: "short", year: "numeric" })} – ${e.toLocaleDateString("en-US", { month: "short", year: "numeric" })}`;
+    }
     if (wizard.budgetType === "quarterly") {
       return `Q${wizard.quarter} ${wizard.year}`;
     }
@@ -681,6 +766,55 @@ function WizardStep2({
           {seeding ? "Adding…" : "+ Add common categories"}
         </button>
       )}
+
+      {/* Inline "create new category" */}
+      {!showNewCategory ? (
+        <button
+          onClick={() => setShowNewCategory(true)}
+          className="text-xs text-blue-500 hover:text-blue-700 transition block"
+        >
+          + New category
+        </button>
+      ) : (
+        <div className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              autoFocus
+              placeholder="Category name (e.g. Property Tax)"
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleCreateCategory(); }}
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <select
+              value={newCategoryIsIncome ? "income" : "expense"}
+              onChange={(e) => setNewCategoryIsIncome(e.target.value === "income")}
+              className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+            </select>
+          </div>
+          {createError && <p className="text-xs text-red-600">{createError}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={handleCreateCategory}
+              disabled={creating || !newCategoryName.trim()}
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition"
+            >
+              {creating ? "Adding…" : "Add category"}
+            </button>
+            <button
+              onClick={() => { setShowNewCategory(false); setNewCategoryName(""); setCreateError(""); }}
+              className="text-xs text-gray-500 hover:text-gray-700 transition"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between pt-2">
         <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-700 transition">← Back</button>
         <button
@@ -696,14 +830,16 @@ function WizardStep2({
 }
 
 function WizardStep3({
-  wizard, setWizard, categories, onBack, onNext,
+  wizard, setWizard, categories, accounts, onBack, onNext,
 }: {
   wizard: WizardState;
   setWizard: React.Dispatch<React.SetStateAction<WizardState>>;
   categories: CustomCategory[];
+  accounts: Account[];
   onBack: () => void;
   onNext: () => void;
 }) {
+  const { fmt } = useCurrency();
   const catMap = new Map(categories.map((c) => [c.id, c]));
 
   function updateEntry(catId: string, field: keyof WizardAmountEntry, value: unknown) {
@@ -787,6 +923,24 @@ function WizardStep3({
                     <span>50%</span><span>75%</span><span>100%</span>
                   </div>
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Track from Account <span className="text-gray-400 font-normal">(optional — uses balance instead of transactions)</span>
+                  </label>
+                  <select
+                    value={entry.accountId}
+                    onChange={(e) => updateEntry(entry.categoryId, "accountId", e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  >
+                    <option value="">— Not linked (track by transactions) —</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {[a.institution_name, a.name, a.mask ? `···${a.mask}` : ""].filter(Boolean).join(" · ")}
+                        {a.current_balance ? ` (${fmt(Number(a.current_balance))})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             )}
           </div>
@@ -807,22 +961,31 @@ function WizardStep3({
 }
 
 function WizardStep4({
-  wizard, categories, saving, onBack, onSave,
+  wizard, categories, accounts, saving, onBack, onSave,
 }: {
   wizard: WizardState;
   categories: CustomCategory[];
+  accounts: Account[];
   saving: boolean;
   onBack: () => void;
   onSave: () => void;
 }) {
   const { fmt } = useCurrency();
   const catMap = new Map(categories.map((c) => [c.id, c]));
+  const acctMap = new Map(accounts.map((a) => [a.id, a]));
   const validEntries = wizard.amounts.filter((a) => parseFloat(a.amount) > 0);
   const total = validEntries.reduce((s, e) => s + parseFloat(e.amount), 0);
 
   function periodLabel(): string {
     if (wizard.budgetType === "monthly") return `${MONTH_NAMES[wizard.month - 1]} ${wizard.year}`;
-    if (wizard.budgetType === "annual") return `${wizard.year} (Full Year)`;
+    if (wizard.budgetType === "annual" && wizard.startDate && wizard.endDate) {
+      const s = new Date(wizard.startDate + "T00:00:00");
+      const e = new Date(wizard.endDate + "T00:00:00");
+      if (s.getMonth() === 0 && e.getMonth() === 11 && s.getFullYear() === e.getFullYear()) {
+        return `${s.getFullYear()} (Full Year)`;
+      }
+      return `${s.toLocaleDateString("en-US", { month: "short", year: "numeric" })} – ${e.toLocaleDateString("en-US", { month: "short", year: "numeric" })}`;
+    }
     if (wizard.budgetType === "quarterly") return `Q${wizard.quarter} ${wizard.year}`;
     return wizard.startDate && wizard.endDate
       ? `${wizard.startDate} to ${wizard.endDate}`
@@ -854,9 +1017,14 @@ function WizardStep4({
                 </div>
                 <div>
                   <p className="text-sm font-medium text-gray-800">{cat?.name}</p>
-                  <div className="flex gap-2 mt-0.5">
+                  <div className="flex gap-2 mt-0.5 flex-wrap">
                     {entry.rolloverEnabled && (
                       <span className="text-xs bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded-full">↻ Rollover</span>
+                    )}
+                    {entry.accountId && acctMap.get(entry.accountId) && (
+                      <span className="text-xs bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded-full">
+                        🔗 {acctMap.get(entry.accountId)!.name}
+                      </span>
                     )}
                     <span className="text-xs text-gray-400">Alert at {entry.alertThreshold}%</span>
                   </div>
@@ -887,18 +1055,20 @@ function WizardStep4({
 // ─── Edit Modal ───────────────────────────────────────────────────────────────
 
 function EditModal({
-  budget, saving, onClose, onSave,
+  budget, accounts, saving, onClose, onSave,
 }: {
   budget: BudgetWithActual;
+  accounts: Account[];
   saving: boolean;
   onClose: () => void;
   onSave: (data: BudgetUpdate, newName: string) => void;
 }) {
-  const { locale } = useCurrency();
+  const { locale, fmt } = useCurrency();
   const [name, setName] = useState(budget.category.name);
   const [amount, setAmount] = useState(parseFloat(budget.amount).toString());
   const [rollover, setRollover] = useState(budget.rollover_enabled);
   const [threshold, setThreshold] = useState(budget.alert_threshold);
+  const [accountId, setAccountId] = useState(budget.account_id ?? "");
 
   const periodLabel = formatBudgetPeriod(budget, locale);
 
@@ -930,6 +1100,24 @@ function EditModal({
               className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Track from Account <span className="text-gray-400 font-normal">(optional — uses balance instead of transactions)</span>
+          </label>
+          <select
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          >
+            <option value="">— Not linked (track by transactions) —</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {[a.institution_name, a.name, a.mask ? `···${a.mask}` : ""].filter(Boolean).join(" · ")}
+                {a.current_balance ? ` (${fmt(Number(a.current_balance))})` : ""}
+              </option>
+            ))}
+          </select>
         </div>
         <label className="flex items-center justify-between text-sm py-2">
           <div>
@@ -965,7 +1153,12 @@ function EditModal({
           <button type="button" onClick={onClose} className="text-sm text-gray-500 hover:text-gray-700 px-4 py-2">Cancel</button>
           <button
             type="button"
-            onClick={() => onSave({ amount: parseFloat(amount), rollover_enabled: rollover, alert_threshold: threshold }, name.trim())}
+            onClick={() => onSave({
+              amount: parseFloat(amount),
+              rollover_enabled: rollover,
+              alert_threshold: threshold,
+              account_id: accountId || null,
+            }, name.trim())}
             disabled={saving || !parseFloat(amount) || !name.trim()}
             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-5 py-2 rounded-lg transition"
           >
@@ -1090,6 +1283,7 @@ export default function BudgetsPage() {
   const [year, setYear] = useState(today.getFullYear());
   const [budgets, setBudgets] = useState<BudgetWithActual[]>([]);
   const [categories, setCategories] = useState<CustomCategory[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
@@ -1133,6 +1327,11 @@ export default function BudgetsPage() {
     listCustomCategories().then(setCategories).catch(() => {});
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Load accounts once, for the "track from account" picker
+  useEffect(() => {
+    listAccounts().then(setAccounts).catch(() => {});
+  }, []);
+
   const countryBudgets = budgets.filter((b) => b.country === activeCountryCode);
   const expenseBudgets = countryBudgets.filter((b) => !b.category.is_income);
   const incomeBudgets = countryBudgets.filter((b) => b.category.is_income);
@@ -1164,7 +1363,7 @@ export default function BudgetsPage() {
       if (prev.step === 2) {
         const existingAmounts = new Map(prev.amounts.map((a) => [a.categoryId, a]));
         const newAmounts: WizardAmountEntry[] = Array.from(prev.selectedCategoryIds).map(
-          (id) => existingAmounts.get(id) ?? { categoryId: id, amount: "", rolloverEnabled: false, alertThreshold: 80, showAdvanced: false }
+          (id) => existingAmounts.get(id) ?? { categoryId: id, amount: "", rolloverEnabled: false, alertThreshold: 80, accountId: "", showAdvanced: false }
         );
         return { ...prev, step: 3, amounts: newAmounts };
       }
@@ -1181,19 +1380,26 @@ export default function BudgetsPage() {
     setError("");
     const validEntries = wizard.amounts.filter((a) => parseFloat(a.amount) > 0);
     try {
+      const periodYear =
+        wizard.budgetType === "monthly"
+          ? wizard.year
+          : wizard.startDate
+          ? new Date(wizard.startDate + "T00:00:00").getFullYear()
+          : wizard.year;
       const newBudgets = await createBudgetsBulk(
         {
           budgets: validEntries.map((e) => ({
             category_id: e.categoryId,
             amount: parseFloat(e.amount),
             budget_type: wizard.budgetType,
-            year: wizard.year,
+            year: periodYear,
             country: activeCountryCode ?? "US",
             ...(wizard.budgetType === "monthly"
               ? { month: wizard.month }
               : { start_date: wizard.startDate, end_date: wizard.endDate }),
             rollover_enabled: e.rolloverEnabled,
             alert_threshold: e.alertThreshold,
+            account_id: e.accountId || null,
           })),
         });
       // Update monthly budgets list if we created monthly budgets for the current view
@@ -1273,6 +1479,12 @@ export default function BudgetsPage() {
     } finally {
       setSeeding(false);
     }
+  }
+
+  async function handleCreateCategory(name: string, isIncome: boolean): Promise<CustomCategory> {
+    const created = await createCustomCategory({ name, is_income: isIncome });
+    setCategories((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+    return created;
   }
 
   return (
@@ -1413,16 +1625,17 @@ export default function BudgetsPage() {
               onNext={wizardNext}
               onSeedCategories={handleSeedCategories}
               seeding={seeding}
+              onCreateCategory={handleCreateCategory}
             />
           )}
-          {wizard.step === 3 && <WizardStep3 wizard={wizard} setWizard={setWizard} categories={categories} onBack={wizardBack} onNext={wizardNext} />}
-          {wizard.step === 4 && <WizardStep4 wizard={wizard} categories={categories} saving={saving} onBack={wizardBack} onSave={handleWizardSave} />}
+          {wizard.step === 3 && <WizardStep3 wizard={wizard} setWizard={setWizard} categories={categories} accounts={accounts} onBack={wizardBack} onNext={wizardNext} />}
+          {wizard.step === 4 && <WizardStep4 wizard={wizard} categories={categories} accounts={accounts} saving={saving} onBack={wizardBack} onSave={handleWizardSave} />}
         </ModalShell>
       )}
 
       {/* Edit Modal */}
       {editingBudget && (
-        <EditModal budget={editingBudget} saving={saving} onClose={() => setEditingBudget(null)} onSave={handleEditSave} />
+        <EditModal budget={editingBudget} accounts={accounts} saving={saving} onClose={() => setEditingBudget(null)} onSave={handleEditSave} />
       )}
     </div>
     </CountryGate>

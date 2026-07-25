@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,6 +48,7 @@ class SnapTradeConnection(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     error_code: Mapped[str | None] = mapped_column(String(255))
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    refresh_interval_hours: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
