@@ -620,6 +620,27 @@ def _send_monthly_report_for_household(
     send_whatsapp_bulk(phones, "\n".join(lines))
 
 
+# ── Gmail alert (ad-hoc, triggered by the scheduled agent webhook) ────────────
+
+@celery_app.task(name="app.services.notifications.notify_gmail_alert")
+def notify_gmail_alert(
+    household_id: str,
+    entity_name: str,
+    message: str,
+    phone_override: str | None = None,
+):
+    """Triggered via POST /api/v1/agent/gmail-alert — not on the beat schedule."""
+    with Session(_engine) as db:
+        phones = (
+            [phone_override]
+            if phone_override
+            else _phones_for_household(db, uuid.UUID(household_id), "notif_gmail_alerts")
+        )
+        if phones:
+            msg = f"*📧 {entity_name} — Inbox Alert*\n\n{message}"
+            send_whatsapp_bulk(phones, msg)
+
+
 # ── Account health check ──────────────────────────────────────────────────────
 
 @celery_app.task(name="app.services.notifications.check_account_health")

@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     whatsapp_enabled: bool = True
     whatsapp_bot_secret: str = ""  # Bearer token for /send endpoint auth
 
+    # ─── Gmail API (local inbox watch) ────────────
+    gmail_oauth_client_id: str = ""
+    gmail_oauth_client_secret: str = ""
+
     # ─── AI / RAG Assistant ───────────────────────
     rag_api_url: str = ""   # e.g. http://fintech-rag-api:8000
     rag_api_key: str = ""   # must match RAG_API_KEY in docker-compose.ai.yml

@@ -46,3 +46,8 @@ pdfplumber==0.11.4
 
 # ─── AI / Receipt parsing ─────────────────────
 anthropic>=0.40.0
+
+# ─── Gmail API (local inbox watch) ────────────
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-api-python-client>=2.100.0

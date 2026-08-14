@@ -16,6 +16,8 @@ x-common-env: &common-env
   RAG_API_KEY: ${RAG_API_KEY:-}
   OLLAMA_RECEIPT_URL: ${OLLAMA_RECEIPT_URL:-}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  GMAIL_OAUTH_CLIENT_ID: ${GMAIL_OAUTH_CLIENT_ID:-}
+  GMAIL_OAUTH_CLIENT_SECRET: ${GMAIL_OAUTH_CLIENT_SECRET:-}
 
 services:
   # ─── Reverse Proxy ────────────────────────────

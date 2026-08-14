@@ -63,6 +63,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.services.notifications.send_monthly_report",
         "schedule": crontab(hour=8, minute=30, day_of_month=1),  # 1st of month 08:30 UTC
     },
+    "check-gmail-alerts": {
+        "task": "app.services.gmail_watch.check_gmail_alerts",
+        "schedule": crontab(hour=9, minute=15),
+    },
     # ── AI Financial Picture ────────────────────
     "generate-financial-pictures": {
         "task": "app.services.financial_picture.generate_all_financial_pictures",
@@ -80,6 +84,7 @@ celery_app.conf.include = [
     "app.services.networth",
     "app.services.property",
     "app.services.notifications",
+    "app.services.gmail_watch",
     "app.services.financial_picture",
     "app.services.receipt_tasks",
 ]

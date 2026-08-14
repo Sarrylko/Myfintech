@@ -44,6 +44,27 @@ def build_plaid_client():
 
 # ── Core async sync logic ───────────────────────────────────────────────────────
 
+def _map_plaid_investment_type(ptype, psubtype) -> str:
+    """Map Plaid's investment transaction type/subtype to our internal enum
+    (buy, sell, dividend, split, transfer_in, transfer_out, other)."""
+    t = (ptype.value if hasattr(ptype, "value") else str(ptype or "")).lower()
+    s = (psubtype.value if hasattr(psubtype, "value") else str(psubtype or "")).lower()
+
+    if t == "buy":
+        return "buy"
+    if t == "sell":
+        return "sell"
+    if "dividend" in s or "interest" in s:
+        return "dividend"
+    if "split" in s:
+        return "split"
+    if s in ("deposit", "contribution"):
+        return "transfer_in"
+    if s in ("withdrawal", "distribution"):
+        return "transfer_out"
+    return "other"
+
+
 async def sync_plaid_item(item: PlaidItem, db: AsyncSession) -> dict:
     """Pull accounts, holdings, and new transactions from Plaid and upsert into DB."""
     from plaid.model.accounts_get_request import AccountsGetRequest
@@ -138,6 +159,80 @@ async def sync_plaid_item(item: PlaidItem, db: AsyncSession) -> dict:
             ))
     except Exception:
         pass  # Item may not have investments product enabled
+
+    # ── 1.6 Sync investment transactions (buys, sells, dividends, etc.) ────────
+    try:
+        from plaid.model.investments_transactions_get_request import InvestmentsTransactionsGetRequest
+        from plaid.model.investments_transactions_get_request_options import InvestmentsTransactionsGetRequestOptions
+        from app.models.investment import InvestmentTransaction
+
+        item_accts_result = await db.execute(
+            select(Account).where(Account.plaid_item_id == item.id)
+        )
+        acct_by_plaid_id = {a.plaid_account_id: a for a in item_accts_result.scalars().all()}
+
+        start_date = (datetime.now(timezone.utc) - timedelta(days=730)).date()
+        end_date = datetime.now(timezone.utc).date()
+
+        offset = 0
+        total = None
+        inv_txn_added = 0
+        while total is None or offset < total:
+            it_resp = client.investments_transactions_get(
+                InvestmentsTransactionsGetRequest(
+                    access_token=access_token,
+                    start_date=start_date,
+                    end_date=end_date,
+                    options=InvestmentsTransactionsGetRequestOptions(count=500, offset=offset),
+                )
+            )
+            total = it_resp.total_investment_transactions
+            it_sec_map = {s.security_id: s for s in (it_resp.securities or [])}
+            page = it_resp.investment_transactions or []
+
+            for pit in page:
+                it_acct = acct_by_plaid_id.get(pit.account_id)
+                if not it_acct:
+                    continue
+
+                existing = await db.execute(
+                    select(InvestmentTransaction).where(
+                        InvestmentTransaction.plaid_investment_transaction_id
+                        == pit.investment_transaction_id
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
+
+                sec = it_sec_map.get(pit.security_id)
+                d = pit.date
+                txn_dt = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+
+                db.add(InvestmentTransaction(
+                    account_id=it_acct.id,
+                    household_id=item.household_id,
+                    plaid_investment_transaction_id=pit.investment_transaction_id,
+                    security_id=pit.security_id,
+                    ticker_symbol=sec.ticker_symbol if sec else None,
+                    name=pit.name,
+                    type=_map_plaid_investment_type(pit.type, pit.subtype),
+                    amount=Decimal(str(pit.amount)),
+                    quantity=Decimal(str(pit.quantity)) if pit.quantity is not None else None,
+                    price=Decimal(str(pit.price)) if pit.price is not None else None,
+                    date=txn_dt,
+                    fees=Decimal(str(pit.fees)) if pit.fees is not None else None,
+                    currency_code=pit.iso_currency_code or "USD",
+                    notes=f"Plaid: {pit.type}/{pit.subtype}" if pit.subtype else None,
+                ))
+                inv_txn_added += 1
+
+            if not page:
+                break
+            offset += len(page)
+        await db.flush()
+    except Exception:
+        inv_txn_added = 0
+        pass  # Item may not have investments product enabled, or transactions unavailable
 
     # Load active household rules once for the whole sync
     rules_result = await db.execute(
@@ -237,7 +332,11 @@ async def sync_plaid_item(item: PlaidItem, db: AsyncSession) -> dict:
     item.error_code = None
     await db.flush()
 
-    return {"accounts": account_count, "transactions_added": added_count}
+    return {
+        "accounts": account_count,
+        "transactions_added": added_count,
+        "investment_transactions_added": inv_txn_added,
+    }
 
 
 # ── Async runner for Celery tasks ───────────────────────────────────────────────
