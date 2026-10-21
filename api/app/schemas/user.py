@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -109,6 +110,23 @@ class HouseholdSettingsUpdate(BaseModel):
 
 class ActiveCountryUpdate(BaseModel):
     country_code: str
+
+
+ReportType = Literal["cashflow", "transfer", "savings"]
+
+
+class CategoryReportTypes(BaseModel):
+    """Category string ("Group" or "Group > Item") → how it counts in reports."""
+    types: dict[str, ReportType] = {}
+
+    @field_validator("types")
+    @classmethod
+    def _limit(cls, v: dict[str, ReportType]) -> dict[str, ReportType]:
+        if len(v) > 500:
+            raise ValueError("Too many category overrides (max 500)")
+        if any(not k.strip() or len(k) > 255 for k in v):
+            raise ValueError("Category keys must be 1-255 characters")
+        return v
 
 
 class CountryProfileCreate(BaseModel):

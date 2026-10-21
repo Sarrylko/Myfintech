@@ -155,6 +155,27 @@ export async function updateHouseholdSettings(
   });
 }
 
+// ─── Category report types (how a category counts in totals/charts) ─────────
+
+export type ReportType = "cashflow" | "transfer" | "savings";
+
+export async function getCategoryReportTypes(): Promise<Record<string, ReportType>> {
+  const res = await apiFetch<{ types: Record<string, ReportType> }>(
+    "/api/v1/users/household/category-report-types"
+  );
+  return res.types;
+}
+
+export async function saveCategoryReportTypes(
+  types: Record<string, ReportType>
+): Promise<Record<string, ReportType>> {
+  const res = await apiFetch<{ types: Record<string, ReportType> }>(
+    "/api/v1/users/household/category-report-types",
+    { method: "PUT", body: JSON.stringify({ types }) }
+  );
+  return res.types;
+}
+
 export async function switchActiveCountry(country_code: string): Promise<HouseholdSettings> {
   return apiFetch<HouseholdSettings>("/api/v1/users/household/active-country", {
     method: "PATCH",

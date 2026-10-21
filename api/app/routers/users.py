@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.models.user import Household, HouseholdCountryProfile, User
 from app.schemas.user import (
     ActiveCountryUpdate,
+    CategoryReportTypes,
     CountryProfile,
     CountryProfileCreate,
     HouseholdMemberCreate,
@@ -216,6 +217,33 @@ async def switch_active_country(
     )
     household = result2.scalar_one()
     return await _load_household_settings(household)
+
+
+@router.get("/household/category-report-types", response_model=CategoryReportTypes)
+async def get_category_report_types(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the household's category → report type overrides."""
+    household = await db.get(Household, user.household_id)
+    if not household:
+        raise HTTPException(status_code=404, detail="Household not found")
+    return CategoryReportTypes(types=household.category_report_types or {})
+
+
+@router.put("/household/category-report-types", response_model=CategoryReportTypes)
+async def replace_category_report_types(
+    payload: CategoryReportTypes,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace the household's category → report type overrides (any member)."""
+    household = await db.get(Household, user.household_id)
+    if not household:
+        raise HTTPException(status_code=404, detail="Household not found")
+    household.category_report_types = payload.types
+    await db.commit()
+    return CategoryReportTypes(types=household.category_report_types)
 
 
 @router.get("/household/country-profiles", response_model=list[CountryProfile])

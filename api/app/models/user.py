@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Integer, String, ForeignKey, text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -23,6 +23,11 @@ class Household(Base):
     price_refresh_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_price_refresh_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # Category string ("Group" or "Group > Item") → how it counts in reports:
+    # "cashflow" (income/expense by sign), "transfer" (excluded), "savings".
+    category_report_types: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
