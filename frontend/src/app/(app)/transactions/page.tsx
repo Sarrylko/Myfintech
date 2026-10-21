@@ -6,7 +6,18 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
 
 const TransactionsCharts = dynamic(() => import("@/components/transactions/TransactionsCharts"), { ssr: false });
-import CategoryFilter, { CategoryGroupOption, CategoryMode } from "@/components/transactions/CategoryFilter";
+import CategoryFilter, { CategoryGroupOption } from "@/components/transactions/CategoryFilter";
+import MultiSelectFilter, { MultiSelectOption } from "@/components/transactions/MultiSelectFilter";
+import SavedViewsMenu from "@/components/transactions/SavedViewsMenu";
+import {
+  CategoryMode,
+  DEFAULT_FILTERS,
+  TxnFilters,
+  filtersFromQuery,
+  filtersToQuery,
+  monthRange,
+} from "@/lib/transactionFilters";
+import { LoanPaymentSplit, matchLoan, splitLoanPayment } from "@/lib/loanSplit";
 import {
   categoryGroup,
   categoryMatches,
@@ -40,6 +51,8 @@ import {
   getRecurringByTransaction,
   unlinkTransactionFromRecurring,
   listHouseholdMembers,
+  listAllLoans,
+  Loan,
   Account,
   Transaction,
   TransactionSplit,
@@ -1291,21 +1304,25 @@ export default function TransactionsPage() {
   const [customCategories, setCustomCategories] = useState<CustomCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
-  const [selectedAccount, setSelectedAccount] = useState("all");
-  const [categoryFilter, setCategoryFilter] = useState<Record<string, CategoryMode>>({});
+  // All filters live in one object so they can round-trip through the URL and saved views
+  const [filters, setFilters] = useState<TxnFilters>(DEFAULT_FILTERS);
+  const patchFilters = useCallback((patch: Partial<TxnFilters>) => setFilters((f) => ({ ...f, ...patch })), []);
+  const {
+    search, account: selectedAccount, categories: categoryFilter, datePreset, dateFrom, dateTo,
+    hideTransfers, hideSavings, hideBusiness, showIgnored,
+  } = filters;
+  const setSearch = (search: string) => patchFilters({ search });
+  const setSelectedAccount = (account: string) => patchFilters({ account });
+  const setCategoryFilter = (categories: Record<string, CategoryMode>) => patchFilters({ categories });
   const [reportOverrides, setReportOverrides] = useState<Record<string, ReportType>>({});
-  const [hideTransfers, setHideTransfers] = useState(false);
-  const [hideSavings, setHideSavings] = useState(false);
-  const [hideBusiness, setHideBusiness] = useState(false);
-  const [datePreset, setDatePreset] = useState("this_month");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [loans, setLoans] = useState<Loan[]>([]);
+  // Date range to return to when un-drilling from a month clicked in the chart
+  const drillFromRef = useRef<Pick<TxnFilters, "datePreset" | "dateFrom" | "dateTo"> | null>(null);
+  const [urlReady, setUrlReady] = useState(false);
   const [page, setPage] = useState(1);
   const [sortField, setSortField] = useState<"date" | "amount">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [showCharts, setShowCharts] = useState(true);
-  const [showIgnored, setShowIgnored] = useState(false);
   const [editTxn, setEditTxn] = useState<Transaction | null>(null);
   const [receiptTxn, setReceiptTxn] = useState<Transaction | null>(null);
   const [showImport, setShowImport] = useState(false);
@@ -1330,10 +1347,12 @@ export default function TransactionsPage() {
         if (batch.length < PAGE) break;
         offset += PAGE;
       }
-      const [accts, customCats, householdMembers, overrides] = await Promise.all([
+      const [accts, customCats, householdMembers, overrides, allLoans] = await Promise.all([
         listAccounts(), listCustomCategories(), listHouseholdMembers(),
         getCategoryReportTypes().catch(() => ({} as Record<string, ReportType>)),
+        listAllLoans().catch(() => [] as Loan[]),
       ]);
+      setLoans(allLoans);
       setTransactions(all);
       setAccounts(accts);
       setCustomCategories(customCats);
@@ -1347,6 +1366,17 @@ export default function TransactionsPage() {
   }, [router]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Filters <-> URL query string (bookmarkable; also what saved views store)
+  useEffect(() => {
+    setFilters(filtersFromQuery(window.location.search));
+    setUrlReady(true);
+  }, []);
+  const filterQuery = filtersToQuery(filters);
+  useEffect(() => {
+    if (!urlReady) return;
+    window.history.replaceState(null, "", filterQuery ? `?${filterQuery}` : window.location.pathname);
+  }, [filterQuery, urlReady]);
 
   // Load rental properties/units/leases whenever the edit modal opens (needed for rental income + property expense panels)
   useEffect(() => {
@@ -1449,6 +1479,57 @@ export default function TransactionsPage() {
       }));
   }, [transactions, countryAccountIds]);
 
+  // ── Merchant / person keys and options for the multi-select filters ─────────
+  const merchantKey = (t: Transaction) => t.merchant_name || t.name || "Unknown";
+  const memberIdSet = useMemo(() => new Set(members.map((m) => m.id)), [members]);
+  const personOf = useCallback((t: Transaction): string => {
+    const owner = t.account_id ? accountMap[t.account_id]?.owner_user_id : null;
+    return owner && memberIdSet.has(owner) ? owner : "shared";
+  }, [accountMap, memberIdSet]);
+  const personLabel = (id: string) =>
+    id === "shared" ? "Joint / shared" : members.find((m) => m.id === id)?.full_name ?? "Unknown";
+
+  const merchantOptions: MultiSelectOption[] = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const t of transactions) {
+      if (t.account_id && !countryAccountIds.has(t.account_id)) continue;
+      const k = merchantKey(t);
+      counts[k] = (counts[k] || 0) + 1;
+    }
+    return Object.entries(counts)
+      .sort(([, a], [, b]) => b - a)
+      .map(([value, count]) => ({ value, label: value, count }));
+  }, [transactions, countryAccountIds]);
+
+  const peopleOptions: MultiSelectOption[] = useMemo(
+    () => [
+      ...members.map((m) => ({ value: m.id, label: m.full_name })),
+      { value: "shared", label: "Joint / shared accounts" },
+    ],
+    [members],
+  );
+
+  // ── Loan payments: estimated interest + escrow (spending) vs principal (equity)
+  const loanSplits = useMemo(() => {
+    const m = new Map<string, LoanPaymentSplit>();
+    if (!filters.splitLoans || loans.length === 0) return m;
+    for (const t of transactions) {
+      if (t.has_splits || txnReportType(t) !== "cashflow") continue;
+      const loan = matchLoan(t, loans);
+      const split = loan && splitLoanPayment(t, loan);
+      if (split) m.set(t.id, split);
+    }
+    return m;
+  }, [transactions, loans, filters.splitLoans, txnReportType]);
+  /** The part of a positive transaction that counts as spending */
+  const spendPart = useCallback(
+    (t: Transaction) => parseFloat(t.amount) - (loanSplits.get(t.id)?.principal ?? 0),
+    [loanSplits],
+  );
+
+  const amountMin = filters.amountMin === "" ? null : parseFloat(filters.amountMin);
+  const amountMax = filters.amountMax === "" ? null : parseFloat(filters.amountMax);
+
   const filtered = useMemo(() => transactions.filter((t) => {
     if (t.account_id && !countryAccountIds.has(t.account_id)) return false;
     if (!showIgnored && t.is_ignored) return false;
@@ -1471,15 +1552,23 @@ export default function TransactionsPage() {
     const matchDate =
       (!effectiveFrom || txnDate >= effectiveFrom) &&
       (!effectiveTo   || txnDate <= effectiveTo);
+    if (filters.merchants.length > 0 && !filters.merchants.includes(merchantKey(t))) return false;
+    if (filters.people.length > 0 && !filters.people.includes(personOf(t))) return false;
+    const amt = parseFloat(t.amount);
+    if (filters.direction === "income" && amt >= 0) return false;
+    if (filters.direction === "expense" && amt <= 0) return false;
+    if (amountMin !== null && !isNaN(amountMin) && Math.abs(amt) < amountMin) return false;
+    if (amountMax !== null && !isNaN(amountMax) && Math.abs(amt) > amountMax) return false;
     return matchAccount && matchCategory && matchSearch && matchDate;
-  }), [transactions, countryAccountIds, showIgnored, hideTransfers, hideSavings, hideBusiness, txnReportType, selectedAccount, includeKeys, excludeKeys, search, effectiveFrom, effectiveTo]);
+  }), [transactions, countryAccountIds, showIgnored, hideTransfers, hideSavings, hideBusiness, txnReportType, selectedAccount, includeKeys, excludeKeys, search, effectiveFrom, effectiveTo, filters.merchants, filters.people, filters.direction, amountMin, amountMax, personOf]);
 
   const isCashflow = useCallback((t: Transaction) => txnReportType(t) === "cashflow", [txnReportType]);
 
-  const totalExpenses = useMemo(() => filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending && isCashflow(t) && !t.is_property_expense && !t.is_business).reduce((s, t) => s + parseFloat(t.amount), 0), [filtered, isCashflow]);
+  const totalExpenses = useMemo(() => filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending && isCashflow(t) && !t.is_property_expense && !t.is_business).reduce((s, t) => s + spendPart(t), 0), [filtered, isCashflow, spendPart]);
   const totalIncome = useMemo(() => filtered.filter((t) => parseFloat(t.amount) < 0 && !t.pending && isCashflow(t) && !t.is_rental_income && !t.is_business).reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0), [filtered, isCashflow]);
   // Net contributions to savings/investments (withdrawals subtract)
-  const totalSaved = useMemo(() => filtered.filter((t) => !t.pending && !t.is_business && txnReportType(t) === "savings").reduce((s, t) => s + parseFloat(t.amount), 0), [filtered, txnReportType]);
+  const totalLoanPrincipal = useMemo(() => filtered.filter((t) => !t.pending && !t.is_business && !t.is_property_expense).reduce((s, t) => s + (loanSplits.get(t.id)?.principal ?? 0), 0), [filtered, loanSplits]);
+  const totalSaved = useMemo(() => filtered.filter((t) => !t.pending && !t.is_business && txnReportType(t) === "savings").reduce((s, t) => s + parseFloat(t.amount), 0) + totalLoanPrincipal, [filtered, txnReportType, totalLoanPrincipal]);
   const netCashFlow = totalIncome - totalExpenses;
 
   // ── Chart data ──────────────────────────────────────────────────────────────
@@ -1492,13 +1581,13 @@ export default function TransactionsPage() {
       const label = d.toLocaleDateString(locale, { month: "short", year: "2-digit" });
       if (!months[key]) months[key] = { key, label, expenses: 0, income: 0 };
       const amt = parseFloat(t.amount);
-      if (amt > 0) months[key].expenses += amt;
+      if (amt > 0) months[key].expenses += spendPart(t);
       else months[key].income += Math.abs(amt);
     }
     return Object.values(months)
       .sort((a, b) => a.key.localeCompare(b.key))
       .slice(-12);
-  }, [filtered, isCashflow]);
+  }, [filtered, isCashflow, spendPart]);
 
   const monthlyTrendAverages = useMemo(() => {
     if (monthlyTrend.length === 0) return { income: 0, expenses: 0 };
@@ -1523,29 +1612,29 @@ export default function TransactionsPage() {
         }
       } else if (isCashflow(t)) {
         const cat = parseCategory(t.plaid_category).group || "Uncategorized";
-        spend[cat] = (spend[cat] || 0) + amt;
+        spend[cat] = (spend[cat] || 0) + spendPart(t);
       }
     }
     return Object.entries(spend)
       .sort(([, a], [, b]) => b - a)
       .slice(0, 6)
       .map(([name, amount]) => ({ name, amount }));
-  }, [filtered, isCashflow, reportTypeOfKey]);
+  }, [filtered, isCashflow, reportTypeOfKey, spendPart]);
 
   const merchantSpend = useMemo(() => {
     const spend: Record<string, number> = {};
     for (const t of filtered) {
       const amt = parseFloat(t.amount);
       if (amt <= 0 || t.pending || !isCashflow(t) || t.is_business) continue;
-      const merchant = t.merchant_name || t.name || "Unknown";
-      spend[merchant] = (spend[merchant] || 0) + amt;
+      const merchant = merchantKey(t);
+      spend[merchant] = (spend[merchant] || 0) + spendPart(t);
     }
     const sorted = Object.entries(spend).sort(([, a], [, b]) => b - a);
     const top5 = sorted.slice(0, 5).map(([name, amount]) => ({ name, amount }));
     const othersTotal = sorted.slice(5).reduce((s, [, a]) => s + a, 0);
     if (othersTotal > 0) top5.push({ name: "Everything Else", amount: othersTotal });
     return top5;
-  }, [filtered, isCashflow]);
+  }, [filtered, isCashflow, spendPart]);
 
   const personBreakdown = useMemo(() => {
     if (members.length === 0) return [];
@@ -1566,8 +1655,8 @@ export default function TransactionsPage() {
         if (isKnownOwner) ownedIncome[ownerId!] = (ownedIncome[ownerId!] || 0) + income;
         else sharedIncome += income;
       } else if (amt > 0 && isCashflow(t) && !t.is_property_expense && !t.is_business) {
-        if (isKnownOwner) ownedExpenses[ownerId!] = (ownedExpenses[ownerId!] || 0) + amt;
-        else sharedExpenses += amt;
+        if (isKnownOwner) ownedExpenses[ownerId!] = (ownedExpenses[ownerId!] || 0) + spendPart(t);
+        else sharedExpenses += spendPart(t);
       }
     }
 
@@ -1585,9 +1674,9 @@ export default function TransactionsPage() {
           expenses: expenses + share * sharedExpenses,
         };
       })
-      .filter((p) => p.income > 0.01 || p.expenses > 0.01)
+      .filter((p, _, all) => p.income + p.expenses >= Math.max(1, ...all.map((x) => x.income + x.expenses)) * 0.01)
       .sort((a, b) => b.income - a.income);
-  }, [filtered, accountMap, members, isCashflow]);
+  }, [filtered, accountMap, members, isCashflow, spendPart]);
 
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
     const mul = sortDir === "asc" ? 1 : -1;
@@ -1600,7 +1689,7 @@ export default function TransactionsPage() {
   const paginatedTxns = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   // Reset to page 1 whenever any filter changes
-  useEffect(() => { setPage(1); }, [search, selectedAccount, categoryFilter, datePreset, dateFrom, dateTo, showIgnored, hideTransfers, hideSavings, hideBusiness]);
+  useEffect(() => { setPage(1); }, [filterQuery]);
 
   // Active filters, shown as removable chips under the filter bar
   const activeChips: { key: string; label: string; tone: "include" | "exclude" | "neutral"; onRemove: () => void }[] = [];
@@ -1614,23 +1703,60 @@ export default function TransactionsPage() {
       key: `cat:${k}`,
       label: `${mode === "include" ? "Only" : "Hide"}: ${k}`,
       tone: mode,
-      onRemove: () => setCategoryFilter((prev) => { const n = { ...prev }; delete n[k]; return n; }),
+      onRemove: () => setFilters((f) => { const categories = { ...f.categories }; delete categories[k]; return { ...f, categories }; }),
     });
   }
-  if (hideTransfers) activeChips.push({ key: "hide-transfers", label: "Hide transfers", tone: "exclude", onRemove: () => setHideTransfers(false) });
-  if (hideSavings) activeChips.push({ key: "hide-savings", label: "Hide savings & investing", tone: "exclude", onRemove: () => setHideSavings(false) });
-  if (hideBusiness) activeChips.push({ key: "hide-business", label: "Hide business", tone: "exclude", onRemove: () => setHideBusiness(false) });
-  if (showIgnored) activeChips.push({ key: "ignored", label: "Showing ignored", tone: "neutral", onRemove: () => setShowIgnored(false) });
+  for (const m of filters.merchants) {
+    activeChips.push({ key: `merchant:${m}`, label: `Merchant: ${m}`, tone: "include",
+      onRemove: () => setFilters((f) => ({ ...f, merchants: f.merchants.filter((x) => x !== m) })) });
+  }
+  for (const id of filters.people) {
+    activeChips.push({ key: `person:${id}`, label: `Person: ${personLabel(id)}`, tone: "include",
+      onRemove: () => setFilters((f) => ({ ...f, people: f.people.filter((x) => x !== id) })) });
+  }
+  if (filters.direction !== "all") {
+    activeChips.push({ key: "dir", label: filters.direction === "income" ? "Income only" : "Expenses only", tone: "neutral", onRemove: () => patchFilters({ direction: "all" }) });
+  }
+  if (filters.amountMin || filters.amountMax) {
+    const label = filters.amountMin && filters.amountMax ? `Amount: ${filters.amountMin}–${filters.amountMax}`
+      : filters.amountMin ? `Amount ≥ ${filters.amountMin}` : `Amount ≤ ${filters.amountMax}`;
+    activeChips.push({ key: "amount", label, tone: "neutral", onRemove: () => patchFilters({ amountMin: "", amountMax: "" }) });
+  }
+  if (datePreset === "custom" && drillFromRef.current && dateFrom) {
+    activeChips.push({ key: "drill", label: `Month: ${new Date(dateFrom + "T00:00:00").toLocaleDateString(locale, { month: "short", year: "numeric" })}`, tone: "neutral", onRemove: undrill });
+  }
+  if (hideTransfers) activeChips.push({ key: "hide-transfers", label: "Hide transfers", tone: "exclude", onRemove: () => patchFilters({ hideTransfers: false }) });
+  if (hideSavings) activeChips.push({ key: "hide-savings", label: "Hide savings & investing", tone: "exclude", onRemove: () => patchFilters({ hideSavings: false }) });
+  if (hideBusiness) activeChips.push({ key: "hide-business", label: "Hide business", tone: "exclude", onRemove: () => patchFilters({ hideBusiness: false }) });
+  if (showIgnored) activeChips.push({ key: "ignored", label: "Showing ignored", tone: "neutral", onRemove: () => patchFilters({ showIgnored: false }) });
 
   function clearAllFilters() {
-    setSearch("");
-    setSelectedAccount("all");
-    setCategoryFilter({});
-    setHideTransfers(false);
-    setHideSavings(false);
-    setHideBusiness(false);
-    setShowIgnored(false);
+    drillFromRef.current = null;
+    // Keep the date range and the loan-split setting; clear everything else
+    setFilters((f) => ({ ...DEFAULT_FILTERS, datePreset: f.datePreset, dateFrom: f.dateFrom, dateTo: f.dateTo, splitLoans: f.splitLoans }));
   }
+
+  // ── Click-to-filter from the charts ─────────────────────────────────────────
+  function drillIntoMonth(monthKey: string) {
+    const { from, to } = monthRange(monthKey);
+    if (datePreset === "custom" && dateFrom === from && dateTo === to) { undrill(); return; }
+    drillFromRef.current ??= { datePreset, dateFrom, dateTo };
+    patchFilters({ datePreset: "custom", dateFrom: from, dateTo: to });
+  }
+  function undrill() {
+    const prev = drillFromRef.current ?? { datePreset: DEFAULT_FILTERS.datePreset, dateFrom: "", dateTo: "" };
+    drillFromRef.current = null;
+    patchFilters(prev);
+  }
+  function toggleCategoryOnly(group: string) {
+    setFilters((f) => {
+      const categories = { ...f.categories };
+      if (categories[group] === "include") delete categories[group];
+      else categories[group] = "include";
+      return { ...f, categories };
+    });
+  }
+  const toggleIn = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
   async function handleIgnoreTxn(txn: Transaction) {
     try {
@@ -1748,6 +1874,11 @@ export default function TransactionsPage() {
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Transactions</h2>
           <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Track, categorize and analyze your spending</p>
         </div>
+        <div className="flex items-center gap-2">
+        <SavedViewsMenu
+          currentQuery={filterQuery}
+          onApply={(query) => { drillFromRef.current = null; setFilters(filtersFromQuery(query)); }}
+        />
         <button
           type="button"
           onClick={() => setShowImport(true)}
@@ -1756,6 +1887,7 @@ export default function TransactionsPage() {
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
           Import CSV
         </button>
+        </div>
       </div>
 
       {/* Summary strip */}
@@ -1801,7 +1933,9 @@ export default function TransactionsPage() {
               <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Saved &amp; Invested</p>
             </div>
             <p className="text-xl font-bold text-violet-600 dark:text-violet-400 tabular-nums">{totalSaved >= 0 ? "" : "-"}{fmt(Math.abs(totalSaved))}</p>
-            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Categories counted as savings</p>
+            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">
+              {totalLoanPrincipal > 0 ? `Incl. ${fmt(totalLoanPrincipal)} loan principal (est.)` : "Categories counted as savings"}
+            </p>
           </div>
           <div className="bg-gradient-to-br from-slate-50 to-white dark:from-slate-700/40 dark:to-slate-800 rounded-xl border border-slate-100 dark:border-slate-700 p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -1842,6 +1976,13 @@ export default function TransactionsPage() {
               personBreakdown={personBreakdown}
               totalExpenses={totalExpenses}
               fmt={fmt}
+              onMonthClick={drillIntoMonth}
+              onCategoryClick={toggleCategoryOnly}
+              onMerchantClick={(m) => patchFilters({ merchants: toggleIn(filters.merchants, m) })}
+              onPersonClick={(id) => patchFilters({ people: toggleIn(filters.people, id) })}
+              activeCategories={includeKeys}
+              activeMerchants={filters.merchants}
+              activePeople={filters.people}
             />
           )}
         </div>
@@ -1863,7 +2004,7 @@ export default function TransactionsPage() {
           <select
             title="Date range"
             value={datePreset}
-            onChange={(e) => { setDatePreset(e.target.value); setDateFrom(""); setDateTo(""); }}
+            onChange={(e) => { drillFromRef.current = null; patchFilters({ datePreset: e.target.value, dateFrom: "", dateTo: "" }); }}
             className="border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-44 bg-white dark:bg-slate-800 dark:text-gray-200"
           >
             {DATE_PRESETS.map((p) => (
@@ -1892,23 +2033,64 @@ export default function TransactionsPage() {
               </option>
             ))}
           </select>
+          <MultiSelectFilter
+            label="Merchants"
+            options={merchantOptions}
+            selected={filters.merchants}
+            onChange={(merchants) => patchFilters({ merchants })}
+            searchPlaceholder="Search merchants…"
+          />
+          {members.length > 1 && (
+            <MultiSelectFilter
+              label="People"
+              options={peopleOptions}
+              selected={filters.people}
+              onChange={(people) => patchFilters({ people })}
+              searchPlaceholder="Search people…"
+            />
+          )}
+          <select
+            title="Income or expenses"
+            value={filters.direction}
+            onChange={(e) => patchFilters({ direction: e.target.value as TxnFilters["direction"] })}
+            className="border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-36 bg-white dark:bg-slate-800 dark:text-gray-200"
+          >
+            <option value="all">In &amp; out</option>
+            <option value="expense">Expenses only</option>
+            <option value="income">Income only</option>
+          </select>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number" inputMode="decimal" min="0" placeholder="Min $" title="Minimum amount"
+              value={filters.amountMin}
+              onChange={(e) => patchFilters({ amountMin: e.target.value })}
+              className="w-24 border border-gray-200 dark:border-slate-600 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-800 dark:text-gray-200"
+            />
+            <span className="text-gray-400 text-xs">–</span>
+            <input
+              type="number" inputMode="decimal" min="0" placeholder="Max $" title="Maximum amount"
+              value={filters.amountMax}
+              onChange={(e) => patchFilters({ amountMax: e.target.value })}
+              className="w-24 border border-gray-200 dark:border-slate-600 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-800 dark:text-gray-200"
+            />
+          </div>
           {datePreset === "custom" && (
             <>
               <div className="flex items-center gap-2">
                 <label className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">From</label>
-                <input type="date" title="Start date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+                <input type="date" title="Start date" value={dateFrom} onChange={(e) => patchFilters({ dateFrom: e.target.value })}
                   className="border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-800 dark:text-gray-200" />
               </div>
               <div className="flex items-center gap-2">
                 <label className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">To</label>
-                <input type="date" title="End date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+                <input type="date" title="End date" value={dateTo} onChange={(e) => patchFilters({ dateTo: e.target.value })}
                   className="border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-800 dark:text-gray-200" />
               </div>
             </>
           )}
           <button
             type="button"
-            onClick={() => setShowIgnored((v) => !v)}
+            onClick={() => patchFilters({ showIgnored: !showIgnored })}
             className={`text-xs px-3 py-2 rounded-lg border transition whitespace-nowrap ${
               showIgnored
                 ? "bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400"
@@ -1924,14 +2106,14 @@ export default function TransactionsPage() {
         <div className="flex flex-wrap items-center gap-2 mt-2.5">
           <span className="text-[11px] text-gray-400 dark:text-gray-500 mr-1">Quick hide:</span>
           {([
-            ["Transfers", hideTransfers, setHideTransfers],
-            ["Savings & investing", hideSavings, setHideSavings],
-            ["Business", hideBusiness, setHideBusiness],
-          ] as const).map(([label, on, set]) => (
+            ["Transfers", "hideTransfers"],
+            ["Savings & investing", "hideSavings"],
+            ["Business", "hideBusiness"],
+          ] as const).map(([label, key]) => [label, key, filters[key]] as const).map(([label, key, on]) => (
             <button
               key={label}
               type="button"
-              onClick={() => set(!on)}
+              onClick={() => patchFilters({ [key]: !on })}
               aria-pressed={on}
               className={`text-xs px-2.5 py-1 rounded-full border transition ${
                 on
@@ -1942,6 +2124,17 @@ export default function TransactionsPage() {
               {label}
             </button>
           ))}
+          {loans.length > 0 && (
+            <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer" title="Count only estimated interest + escrow of loan payments as spending; principal goes to Saved & Invested">
+              <input
+                type="checkbox"
+                checked={filters.splitLoans}
+                onChange={(e) => patchFilters({ splitLoans: e.target.checked })}
+                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              Split loan payments (interest vs principal)
+            </label>
+          )}
         </div>
 
         {/* Active filter chips */}
@@ -2101,6 +2294,14 @@ export default function TransactionsPage() {
                   </td>
                   <td className={`px-5 py-3.5 text-sm font-bold text-right whitespace-nowrap tabular-nums ${isExpense ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                     {display}
+                    {loanSplits.has(txn.id) && (() => {
+                      const sp = loanSplits.get(txn.id)!;
+                      return (
+                        <p className="text-[10px] font-normal text-gray-400 dark:text-gray-500 mt-0.5" title={`Estimated from the ${sp.lender} loan's amortization schedule`}>
+                          Interest {fmt(sp.interest)}{sp.escrow > 0 ? ` · Escrow ${fmt(sp.escrow)}` : ""} · Principal {fmt(sp.principal)}
+                        </p>
+                      );
+                    })()}
                   </td>
                   <td className="px-5 py-3.5 text-right">
                     <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition">

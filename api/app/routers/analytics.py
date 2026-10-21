@@ -26,6 +26,7 @@ from app.core.deps import get_current_user
 from app.models.account import Account, Category, Transaction
 from app.models.salary_withholdings import SalaryWithholding
 from app.models.user import User
+from app.services.report_types import load_report_types, report_type_expr
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -62,13 +63,6 @@ _PLAID_PREFIXES: dict[str, list[str]] = {
     "rental income":     ["income > rental"],
     "other income":      ["income"],
 }
-
-_TRANSFER_PLAID_PREFIXES = [
-    "transfer",
-    "payment > credit card",
-    "payment > credit",
-    "payment > loan",
-]
 
 # ─── Income node colour palette ───────────────────────────────────────────────
 
@@ -335,11 +329,9 @@ async def _build_annual_payroll_sankey(
     start_date = date(year, 1, 1)
     end_date = date(year, 12, 31)
 
-    transfer_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in _TRANSFER_PLAID_PREFIXES
-    ]
-    not_a_transfer = not_(or_(*transfer_conditions))
+    # Income/spending only: excludes transfers and savings, honouring the
+    # household's "Counts as" category settings
+    not_a_transfer = report_type_expr(await load_report_types(db, household_id)) == "cashflow"
 
     property_expense_conditions = [
         func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
@@ -500,11 +492,9 @@ async def get_sankey_data(
     members: dict[uuid.UUID, str] = {row.id: row.full_name for row in member_rows}
 
     # ── 2. Shared filter clauses ─────────────────────────────────────────────
-    transfer_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in _TRANSFER_PLAID_PREFIXES
-    ]
-    not_a_transfer = not_(or_(*transfer_conditions))
+    # Income/spending only: excludes transfers and savings, honouring the
+    # household's "Counts as" category settings
+    not_a_transfer = report_type_expr(await load_report_types(db, household_id)) == "cashflow"
 
     # Allow transfer > payroll through — it is a payroll deposit, not a regular transfer
     payroll_conditions = [

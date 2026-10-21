@@ -6,9 +6,12 @@ import {
 import { Card } from "@/components/ui/Card";
 import { useCurrency } from "@/lib/currency";
 import { linearTrend } from "@/lib/chartMath";
-import type { Transaction } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { getCategoryReportTypes } from "@/lib/api";
+import type { ReportType, Transaction } from "@/lib/api";
+import { explicitReportType } from "@/lib/reportTypes";
 
-function buildSpendTimeline(transactions: Transaction[]) {
+function buildSpendTimeline(transactions: Transaction[], reportTypes: Record<string, ReportType>) {
   const now = new Date();
   const thisYear = now.getFullYear(), thisMonth = now.getMonth();
   const lastMonthDate = new Date(thisYear, thisMonth - 1, 1);
@@ -21,9 +24,10 @@ function buildSpendTimeline(transactions: Transaction[]) {
 
   for (const t of transactions) {
     const amt = parseFloat(t.amount);
-    if (amt <= 0 || t.is_ignored || t.pending) continue;
-    const cat = (t.plaid_category ?? "").toLowerCase();
-    if (cat.startsWith("transfer")) continue;
+    if (amt <= 0 || t.is_ignored || t.pending || t.is_business || t.is_property_expense) continue;
+    // Spending only — same rule as the Transactions page "Expenses" figure
+    const type = explicitReportType(t.plaid_category, reportTypes) ?? (t.is_transfer ? "transfer" : "cashflow");
+    if (type !== "cashflow") continue;
     const d = new Date(t.date);
     if (d.getFullYear() === thisYear && d.getMonth() === thisMonth)
       thisMap[d.getDate()] = (thisMap[d.getDate()] || 0) + amt;
@@ -50,7 +54,9 @@ export default function CurrentSpendChart({ transactions }: { transactions: Tran
   const { fmt, locale } = useCurrency();
   const now = new Date();
   const todayDay = now.getDate();
-  const data = buildSpendTimeline(transactions);
+  const [reportTypes, setReportTypes] = useState<Record<string, ReportType>>({});
+  useEffect(() => { getCategoryReportTypes().then(setReportTypes).catch(() => {}); }, []);
+  const data = buildSpendTimeline(transactions, reportTypes);
 
   // Compute trendline for this month's cumulative spend
   const thisMonthVals = data.map((d) => d.thisMonth);

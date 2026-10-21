@@ -12,6 +12,8 @@ from app.core.deps import get_current_user
 from app.models.account import Account, Category, Transaction
 from app.models.budget import Budget
 from app.models.user import User
+from app.services.budget_spend import budget_amount_expr, budget_txn_filters
+from app.services.report_types import load_report_types
 from app.schemas.account import TransactionResponse
 from app.schemas.budget import (
     BudgetBulkCreate,
@@ -22,43 +24,6 @@ from app.schemas.budget import (
 
 router = APIRouter(prefix="/budgets", tags=["budgets"])
 
-# ─── Plaid category prefix map ─────────────────────────────────────────────────
-# Maps custom category name (lowercase) → Plaid category prefixes to match.
-# Transactions are matched if their plaid_category starts with any of these strings.
-# This lets budget actuals automatically count Plaid-imported transactions that
-# haven't been manually re-categorized with custom_category_id.
-
-_PLAID_PREFIXES: dict[str, list[str]] = {
-    "food & dining":     ["food & dining"],
-    "housing":           ["housing"],
-    "transportation":    ["transportation"],
-    "shopping":          ["shopping"],
-    "entertainment":     ["entertainment"],
-    "healthcare":        ["healthcare"],
-    "utilities":         ["bills & utilities", "utilities"],
-    "subscriptions":     ["service > subscription", "subscription"],
-    "education":         ["education"],
-    "personal care":     ["personal care"],
-    "savings":           ["savings & investments", "savings"],
-    "insurance":         ["insurance"],
-    "travel":            ["travel"],
-    "gifts & charity":   ["gifts & donations", "charitable"],
-    "pets":              ["pets"],
-    # income categories
-    "salary":            ["income > salary", "payroll"],
-    "freelance":         ["income > freelance", "income > self"],
-    "investment income": ["income > investment", "income > dividends"],
-    "rental income":     ["income > rental"],
-    "other income":      ["income"],
-}
-
-# Plaid category prefixes that represent transfers (excluded from all calculations)
-_TRANSFER_PLAID_PREFIXES = [
-    "transfer",
-    "payment > credit card",
-    "payment > credit",
-    "payment > loan",
-]
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -94,75 +59,16 @@ async def _actual_spent(
     Excludes ignored transactions, pending transactions, and transfer-categorized transactions.
     Transfers (credit card payments, internal account moves) are excluded to prevent double-counting.
     """
-    from sqlalchemy import and_, not_
-
-    if is_income:
-        amount_filter = Transaction.amount < 0
-        amount_expr = func.coalesce(func.sum(func.abs(Transaction.amount)), 0)
-    else:
-        amount_filter = Transaction.amount > 0
-        amount_expr = func.coalesce(func.sum(Transaction.amount), 0)
-
-    # Build category match: explicitly tagged OR plaid_category prefix
-    prefixes = _PLAID_PREFIXES.get(category_name.lower(), [category_name.lower()])
-    plaid_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in prefixes
-    ]
-    category_match = or_(
-        Transaction.custom_category_id == category_id,
-        *plaid_conditions,
-    )
-
-    # Exclude transactions whose plaid_category looks like a transfer or rental income
-    transfer_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in _TRANSFER_PLAID_PREFIXES
-    ]
-    not_a_transfer = not_(or_(*transfer_conditions))
-
-    rental_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in ["income > rental", "rental income"]
-    ]
-    not_rental_income = not_(or_(*rental_conditions))
-
-    property_expense_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in ["home improvement", "home services", "property tax", "home insurance"]
-    ]
-    not_property_expense = not_(or_(*property_expense_conditions))
-    # A transaction explicitly tagged to this budget's category (e.g. a personal
-    # "Property Tax" budget) always counts toward it, even if Plaid auto-tagged it
-    # as a property expense — manual tagging overrides the rental/property P&L exclusion.
-    explicitly_tagged = Transaction.custom_category_id == category_id
-
-    from app.models.account import Category as Cat, Account as Acct
+    report_types = await load_report_types(db, household_id)
     result = await db.execute(
-        select(amount_expr)
-        .outerjoin(Cat, Cat.id == Transaction.custom_category_id)
-        .outerjoin(Acct, Acct.id == Transaction.account_id)
+        select(budget_amount_expr(is_income))
+        .outerjoin(Category, Category.id == Transaction.custom_category_id)
+        .outerjoin(Account, Account.id == Transaction.account_id)
         .where(
             Transaction.household_id == household_id,
-            category_match,
-            Transaction.is_ignored == False,  # noqa: E712
-            Transaction.pending == False,  # noqa: E712
             Transaction.date >= start_date,
             Transaction.date <= end_date,
-            amount_filter,
-            # exclude transfer-tagged custom categories
-            or_(Cat.id.is_(None), Cat.is_transfer == False),  # noqa: E712
-            # exclude rental income custom categories (tracked separately in rental P&L)
-            or_(Cat.id.is_(None), Cat.is_rental_income == False),  # noqa: E712
-            # exclude property expense custom categories (tracked separately in property P&L)
-            or_(Cat.id.is_(None), Cat.is_property_expense == False),  # noqa: E712
-            # exclude plaid-category transfers and rental income
-            not_a_transfer,
-            not_rental_income,
-            # exclude plaid-category property expenses, unless explicitly tagged to this category
-            or_(explicitly_tagged, not_property_expense),
-            # exclude transactions from business-entity accounts
-            or_(Acct.id.is_(None), and_(Acct.entity_id.is_(None), Acct.account_scope != "business")),
+            *budget_txn_filters(category_id, category_name, is_income, report_types),
         )
     )
     return Decimal(str(result.scalar() or 0))
@@ -493,9 +399,6 @@ async def get_budget_transactions(
     db: AsyncSession = Depends(get_db),
 ):
     """Return the transactions that count toward this budget's actual_spent."""
-    from sqlalchemy import and_, not_
-    from app.models.account import Account as Acct, Category as Cat
-
     result = await db.execute(
         select(Budget).where(
             Budget.id == budget_id,
@@ -512,62 +415,16 @@ async def get_budget_transactions(
     category_id = budget.category_id
     is_income = budget.category.is_income
 
-    if is_income:
-        amount_filter = Transaction.amount < 0
-    else:
-        amount_filter = Transaction.amount > 0
-
-    prefixes = _PLAID_PREFIXES.get(category_name.lower(), [category_name.lower()])
-    plaid_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in prefixes
-    ]
-    category_match = or_(
-        Transaction.custom_category_id == category_id,
-        *plaid_conditions,
-    )
-
-    transfer_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in _TRANSFER_PLAID_PREFIXES
-    ]
-    not_a_transfer = not_(or_(*transfer_conditions))
-
-    rental_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in ["income > rental", "rental income"]
-    ]
-    not_rental_income = not_(or_(*rental_conditions))
-
-    property_expense_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in ["home improvement", "home services", "property tax", "home insurance"]
-    ]
-    not_property_expense = not_(or_(*property_expense_conditions))
-    # A transaction explicitly tagged to this budget's category always counts,
-    # even if Plaid auto-tagged it as a property expense — keep this in sync with
-    # the same override in _actual_spent so the transaction list matches the total.
-    explicitly_tagged = Transaction.custom_category_id == category_id
-
+    report_types = await load_report_types(db, user.household_id)
     txn_result = await db.execute(
         select(Transaction)
-        .outerjoin(Cat, Cat.id == Transaction.custom_category_id)
-        .outerjoin(Acct, Acct.id == Transaction.account_id)
+        .outerjoin(Category, Category.id == Transaction.custom_category_id)
+        .outerjoin(Account, Account.id == Transaction.account_id)
         .where(
             Transaction.household_id == user.household_id,
-            category_match,
-            Transaction.is_ignored == False,  # noqa: E712
-            Transaction.pending == False,  # noqa: E712
             Transaction.date >= start,
             Transaction.date <= end,
-            amount_filter,
-            or_(Cat.id.is_(None), Cat.is_transfer == False),  # noqa: E712
-            or_(Cat.id.is_(None), Cat.is_rental_income == False),  # noqa: E712
-            or_(Cat.id.is_(None), Cat.is_property_expense == False),  # noqa: E712
-            not_a_transfer,
-            not_rental_income,
-            or_(explicitly_tagged, not_property_expense),
-            or_(Acct.id.is_(None), and_(Acct.entity_id.is_(None), Acct.account_scope != "business")),
+            *budget_txn_filters(category_id, category_name, is_income, report_types),
         )
         .order_by(Transaction.date.desc())
     )

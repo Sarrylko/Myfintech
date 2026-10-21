@@ -176,6 +176,27 @@ export async function saveCategoryReportTypes(
   return res.types;
 }
 
+// ─── Saved Transactions-page views (per user) ───────────────────────────────
+
+export interface SavedTransactionView {
+  id: string;
+  name: string;
+  query: string; // Transactions page URL query string
+}
+
+export async function getTransactionViews(): Promise<SavedTransactionView[]> {
+  const res = await apiFetch<{ views: SavedTransactionView[] }>("/api/v1/users/me/transaction-views");
+  return res.views;
+}
+
+export async function saveTransactionViews(views: SavedTransactionView[]): Promise<SavedTransactionView[]> {
+  const res = await apiFetch<{ views: SavedTransactionView[] }>("/api/v1/users/me/transaction-views", {
+    method: "PUT",
+    body: JSON.stringify({ views }),
+  });
+  return res.views;
+}
+
 export async function switchActiveCountry(country_code: string): Promise<HouseholdSettings> {
   return apiFetch<HouseholdSettings>("/api/v1/users/household/active-country", {
     method: "PATCH",

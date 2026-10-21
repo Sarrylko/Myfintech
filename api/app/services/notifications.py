@@ -33,6 +33,13 @@ from app.models.property import Property
 from app.models.property_cost_status import PropertyCostStatus
 from app.models.snaptrade import SnapTradeConnection  # noqa: F401 — ensures Account mapper resolves this relationship
 from app.models.user import Household, User
+from app.services.budget_spend import budget_amount_expr, budget_txn_filters
+from app.services.report_types import (
+    category_group_expr,
+    income_filters,
+    load_report_types_sync,
+    spending_filters,
+)
 from app.services.account_health import classify_connection
 from app.services.whatsapp import send_whatsapp_bulk
 from app.worker import celery_app
@@ -60,6 +67,31 @@ def _phones_for_household(
         conditions.append(getattr(User, notif_field) == True)  # noqa: E712
     rows = db.execute(select(User.phone).where(*conditions)).scalars().all()
     return [p for p in rows if p]
+
+
+def _budget_spent(
+    db: Session,
+    hid: uuid.UUID,
+    category: Category,
+    start,
+    end,
+    report_types: dict[str, str],
+    end_exclusive: bool = False,
+) -> Decimal:
+    """Amount counted toward a budget on `category` between start and end."""
+    total = db.execute(
+        select(budget_amount_expr(category.is_income))
+        .select_from(Transaction)
+        .outerjoin(Category, Category.id == Transaction.custom_category_id)
+        .outerjoin(Account, Account.id == Transaction.account_id)
+        .where(
+            Transaction.household_id == hid,
+            Transaction.date >= start,
+            Transaction.date < end if end_exclusive else Transaction.date <= end,
+            *budget_txn_filters(category.id, category.name, category.is_income, report_types),
+        )
+    ).scalar()
+    return Decimal(str(total or 0))
 
 
 def _fmt_currency(value: Decimal | None) -> str:
@@ -110,22 +142,17 @@ def send_daily_summary():
                     nw_line = f"Net worth: {_fmt_currency(latest_nw)}"
 
             # Top 3 spending categories this month (expense only)
+            group = category_group_expr()
             rows = db.execute(
-                select(Category.name, func.sum(Transaction.amount).label("total"))
-                .join(Transaction, Transaction.custom_category_id == Category.id)
+                select(group.label("name"), func.sum(Transaction.amount).label("total"))
+                .select_from(Transaction)
                 .outerjoin(Account, Account.id == Transaction.account_id)
                 .where(
                     Transaction.household_id == hid,
                     Transaction.date >= month_start,
-                    Transaction.is_ignored == False,       # noqa: E712
-                    Transaction.pending == False,          # noqa: E712
-                    Category.is_income == False,           # noqa: E712
-                    Category.is_transfer == False,         # noqa: E712
-                    Category.is_property_expense == False, # noqa: E712
-                    Transaction.amount > 0,
-                    or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
+                    *spending_filters(load_report_types_sync(db, hid)),
                 )
-                .group_by(Category.name)
+                .group_by(group)
                 .order_by(func.sum(Transaction.amount).desc())
                 .limit(3)
             ).all()
@@ -196,6 +223,7 @@ def check_budget_alerts():
                 }
 
             alerts = []
+            report_types = load_report_types_sync(db, hid)
 
             for budget in budgets:
                 # Determine date range
@@ -212,27 +240,16 @@ def check_budget_alerts():
                 else:
                     continue
 
-                # Sum actual spending for this category in range
-                spent = db.execute(
-                    select(func.sum(Transaction.amount))
-                    .where(
-                        Transaction.household_id == hid,
-                        Transaction.custom_category_id == budget.category_id,
-                        Transaction.date >= start,
-                        Transaction.date <= end,
-                        Transaction.is_ignored == False,  # noqa: E712
-                        Transaction.amount > 0,
-                    )
-                ).scalar() or Decimal(0)
-
-                if budget.amount <= 0:
+                category = categories_by_id.get(budget.category_id)
+                if category is None or budget.amount <= 0:
                     continue
 
+                # Same matching as the Budgets page (app/services/budget_spend.py)
+                spent = _budget_spent(db, hid, category, start, end, report_types)
                 pct = int(spent / budget.amount * 100)
 
                 if pct >= budget.alert_threshold:
-                    category = categories_by_id.get(budget.category_id)
-                    cat_name = category.name if category else "Budget"
+                    cat_name = category.name
                     emoji = "🔴" if pct >= 100 else "🟡"
                     alerts.append(
                         f"{emoji} *{cat_name}*: {pct}% used "
@@ -379,63 +396,38 @@ def _send_monthly_report_for_household(
     if not phones:
         return
 
-    # ── 1. Total spend (prev month, expense categories only) ──────────────────
+    report_types = load_report_types_sync(db, hh_id)
+    spend = spending_filters(report_types)
+    group = category_group_expr()
+    yr = func.extract("year", Transaction.date).label("yr")
+    mo = func.extract("month", Transaction.date).label("mo")
+
+    def _spend_query(*columns):
+        return select(*columns).select_from(Transaction).outerjoin(
+            Account, Account.id == Transaction.account_id
+        ).where(Transaction.household_id == hh_id, *spend)
+
+    in_month = (Transaction.date >= month_start, Transaction.date < month_end)
+    in_history = (Transaction.date >= history_start, Transaction.date < month_start)
+
+    # ── 1. Total spend (prev month) ───────────────────────────────────────────
     total_spend: Decimal = db.execute(
-        select(func.sum(Transaction.amount))
-        .join(Category, Transaction.custom_category_id == Category.id)
-        .outerjoin(Account, Account.id == Transaction.account_id)
-        .where(
-            Transaction.household_id == hh_id,
-            Transaction.date >= month_start,
-            Transaction.date < month_end,
-            Transaction.is_ignored == False,       # noqa: E712
-            Transaction.pending == False,          # noqa: E712
-            Transaction.amount > 0,
-            Category.is_income == False,           # noqa: E712
-            Category.is_transfer == False,         # noqa: E712
-            Category.is_property_expense == False, # noqa: E712
-            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
-        )
+        _spend_query(func.sum(Transaction.amount)).where(*in_month)
     ).scalar() or Decimal(0)
 
     # ── 2. Income (prev month) ────────────────────────────────────────────────
     total_income: Decimal = db.execute(
-        select(func.sum(Transaction.amount))
-        .join(Category, Transaction.custom_category_id == Category.id)
-        .where(
-            Transaction.household_id == hh_id,
-            Transaction.date >= month_start,
-            Transaction.date < month_end,
-            Transaction.is_ignored == False,  # noqa: E712
-            Transaction.pending == False,      # noqa: E712
-            Transaction.amount > 0,
-            Category.is_income == True,           # noqa: E712
-            Category.is_rental_income == False,   # noqa: E712 — rental income tracked in rental P&L
-        )
+        select(func.sum(func.abs(Transaction.amount)))
+        .select_from(Transaction)
+        .outerjoin(Account, Account.id == Transaction.account_id)
+        .where(Transaction.household_id == hh_id, *in_month, *income_filters(report_types))
     ).scalar() or Decimal(0)
 
     # ── 3. Average monthly spend (6-month history, grouped by month) ──────────
     hist_rows = db.execute(
-        select(
-            func.extract("year",  Transaction.date).label("yr"),
-            func.extract("month", Transaction.date).label("mo"),
-            func.sum(Transaction.amount).label("total"),
-        )
-        .join(Category, Transaction.custom_category_id == Category.id)
-        .outerjoin(Account, Account.id == Transaction.account_id)
-        .where(
-            Transaction.household_id == hh_id,
-            Transaction.date >= history_start,
-            Transaction.date < month_start,
-            Transaction.is_ignored == False,       # noqa: E712
-            Transaction.pending == False,          # noqa: E712
-            Transaction.amount > 0,
-            Category.is_income == False,           # noqa: E712
-            Category.is_transfer == False,         # noqa: E712
-            Category.is_property_expense == False, # noqa: E712
-            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
-        )
-        .group_by("yr", "mo")
+        _spend_query(yr, mo, func.sum(Transaction.amount).label("total"))
+        .where(*in_history)
+        .group_by(yr, mo)
     ).all()
     avg_monthly: Decimal = (
         sum((r.total for r in hist_rows), Decimal(0)) / len(hist_rows)
@@ -444,49 +436,18 @@ def _send_monthly_report_for_household(
 
     # ── 4. Top 3 categories by spend ─────────────────────────────────────────
     top_cats = db.execute(
-        select(Category.name, func.sum(Transaction.amount).label("total"))
-        .join(Transaction, Transaction.custom_category_id == Category.id)
-        .outerjoin(Account, Account.id == Transaction.account_id)
-        .where(
-            Transaction.household_id == hh_id,
-            Transaction.date >= month_start,
-            Transaction.date < month_end,
-            Transaction.is_ignored == False,       # noqa: E712
-            Transaction.pending == False,          # noqa: E712
-            Transaction.amount > 0,
-            Category.is_income == False,           # noqa: E712
-            Category.is_transfer == False,         # noqa: E712
-            Category.is_property_expense == False, # noqa: E712
-            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
-        )
-        .group_by(Category.name)
+        _spend_query(group.label("name"), func.sum(Transaction.amount).label("total"))
+        .where(*in_month)
+        .group_by(group)
         .order_by(desc("total"))
         .limit(3)
     ).all()
 
     # ── 5. Biggest category changes vs 6-month average ────────────────────────
     hist_cat_rows = db.execute(
-        select(
-            Category.name,
-            func.extract("year",  Transaction.date).label("yr"),
-            func.extract("month", Transaction.date).label("mo"),
-            func.sum(Transaction.amount).label("total"),
-        )
-        .join(Transaction, Transaction.custom_category_id == Category.id)
-        .outerjoin(Account, Account.id == Transaction.account_id)
-        .where(
-            Transaction.household_id == hh_id,
-            Transaction.date >= history_start,
-            Transaction.date < month_start,
-            Transaction.is_ignored == False,       # noqa: E712
-            Transaction.pending == False,          # noqa: E712
-            Transaction.amount > 0,
-            Category.is_income == False,           # noqa: E712
-            Category.is_transfer == False,         # noqa: E712
-            Category.is_property_expense == False, # noqa: E712
-            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
-        )
-        .group_by(Category.name, "yr", "mo")
+        _spend_query(group.label("name"), yr, mo, func.sum(Transaction.amount).label("total"))
+        .where(*in_history)
+        .group_by(group, yr, mo)
     ).all()
 
     cat_months: dict[str, list[Decimal]] = defaultdict(list)
@@ -495,22 +456,9 @@ def _send_monthly_report_for_household(
     cat_avg = {n: sum(v, Decimal(0)) / len(v) for n, v in cat_months.items()}
 
     all_prev_cats = db.execute(
-        select(Category.name, func.sum(Transaction.amount).label("total"))
-        .join(Transaction, Transaction.custom_category_id == Category.id)
-        .outerjoin(Account, Account.id == Transaction.account_id)
-        .where(
-            Transaction.household_id == hh_id,
-            Transaction.date >= month_start,
-            Transaction.date < month_end,
-            Transaction.is_ignored == False,       # noqa: E712
-            Transaction.pending == False,          # noqa: E712
-            Transaction.amount > 0,
-            Category.is_income == False,           # noqa: E712
-            Category.is_transfer == False,         # noqa: E712
-            Category.is_property_expense == False, # noqa: E712
-            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
-        )
-        .group_by(Category.name)
+        _spend_query(group.label("name"), func.sum(Transaction.amount).label("total"))
+        .where(*in_month)
+        .group_by(group)
     ).all()
 
     changes = []
@@ -564,17 +512,9 @@ def _send_monthly_report_for_household(
 
     budget_lines = []
     for b in budgets[:4]:
-        spent: Decimal = db.execute(
-            select(func.sum(Transaction.amount)).where(
-                Transaction.household_id == hh_id,
-                Transaction.custom_category_id == b.category_id,
-                Transaction.date >= month_start,
-                Transaction.date < month_end,
-                Transaction.is_ignored == False,  # noqa: E712
-                Transaction.pending == False,      # noqa: E712
-                Transaction.amount > 0,
-            )
-        ).scalar() or Decimal(0)
+        spent = _budget_spent(
+            db, hh_id, b.category, month_start, month_end, report_types, end_exclusive=True,
+        )
         icon = "⚠️" if spent > b.amount else "✅"
         budget_lines.append(f"  {icon} {b.category.name}: {_fmt_currency(spent)}/{_fmt_currency(b.amount)}")
 

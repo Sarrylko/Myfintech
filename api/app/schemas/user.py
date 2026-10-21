@@ -112,6 +112,16 @@ class ActiveCountryUpdate(BaseModel):
     country_code: str
 
 
+class SavedTransactionView(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=60)
+    query: str = Field(max_length=4000)  # Transactions page URL query string
+
+
+class SavedTransactionViews(BaseModel):
+    views: list[SavedTransactionView] = Field(default=[], max_length=50)
+
+
 ReportType = Literal["cashflow", "transfer", "savings"]
 
 

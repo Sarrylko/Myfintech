@@ -21,6 +21,7 @@ from app.schemas.user import (
     HouseholdSettings,
     HouseholdSettingsUpdate,
     NotificationPreferences,
+    SavedTransactionViews,
     UserPasswordChange,
     UserProfileUpdate,
     UserResponse,
@@ -83,6 +84,25 @@ async def change_password(
     user.hashed_password = hash_password(payload.new_password)
     user.updated_at = datetime.now(timezone.utc)
     await db.commit()
+
+
+# ─── Saved transaction views ──────────────────────────────────────────────────
+
+@router.get("/me/transaction-views", response_model=SavedTransactionViews)
+async def get_transaction_views(user: User = Depends(get_current_user)):
+    return SavedTransactionViews(views=user.transaction_views or [])
+
+
+@router.put("/me/transaction-views", response_model=SavedTransactionViews)
+async def replace_transaction_views(
+    payload: SavedTransactionViews,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user.transaction_views = [v.model_dump() for v in payload.views]
+    user.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return SavedTransactionViews(views=user.transaction_views)
 
 
 # ─── Notification preferences ─────────────────────────────────────────────────

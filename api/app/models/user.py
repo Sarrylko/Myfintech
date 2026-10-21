@@ -87,6 +87,11 @@ class User(Base):
     notif_transaction_alerts: Mapped[bool] = mapped_column(Boolean, default=True)
     notif_account_health: Mapped[bool] = mapped_column(Boolean, default=True)
     notif_gmail_alerts: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Saved Transactions-page filter views: [{"id", "name", "query"}], where
+    # query is the page's URL query string
+    transaction_views: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
     household_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("households.id")
     )

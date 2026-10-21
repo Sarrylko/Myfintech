@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReportType } from "@/lib/api";
 import { REPORT_TYPE_LABELS } from "@/lib/reportTypes";
+import type { CategoryMode } from "@/lib/transactionFilters";
 
-export type CategoryMode = "include" | "exclude";
+export type { CategoryMode };
 
 export interface CategoryGroupOption {
   group: string;
