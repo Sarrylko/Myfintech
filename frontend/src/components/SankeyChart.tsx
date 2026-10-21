@@ -501,7 +501,7 @@ function PayrollChartCanvas({ data, width, height }: ChartCanvasProps) {
     return () => mo.disconnect();
   }, []);
 
-  const PAD = { top: 24, right: 180, bottom: 24, left: 180 };
+  const PAD = { top: 24, right: 230, bottom: 24, left: 180 };
   const innerW = Math.max(width - PAD.left - PAD.right, 60);
   const innerH = height - PAD.top - PAD.bottom;
 
@@ -510,6 +510,22 @@ function PayrollChartCanvas({ data, width, height }: ChartCanvasProps) {
   const labelColor = isDark ? "#f3f4f6" : "#111827";
   const subColor = isDark ? "#9ca3af" : "#6b7280";
   const totalGross = data.gross_income ?? data.total_income;
+  const pctOf = (v: number) => (totalGross > 0 ? Math.round((v / totalGross) * 100) : 0);
+
+  // Right-column labels are one line each, nudged apart so they never overlap
+  const LABEL_GAP = 15;
+  const rightLabelY: Record<string, number> = {};
+  {
+    const right = layoutNodes.filter((n) => n.col === 3).sort((a, b) => a.y0 - b.y0);
+    const ys = right.map((n) => (n.y0 + n.y1) / 2);
+    for (let i = 1; i < ys.length; i++) ys[i] = Math.max(ys[i], ys[i - 1] + LABEL_GAP);
+    const maxY = innerH + PAD.bottom - 6;
+    for (let i = ys.length - 1; i >= 0; i--) {
+      const limit = i === ys.length - 1 ? maxY : ys[i + 1] - LABEL_GAP;
+      ys[i] = Math.min(ys[i], limit);
+    }
+    right.forEach((n, i) => { rightLabelY[n.id] = ys[i]; });
+  }
 
   return (
     <>
@@ -579,23 +595,28 @@ function PayrollChartCanvas({ data, width, height }: ChartCanvasProps) {
                   fill={node.color} rx={4} opacity={isHov ? 1 : 0.88}
                   className="transition-opacity duration-150" />
 
-                {/* L1 (col 0) — label left */}
-                {node.col === 0 && (
-                  <>
-                    <text x={node.x0 - 14} y={midY - 8} textAnchor="end" dominantBaseline="middle"
-                      fontSize={12} fontWeight={700} fill={labelColor}>{node.label}</text>
-                    <text x={node.x0 - 14} y={midY + 8} textAnchor="end" dominantBaseline="middle"
-                      fontSize={11} fill={subColor}>{fmtUSD(node.value)}</text>
-                  </>
-                )}
-                {/* L4 (col 3) — label right */}
+                {/* L1 (col 0) — name, then employer and amount, left of the bar */}
+                {node.col === 0 && (() => {
+                  const m = node.label.match(/^(.*?) ((.*))$/);
+                  const name = m ? m[1] : node.label;
+                  const employer = m ? m[2] : "";
+                  return (
+                    <>
+                      <text x={node.x0 - 14} y={midY - 8} textAnchor="end" dominantBaseline="middle"
+                        fontSize={12} fontWeight={700} fill={labelColor}>{name}</text>
+                      <text x={node.x0 - 14} y={midY + 8} textAnchor="end" dominantBaseline="middle"
+                        fontSize={11} fill={subColor}>{employer ? `${employer} · ` : ""}{fmtUSD(node.value)}</text>
+                    </>
+                  );
+                })()}
+                {/* L4 (col 3) — one-line label right of the bar */}
                 {node.col === 3 && (
-                  <>
-                    <text x={node.x1 + 14} y={midY - 8} textAnchor="start" dominantBaseline="middle"
-                      fontSize={12} fontWeight={700} fill={labelColor}>{node.label}</text>
-                    <text x={node.x1 + 14} y={midY + 8} textAnchor="start" dominantBaseline="middle"
-                      fontSize={11} fill={subColor}>{fmtUSD(node.value)}</text>
-                  </>
+                  <text x={node.x1 + 14} y={rightLabelY[node.id] ?? midY} textAnchor="start" dominantBaseline="middle"
+                    fontSize={11.5} fill={subColor}>
+                    <tspan fontWeight={700} fill={labelColor}>{node.label}</tspan>
+                    <tspan dx={6}>{fmtUSD(node.value)}</tspan>
+                    <tspan dx={4}>· {pctOf(node.value)}%</tspan>
+                  </text>
                 )}
                 {/* L2 / L3 (col 1–2) — label above bar if tall enough */}
                 {(node.col === 1 || node.col === 2) && nodeH > 14 && (

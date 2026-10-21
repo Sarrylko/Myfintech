@@ -26,6 +26,7 @@ from app.models.property import Property
 from app.models.property_details import Loan
 from app.models.snaptrade import SnapTradeConnection  # noqa: F401 — ensures Account mapper resolves this relationship
 from app.models.user import Household, HouseholdCountryProfile
+from app.services.networth_metrics import compute_net_worth
 from app.worker import celery_app
 
 logger = logging.getLogger(__name__)
@@ -41,58 +42,14 @@ def _compute_metrics(db: Session, household_id: uuid.UUID) -> dict:
         select(Household).where(Household.id == household_id)
     ).scalar_one_or_none()
     home_currency = household.default_currency if household else "USD"
+    home_country = household.country_code if household else "US"
 
-    # Accounts — only include accounts denominated in the household's home currency
-    accounts = db.execute(
-        select(Account).where(
-            Account.household_id == household_id,
-            Account.is_hidden == False,  # noqa: E712
-            Account.currency_code == home_currency,
-        )
-    ).scalars().all()
-
-    total_cash = Decimal(0)
-    total_investments = Decimal(0)
-    credit_debt = Decimal(0)
-
-    for acc in accounts:
-        bal = acc.current_balance or Decimal(0)
-        if acc.type == "depository":
-            total_cash += bal
-        elif acc.type in ("investment", "brokerage"):
-            total_investments += bal
-        elif acc.type == "credit":
-            credit_debt += bal
-
-    # Properties — only include properties in the household's home currency
-    properties = db.execute(
-        select(Property).where(
-            Property.household_id == household_id,
-            Property.currency_code == home_currency,
-        )
-    ).scalars().all()
-
-    total_real_estate = sum((p.current_value or Decimal(0)) for p in properties)
-
-    # Property loans (mortgages etc.)
-    total_mortgage = Decimal(0)
-    if properties:
-        prop_ids = [p.id for p in properties]
-        loans = db.execute(
-            select(Loan).where(Loan.property_id.in_(prop_ids))
-        ).scalars().all()
-        total_mortgage = sum((l.current_balance or Decimal(0)) for l in loans)
-
-    total_debts = credit_debt + total_mortgage
-    net_worth = total_cash + total_investments + Decimal(str(total_real_estate)) - total_debts
-
-    return {
-        "total_cash": total_cash,
-        "total_investments": total_investments,
-        "total_real_estate": Decimal(str(total_real_estate)),
-        "total_debts": total_debts,
-        "net_worth": net_worth,
-    }
+    accounts = db.execute(select(Account).where(Account.household_id == household_id)).scalars().all()
+    properties = db.execute(select(Property).where(Property.household_id == household_id)).scalars().all()
+    loans = db.execute(
+        select(Loan).where(Loan.property_id.in_([p.id for p in properties]))
+    ).scalars().all() if properties else []
+    return compute_net_worth(list(accounts), list(properties), list(loans), home_country, home_currency)
 
 
 def _upsert_snapshot(db: Session, household_id: uuid.UUID, *, update_existing: bool = False) -> bool:

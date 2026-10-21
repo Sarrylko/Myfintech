@@ -30,6 +30,8 @@ import { useForex } from "@/components/ForexProvider";
 import { convertToUSD, fmtInCurrency } from "@/lib/forex";
 
 const SankeyChart = dynamic(() => import("@/components/SankeyChart"), { ssr: false });
+import PayrollInsights from "@/components/dashboard/PayrollInsights";
+import NetWorthInsights from "@/components/dashboard/NetWorthInsights";
 const CurrentSpendChart = dynamic(() => import("@/components/dashboard/CurrentSpendChart"), { ssr: false });
 const FinancialHistorySection = dynamic(() => import("@/components/dashboard/FinancialHistoryChart"), { ssr: false });
 
@@ -56,7 +58,9 @@ function NetWorthCard({
   icon,
   breakdown,
   accent = "slate",
+  hint,
 }: {
+  hint?: string;
   label: string;
   value: number;
   subtext?: string;
@@ -83,7 +87,7 @@ function NetWorthCard({
     slate:  "bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-gray-400",
   };
   return (
-    <div className={`rounded-xl border p-4 ${cardStyles[accent]}`}>
+    <div className={`rounded-xl border p-4 ${cardStyles[accent]}`} title={hint}>
       <div className="flex items-center gap-2.5 mb-3">
         <span className={`p-1.5 rounded-lg ${iconStyles[accent]}`}>{icon}</span>
         <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wider">{label}</p>
@@ -430,18 +434,35 @@ const SANKEY_YEARS = [2024, 2025, 2026];
 function SankeyDashboardSection() {
   const [annualYear, setAnnualYear] = useState<number>(new Date().getFullYear());
   const [data, setData] = useState<SankeyData | null>(null);
+  const [previous, setPrevious] = useState<SankeyData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { fmt } = useCurrency();
+  const { fmt, locale } = useCurrency();
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    getSankeyData({ annual: true, year: annualYear })
-      .then(setData)
+    // The previous year is only used for year-over-year rate changes
+    Promise.all([
+      getSankeyData({ annual: true, year: annualYear }),
+      getSankeyData({ annual: true, year: annualYear - 1 }).catch(() => null),
+    ])
+      .then(([current, prior]) => {
+        setData(current);
+        setPrevious(prior?.sankey_type === "payroll" ? prior : null);
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, [annualYear]);
+
+  const periodLabel = (() => {
+    if (!data?.period_start || !data.period_end) return null;
+    const d = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(locale, { month: "short", day: "numeric" });
+    return `${d(data.period_start)} – ${d(data.period_end)}, ${data.year}`;
+  })();
+  const savedTotal = data?.payroll
+    ? data.payroll.payroll_investments + data.payroll.savings_transfers + data.payroll.loan_principal
+    : 0;
 
   const btnBase =
     "text-xs px-2.5 py-1 rounded-lg border font-medium transition-colors duration-150";
@@ -460,6 +481,12 @@ function SankeyDashboardSection() {
             Gross → Taxes → Investments → Expenses&ensp;·&ensp;
             <Link href="/settings/salary" className="text-indigo-500 hover:underline">Edit W-2 data</Link>
           </p>
+          {periodLabel && !loading && (
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              {periodLabel}
+              {data?.prorated && " · W-2 amounts prorated to date so pay and spending cover the same period"}
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-1">
@@ -492,7 +519,14 @@ function SankeyDashboardSection() {
           <span className="text-red-500 dark:text-red-400 font-semibold">
             Expenses&nbsp;{fmt(data.total_expenses)}
           </span>
-          {data.remaining > 0 && (
+          {data.payroll ? (
+            <>
+              <span className="text-gray-300 dark:text-gray-600">·</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                Saved&nbsp;{fmt(savedTotal)}
+              </span>
+            </>
+          ) : data.remaining > 0 && (
             <>
               <span className="text-gray-300 dark:text-gray-600">·</span>
               <span className="text-blue-600 dark:text-blue-400 font-semibold">
@@ -513,6 +547,7 @@ function SankeyDashboardSection() {
           {error}
         </div>
       )}
+      {data && !loading && <PayrollInsights data={data} previous={previous} fmt={fmt} />}
       {data && !loading && <SankeyChart data={data} />}
     </Card>
   );
@@ -696,16 +731,17 @@ export default function Dashboard() {
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
-    // The spend chart compares this month with last month, so load everything
-    // since the 1st of last month (a fixed count cut last month off)
-    const lastMonthStart = new Date(year, month - 2, 1);
-    const sinceLastMonth = `${lastMonthStart.getFullYear()}-${String(lastMonthStart.getMonth() + 1).padStart(2, "0")}-01`;
+    // The spend chart compares this month with last month and the emergency
+    // cushion averages the last 3 full months, so load everything since the
+    // 1st of 3 months ago (a fixed count cut months off)
+    const windowStart = new Date(year, month - 4, 1);
+    const sinceDate = `${windowStart.getFullYear()}-${String(windowStart.getMonth() + 1).padStart(2, "0")}-01`;
 
     const [accRes, budRes, ltRes, txRes, propRes, loanRes] = await Promise.allSettled([
       listAccounts(),
       listBudgets(month, year),
       listLongTermBudgets(year),
-      listAllTransactions(5000, 0, sinceLastMonth),
+      listAllTransactions(5000, 0, sinceDate),
       listProperties(),
       listAllLoans(),
     ]);
@@ -789,10 +825,23 @@ export default function Dashboard() {
     return { visibleProperties, realEstateUSD, reBreakdown };
   }, [properties, activeCountryCode, fxRates, fmtInCurrency]);
 
-  const netWorth = useMemo(
-    () => cash + investments + realEstateUSD - totalLiabilities,
-    [cash, investments, realEstateUSD, totalLiabilities],
+  // 529 plans are shown apart from Investments but are still assets you own
+  const college529 = useMemo(
+    () => visibleAccounts
+      .filter((a) => ["investment", "brokerage"].includes(a.type) && (a.subtype ?? "").toLowerCase() === "529")
+      .reduce((s, a) => s + parseFloat(a.current_balance ?? "0"), 0),
+    [visibleAccounts],
   );
+
+  // Same formula as the daily snapshot (api/app/services/networth_metrics.py)
+  const netWorth = useMemo(
+    () => cash + investments + college529 + realEstateUSD - totalLiabilities,
+    [cash, investments, college529, realEstateUSD, totalLiabilities],
+  );
+  const netWorthHint =
+    `Net worth = Cash ${fmt(cash)} + Investments ${fmt(investments)}` +
+    (college529 > 0 ? ` + 529 plans ${fmt(college529)}` : "") +
+    ` + Real estate ${fmt(realEstateUSD)} − Liabilities ${fmt(totalLiabilities)}`;
 
   // ── Budget stats ───────────────────────────────────────────────────────────
   const monthName = today.toLocaleString(locale, { month: "long" });
@@ -882,8 +931,11 @@ export default function Dashboard() {
           value={netWorth}
           color={netWorth >= 0 ? "text-gray-900" : "text-red-600"}
           icon={ICONS.networth}
-          subtext={`${visibleAccounts.length} account${visibleAccounts.length !== 1 ? "s" : ""}`}
+          subtext={college529 > 0
+            ? `incl. ${fmt(college529)} in 529 plans`
+            : `${visibleAccounts.length} account${visibleAccounts.length !== 1 ? "s" : ""}`}
           accent="indigo"
+          hint={netWorthHint}
         />
         <NetWorthCard
           label="Cash & Banking"
@@ -914,6 +966,22 @@ export default function Dashboard() {
           icon={ICONS.liabilities}
           subtext={`${creditAccounts.length} card${creditAccounts.length !== 1 ? "s" : ""} · ${loans.length} loan${loans.length !== 1 ? "s" : ""}`}
           accent="red"
+        />
+      </div>
+
+      {/* Net worth change, liquidity and ratios */}
+      <div className="mb-6">
+        <NetWorthInsights
+          accounts={visibleAccounts}
+          cash={cash}
+          investments={investments + college529}
+          realEstate={realEstateUSD}
+          liabilities={totalLiabilities}
+          netWorth={netWorth}
+          snapshots={snapshots}
+          transactions={transactions}
+          fmt={fmt}
+          locale={locale}
         />
       </div>
 

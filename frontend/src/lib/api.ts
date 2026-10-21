@@ -2956,6 +2956,46 @@ export interface SankeyData {
   is_annual?: boolean;
   sankey_type?: "standard" | "payroll";
   gross_income?: number;
+  /** Payroll flow period; W-2 figures are prorated to it while the year is in progress */
+  period_start?: string | null;
+  period_end?: string | null;
+  prorated?: boolean;
+  payroll?: PayrollSummary | null;
+}
+
+/** One earner's full-year W-2 figures */
+export interface PayrollPerson {
+  user_id: string;
+  name: string;
+  employer: string;
+  gross: number;
+  federal_tax: number;
+  state_tax: number;
+  social_security: number;
+  medicare: number;
+  health_benefits: number;
+  traditional_401k: number;
+  roth_401k: number;
+  esop: number;
+}
+
+/** Payroll flow totals for its period */
+export interface PayrollSummary {
+  taxes: number;
+  health_benefits: number;
+  payroll_investments: number;
+  take_home: number;
+  expenses: number;
+  housing: number;
+  savings_transfers: number;
+  loan_principal: number;
+  unallocated: number;
+  /** Tracked spending + saving beyond take-home pay */
+  uncovered: number;
+  /** Months in the period with any spending, out of period_months */
+  months_with_data: number;
+  period_months: number;
+  people: PayrollPerson[];
 }
 
 export async function getSankeyData(params: {

@@ -24,9 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.account import Account, Category, Transaction
+from app.models.property import Property
+from app.models.property_details import Loan
 from app.models.salary_withholdings import SalaryWithholding
 from app.models.user import User
-from app.services.report_types import load_report_types, report_type_expr
+from app.services.loan_split import match_loan, split_loan_payment
+from app.services.report_types import load_report_types, report_type_expr, spending_filters
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -93,6 +96,14 @@ _PLAID_EXPENSE_COLORS: dict[str, str] = {
     "pets":             "#84cc16",   # lime
     "taxes":            "#dc2626",   # red
     "other expenses":   "#94a3b8",   # cool-gray
+    # App taxonomy groups ("Group > Item" categories)
+    "health & medical": "#ef4444",
+    "kids & family":    "#14b8a6",
+    "gifts & donations": "#d946ef",
+    "financial":        "#64748b",
+    "business":         "#78716c",
+    "miscellaneous":    "#94a3b8",
+    "uncategorized":    "#cbd5e1",
 }
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
@@ -111,6 +122,41 @@ class SankeyLink(BaseModel):
     value: float
 
 
+class PayrollPerson(BaseModel):
+    """One earner's full-year W-2 figures."""
+    user_id: str
+    name: str
+    employer: str
+    gross: float
+    federal_tax: float
+    state_tax: float
+    social_security: float
+    medicare: float
+    health_benefits: float
+    traditional_401k: float
+    roth_401k: float
+    esop: float
+
+
+class PayrollSummary(BaseModel):
+    """Totals for the flow's period (W-2 figures prorated when the year is in progress)."""
+    taxes: float
+    health_benefits: float
+    payroll_investments: float
+    take_home: float
+    expenses: float
+    housing: float
+    savings_transfers: float
+    loan_principal: float
+    unallocated: float
+    # Tracked spending + saving beyond take-home pay (funded by other income or savings)
+    uncovered: float
+    # Months in the period that have any spending; low coverage makes rates meaningless
+    months_with_data: int
+    period_months: int
+    people: list[PayrollPerson]
+
+
 class SankeyResponse(BaseModel):
     nodes: list[SankeyNode]
     links: list[SankeyLink]
@@ -122,6 +168,10 @@ class SankeyResponse(BaseModel):
     is_annual: bool = False
     sankey_type: str = "standard"
     gross_income: float = 0.0
+    period_start: date | None = None
+    period_end: date | None = None
+    prorated: bool = False
+    payroll: PayrollSummary | None = None
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -175,8 +225,15 @@ async def _build_annual_payroll_sankey(
     year: int,
     db: AsyncSession,
     members: dict[uuid.UUID, str],
-) -> SankeyResponse:
-    """Build a 4-layer payroll Sankey from W-2 data + annual transactions."""
+) -> SankeyResponse | None:
+    """Build a 4-layer payroll Sankey from W-2 data + the year's transactions.
+
+    For the current year the W-2 figures (entered as full-year amounts) are
+    prorated to the elapsed part of the year, so pay and spending cover the
+    same period.  Take-home pay then flows to spending by category (loan
+    payments count interest/escrow only), to savings transfers, to loan
+    principal, and whatever is left is "Unallocated".
+    """
     result = await db.execute(
         select(SalaryWithholding).where(
             SalaryWithholding.household_id == household_id,
@@ -187,6 +244,18 @@ async def _build_annual_payroll_sankey(
 
     if not w2_records:
         return None  # caller falls back to standard flow
+
+    # ── Period ───────────────────────────────────────────────────────────────
+    today = date.today()
+    period_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    period_end = min(today, year_end) if year == today.year else year_end
+    days_in_year = (year_end - period_start).days + 1
+    factor = Decimal((period_end - period_start).days + 1) / Decimal(days_in_year)
+    prorated = factor < 1
+
+    def part(value: Decimal | None) -> Decimal:
+        return (Decimal(str(value or 0)) * factor).quantize(Decimal("0.01"))
 
     nodes: list[SankeyNode] = []
     links: list[SankeyLink] = []
@@ -201,20 +270,19 @@ async def _build_annual_payroll_sankey(
     }
     l2_bucket_labels = {
         "l2_federal_tax": "Federal Tax",
-        "l2_state_tax": "State Tax (IL)",
+        "l2_state_tax": "State Tax",
         "l2_ss_tax": "Social Security",
         "l2_medicare_tax": "Medicare",
         "l2_health_benefits": "Health & Benefits",
     }
 
     l3_investments_total = Decimal("0")
-    l3_expense_pool_total = Decimal("0")
+    take_home_total = Decimal("0")
     l4_trad_401k_total = Decimal("0")
     l4_roth_401k_total = Decimal("0")
     l4_esop_total = Decimal("0")
     gross_total = Decimal("0")
-
-    person_nets: list[tuple[uuid.UUID, str, Decimal]] = []  # (uid, l1_node_id, net)
+    people: list[PayrollPerson] = []
 
     # ── Layer 1 + 2 ─────────────────────────────────────────────────────────
     for i, rec in enumerate(w2_records):
@@ -224,71 +292,60 @@ async def _build_annual_payroll_sankey(
 
         name = members.get(rec.user_id, rec.employer_name or f"Person {i+1}")
         employer = rec.employer_name or ""
-        label = f"{name}"
-        if employer:
-            label = f"{name} ({employer})"
+        label = f"{name} ({employer})" if employer else name
 
-        gross = Decimal(str(rec.gross_wages))
+        gross = part(rec.gross_wages)
         gross_total += gross
         color = _L1_PERSON_COLORS[i % len(_L1_PERSON_COLORS)]
 
         nodes.append(SankeyNode(id=l1_id, label=label, color=color, value=float(gross)))
 
-        # Per-person deductions for L2 buckets
-        ded_federal = Decimal(str(rec.federal_income_tax))
-        ded_state = Decimal(str(rec.state_income_tax))
-        ded_ss = Decimal(str(rec.social_security_tax))
-        ded_medicare = Decimal(str(rec.medicare_tax))
-        ded_health = Decimal(str(rec.health_insurance))
-
-        l2_buckets["l2_federal_tax"] += ded_federal
-        l2_buckets["l2_state_tax"] += ded_state
-        l2_buckets["l2_ss_tax"] += ded_ss
-        l2_buckets["l2_medicare_tax"] += ded_medicare
-        l2_buckets["l2_health_benefits"] += ded_health
-
-        total_ded = ded_federal + ded_state + ded_ss + ded_medicare + ded_health
-        net = gross - total_ded
-
-        # L1 → L2 deduction bucket links (per-person amounts)
-        for bucket_id, ded_amt in [
-            ("l2_federal_tax", ded_federal),
-            ("l2_state_tax", ded_state),
-            ("l2_ss_tax", ded_ss),
-            ("l2_medicare_tax", ded_medicare),
-            ("l2_health_benefits", ded_health),
-        ]:
+        deductions = {
+            "l2_federal_tax": part(rec.federal_income_tax),
+            "l2_state_tax": part(rec.state_income_tax),
+            "l2_ss_tax": part(rec.social_security_tax),
+            "l2_medicare_tax": part(rec.medicare_tax),
+            "l2_health_benefits": part(rec.health_insurance),
+        }
+        for bucket_id, ded_amt in deductions.items():
+            l2_buckets[bucket_id] += ded_amt
             if ded_amt > 0:
                 links.append(SankeyLink(source=l1_id, target=bucket_id, value=float(ded_amt)))
 
-        # Net node per person
-        nodes.append(SankeyNode(
-            id=l2_net_id,
-            label=f"Net ({name})",
-            color="#94a3b8",
-            value=float(net),
-        ))
+        net = gross - sum(deductions.values(), Decimal("0"))
+        nodes.append(SankeyNode(id=l2_net_id, label=f"Net ({name})", color="#94a3b8", value=float(net)))
         links.append(SankeyLink(source=l1_id, target=l2_net_id, value=float(net)))
 
         # L3 investments from this person's net
-        invest_amt = (
-            Decimal(str(rec.traditional_401k))
-            + Decimal(str(rec.roth_401k))
-            + Decimal(str(rec.esop_income))
-        )
-        expense_pool_amt = net - invest_amt
+        trad, roth, esop = part(rec.traditional_401k), part(rec.roth_401k), part(rec.esop_income)
+        invest_amt = trad + roth + esop
+        take_home = net - invest_amt
         l3_investments_total += invest_amt
-        l3_expense_pool_total += expense_pool_amt
-
-        l4_trad_401k_total += Decimal(str(rec.traditional_401k))
-        l4_roth_401k_total += Decimal(str(rec.roth_401k))
-        l4_esop_total += Decimal(str(rec.esop_income))
+        take_home_total += take_home
+        l4_trad_401k_total += trad
+        l4_roth_401k_total += roth
+        l4_esop_total += esop
 
         if invest_amt > 0:
             links.append(SankeyLink(source=l2_net_id, target="l3_investments", value=float(invest_amt)))
-        links.append(SankeyLink(source=l2_net_id, target="l3_expense_pool", value=float(expense_pool_amt)))
+        links.append(SankeyLink(source=l2_net_id, target="l3_expense_pool", value=float(take_home)))
 
-        person_nets.append((rec.user_id, l2_net_id, net))
+        # Full-year W-2 figures per earner (not prorated)
+        full = lambda v: float(v or 0)  # noqa: E731
+        people.append(PayrollPerson(
+            user_id=str(rec.user_id),
+            name=name,
+            employer=employer,
+            gross=full(rec.gross_wages),
+            federal_tax=full(rec.federal_income_tax),
+            state_tax=full(rec.state_income_tax),
+            social_security=full(rec.social_security_tax),
+            medicare=full(rec.medicare_tax),
+            health_benefits=full(rec.health_insurance),
+            traditional_401k=full(rec.traditional_401k),
+            roth_401k=full(rec.roth_401k),
+            esop=full(rec.esop_income),
+        ))
 
     # ── Layer 2 deduction bucket nodes ──────────────────────────────────────
     for bucket_id, total_amt in l2_buckets.items():
@@ -303,129 +360,140 @@ async def _build_annual_payroll_sankey(
     # ── Layer 3 nodes ────────────────────────────────────────────────────────
     nodes.append(SankeyNode(
         id="l3_investments",
-        label="Investments",
+        label="Payroll investing",
         color=_PAYROLL_NODE_COLORS["l3_investments"],
         value=float(l3_investments_total),
     ))
     nodes.append(SankeyNode(
         id="l3_expense_pool",
-        label="Spending Pool",
+        label="Take-home",
         color=_PAYROLL_NODE_COLORS["l3_expense_pool"],
-        value=float(l3_expense_pool_total),
+        value=float(take_home_total),
     ))
 
     # ── Layer 4 investment breakdown nodes + links ───────────────────────────
-    if l4_trad_401k_total > 0:
-        nodes.append(SankeyNode(id="l4_trad_401k", label="Traditional 401k", color=_PAYROLL_NODE_COLORS["l4_trad_401k"], value=float(l4_trad_401k_total)))
-        links.append(SankeyLink(source="l3_investments", target="l4_trad_401k", value=float(l4_trad_401k_total)))
-    if l4_roth_401k_total > 0:
-        nodes.append(SankeyNode(id="l4_roth_401k", label="Roth 401k", color=_PAYROLL_NODE_COLORS["l4_roth_401k"], value=float(l4_roth_401k_total)))
-        links.append(SankeyLink(source="l3_investments", target="l4_roth_401k", value=float(l4_roth_401k_total)))
-    if l4_esop_total > 0:
-        nodes.append(SankeyNode(id="l4_esop_stock", label="ESOP / Stock", color=_PAYROLL_NODE_COLORS["l4_esop_stock"], value=float(l4_esop_total)))
-        links.append(SankeyLink(source="l3_investments", target="l4_esop_stock", value=float(l4_esop_total)))
+    for node_id, label, amt in [
+        ("l4_trad_401k", "Traditional 401k", l4_trad_401k_total),
+        ("l4_roth_401k", "Roth 401k", l4_roth_401k_total),
+        ("l4_esop_stock", "ESOP / Stock", l4_esop_total),
+    ]:
+        if amt > 0:
+            nodes.append(SankeyNode(id=node_id, label=label, color=_PAYROLL_NODE_COLORS[node_id], value=float(amt)))
+            links.append(SankeyLink(source="l3_investments", target=node_id, value=float(amt)))
 
-    # ── Layer 4 expense category nodes from annual transactions ─────────────
-    start_date = date(year, 1, 1)
-    end_date = date(year, 12, 31)
-
-    # Income/spending only: excludes transfers and savings, honouring the
-    # household's "Counts as" category settings
-    not_a_transfer = report_type_expr(await load_report_types(db, household_id)) == "cashflow"
-
-    property_expense_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in ["home improvement", "home services", "property tax", "home insurance"]
+    # ── Layer 4 outflows of take-home pay, from the period's transactions ───
+    report_types = await load_report_types(db, household_id)
+    in_period = [
+        Transaction.household_id == household_id,
+        Transaction.date >= period_start,
+        Transaction.date <= period_end,
     ]
-    not_property_expense = not_(or_(*property_expense_conditions))
 
-    rental_conditions = [
-        func.lower(Transaction.plaid_category).like(f"{p.lower()}%")
-        for p in ["income > rental", "rental income"]
-    ]
-    not_rental_income = not_(or_(*rental_conditions))
+    loans = (await db.execute(
+        select(Loan).join(Property, Property.id == Loan.property_id)
+        .where(Property.household_id == household_id)
+    )).scalars().all()
 
-    expense_rows = await db.execute(
+    spend_rows = await db.execute(
         select(
-            Transaction.amount,
-            Transaction.plaid_category,
-            Category.name.label("cat_name"),
-            Category.color.label("cat_color"),
-            Category.is_income,
-            Category.is_transfer,
-            Category.is_property_expense,
+            Transaction.amount, Transaction.date, Transaction.plaid_category,
+            Transaction.name, Transaction.merchant_name,
         )
         .outerjoin(Account, Account.id == Transaction.account_id)
-        .outerjoin(Category, Category.id == Transaction.custom_category_id)
-        .where(
-            Transaction.household_id == household_id,
-            Transaction.is_ignored == False,  # noqa: E712
-            Transaction.pending == False,  # noqa: E712
-            Transaction.date >= start_date,
-            Transaction.date <= end_date,
-            not_a_transfer,
-            not_property_expense,
-            not_rental_income,
-            Transaction.amount > 0,
-            or_(Category.id.is_(None), Category.is_transfer == False),   # noqa: E712
-            or_(Category.id.is_(None), Category.is_income == False),     # noqa: E712
-            or_(Category.id.is_(None), Category.is_property_expense == False),  # noqa: E712
-            or_(
-                Account.id.is_(None),
-                and_(Account.entity_id.is_(None), Account.account_scope != "business"),
-            ),
-        )
+        .where(*in_period, *spending_filters(report_types))
     )
 
     expense_totals: dict[str, Decimal] = {}
-    expense_colors: dict[str, str] = {}
+    loan_principal = Decimal("0")
+    months_with_data: set[tuple[int, int]] = set()
+    for row in spend_rows:
+        months_with_data.add((row.date.year, row.date.month))
+        amount = Decimal(str(row.amount))
+        group = (row.plaid_category or "Uncategorized").split(" > ")[0].strip() or "Uncategorized"
+        loan = match_loan(amount, row.plaid_category, row.name, row.merchant_name, loans)
+        if loan is not None:
+            split = split_loan_payment(amount, row.date, loan)
+            if split is not None:
+                loan_principal += split.principal
+                amount = split.interest + split.escrow
+            # Mortgage interest and escrow are housing costs, whatever the category says
+            if (loan.loan_type or "mortgage") in ("mortgage", "heloc", "second_mortgage"):
+                group = "Housing"
+        expense_totals[group] = expense_totals.get(group, Decimal("0")) + amount
 
-    for row in expense_rows:
-        if row.cat_name and not row.is_income and not row.is_transfer:
-            label = row.cat_name
-            color = row.cat_color or _PLAID_EXPENSE_COLORS.get(label.lower(), _EXPENSE_FALLBACK_COLOR)
-        else:
-            cat_key = _plaid_to_expense_category(row.plaid_category)
-            label = cat_key.title()
-            color = _PLAID_EXPENSE_COLORS.get(cat_key, _EXPENSE_FALLBACK_COLOR)
-        expense_totals[label] = expense_totals.get(label, Decimal("0")) + Decimal(str(row.amount))
-        if label not in expense_colors:
-            expense_colors[label] = color
+    savings_transfers = (await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .outerjoin(Account, Account.id == Transaction.account_id)
+        .where(
+            *in_period,
+            Transaction.is_ignored == False,  # noqa: E712
+            Transaction.pending == False,  # noqa: E712
+            Transaction.amount > 0,
+            report_type_expr(report_types) == "savings",
+            or_(Account.id.is_(None), and_(Account.entity_id.is_(None), Account.account_scope != "business")),
+        )
+    )).scalar_one()
+    savings_transfers = Decimal(str(savings_transfers or 0))
 
     total_expenses = sum(expense_totals.values(), Decimal("0"))
-    pool_fraction_used = Decimal("0")
+    housing = expense_totals.get("Housing", Decimal("0"))
 
+    # Flow order: spending (largest first), then saving; capped at take-home
+    outflows: list[tuple[str, str, str, Decimal]] = []
     for label, amt in sorted(expense_totals.items(), key=lambda x: x[1], reverse=True):
-        if amt <= 0:
+        slug = label.lower().replace(" ", "_").replace("/", "_").replace("&", "and")
+        color = _PLAID_EXPENSE_COLORS.get(label.lower(), _EXPENSE_FALLBACK_COLOR)
+        outflows.append((f"l4_{slug}", label, color, amt))
+    outflows.append(("l4_savings_transfers", "Savings & investing", "#10b981", savings_transfers))
+    outflows.append(("l4_loan_principal", "Loan principal (equity)", "#0d9488", loan_principal))
+
+    used = Decimal("0")
+    for node_id, label, color, amt in outflows:
+        if amt <= Decimal("0.01"):
             continue
-        node_id = f"l4_{label.lower().replace(' ', '_').replace('/', '_').replace('&', 'and')}"
-        nodes.append(SankeyNode(
-            id=node_id,
-            label=label,
-            color=expense_colors.get(label, _EXPENSE_FALLBACK_COLOR),
-            value=float(amt),
-        ))
-        link_val = min(amt, l3_expense_pool_total - pool_fraction_used)
+        nodes.append(SankeyNode(id=node_id, label=label, color=color, value=float(amt)))
+        link_val = min(amt, take_home_total - used)
         if link_val > Decimal("0.01"):
             links.append(SankeyLink(source="l3_expense_pool", target=node_id, value=float(link_val)))
-            pool_fraction_used += link_val
+            used += link_val
 
-    remaining_pool = l3_expense_pool_total - pool_fraction_used
-    if remaining_pool > Decimal("0.01"):
-        nodes.append(SankeyNode(id="l4_remaining", label="Remaining / Saved", color=_REMAINING_COLOR, value=float(remaining_pool)))
-        links.append(SankeyLink(source="l3_expense_pool", target="l4_remaining", value=float(remaining_pool)))
+    unallocated = take_home_total - used
+    if unallocated > Decimal("0.01"):
+        nodes.append(SankeyNode(id="l4_remaining", label="Unallocated", color=_REMAINING_COLOR, value=float(unallocated)))
+        links.append(SankeyLink(source="l3_expense_pool", target="l4_remaining", value=float(unallocated)))
+
+    tracked_outflows = total_expenses + savings_transfers + loan_principal
+    taxes = sum((l2_buckets[k] for k in ("l2_federal_tax", "l2_state_tax", "l2_ss_tax", "l2_medicare_tax")), Decimal("0"))
 
     return SankeyResponse(
         nodes=nodes,
         links=links,
         total_income=float(gross_total),
         total_expenses=float(total_expenses),
-        remaining=float(max(Decimal("0"), l3_expense_pool_total - total_expenses)),
+        remaining=float(max(Decimal("0"), unallocated)),
         month=1,
         year=year,
         is_annual=True,
         sankey_type="payroll",
         gross_income=float(gross_total),
+        period_start=period_start,
+        period_end=period_end,
+        prorated=prorated,
+        payroll=PayrollSummary(
+            taxes=float(taxes),
+            health_benefits=float(l2_buckets["l2_health_benefits"]),
+            payroll_investments=float(l3_investments_total),
+            take_home=float(take_home_total),
+            expenses=float(total_expenses),
+            housing=float(housing),
+            savings_transfers=float(savings_transfers),
+            loan_principal=float(loan_principal),
+            unallocated=float(max(Decimal("0"), unallocated)),
+            uncovered=float(max(Decimal("0"), tracked_outflows - take_home_total)),
+            months_with_data=len(months_with_data),
+            period_months=period_end.month - period_start.month + 1,
+            people=people,
+        ),
     )
 
 
