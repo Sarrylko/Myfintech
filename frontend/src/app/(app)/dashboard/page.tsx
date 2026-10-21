@@ -457,7 +457,7 @@ function SankeyDashboardSection() {
 
   const periodLabel = (() => {
     if (!data?.period_start || !data.period_end) return null;
-    const d = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(locale, { month: "short", day: "numeric" });
+    const d = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString(locale, { month: "short", day: "numeric" });
     return `${d(data.period_start)} – ${d(data.period_end)}, ${data.year}`;
   })();
   const savedTotal = data?.payroll

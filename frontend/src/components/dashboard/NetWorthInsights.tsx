@@ -54,8 +54,10 @@ function avgMonthlySpending(transactions: Transaction[], reportTypes: Record<str
     const end = new Date(now.getFullYear(), now.getMonth() - back + 1, 1);
     let total = 0, seen = false;
     for (const t of transactions) {
-      const d = new Date(`${t.date}T00:00:00`);
-      if (d < start || d >= end) continue;
+      // Dates arrive as "YYYY-MM-DDT00:00:00"; read the calendar day in local time
+      const [y, m, day] = t.date.slice(0, 10).split("-").map(Number);
+      const d = new Date(y, m - 1, day);
+      if (Number.isNaN(d.getTime()) || d < start || d >= end) continue;
       seen = true;
       const amt = parseFloat(t.amount);
       if (amt <= 0 || t.is_ignored || t.pending || t.is_business || t.is_property_expense) continue;
