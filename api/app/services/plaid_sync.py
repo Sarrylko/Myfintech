@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import decrypt_value
-from app.models.account import Account, PlaidItem, Transaction
+from app.models.account import Account, PlaidItem, Transaction, TransactionReceipt
 from app.models.property_details import Loan
 from app.models.rule import CategorizationRule
+from app.services.category_map import map_legacy_category
 from app.worker import celery_app
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ def normalize_plaid_category(plaid_cat: str | None, account_type: str | None) ->
         if not sub:
             return "Transfers"
         return f"Transfers > {_TRANSFER_SUBCATEGORIES.get(sub.strip().lower(), sub.strip())}"
-    return plaid_cat
+    return map_legacy_category(plaid_cat)
 
 
 def build_plaid_client():
@@ -355,8 +356,49 @@ async def sync_plaid_item(item: PlaidItem, db: AsyncSession) -> dict:
             if not matched and not txn.plaid_category:
                 txn.plaid_category = "Uncategorized"
 
+            # A posted transaction replacing a pending one keeps the user's edits
+            if pt.pending_transaction_id:
+                prev = (await db.execute(
+                    select(Transaction).where(Transaction.plaid_transaction_id == pt.pending_transaction_id)
+                )).scalar_one_or_none()
+                if prev is not None:
+                    if prev.is_manual_category:
+                        txn.plaid_category = prev.plaid_category
+                        txn.is_manual_category = True
+                    txn.notes = prev.notes
+
             db.add(txn)
             added_count += 1
+
+        # Plaid revises transactions (e.g. a pending amount settling differently)
+        for pt in sync_resp.modified:
+            row = (await db.execute(
+                select(Transaction).where(Transaction.plaid_transaction_id == pt.transaction_id)
+            )).scalar_one_or_none()
+            if row is None:
+                continue
+            row.amount = Decimal(str(pt.amount))
+            row.date = datetime(pt.date.year, pt.date.month, pt.date.day, tzinfo=timezone.utc)
+            row.name = pt.name
+            row.merchant_name = pt.merchant_name
+            row.pending = pt.pending
+
+        # ...and removes them — chiefly pending charges once their posted
+        # version arrives (as a new transaction above). Without this every
+        # pending charge lingered next to its posted copy.
+        for removed in sync_resp.removed:
+            row = (await db.execute(
+                select(Transaction).where(Transaction.plaid_transaction_id == removed.transaction_id)
+            )).scalar_one_or_none()
+            if row is None:
+                continue
+            has_receipt = (await db.execute(
+                select(TransactionReceipt.id).where(TransactionReceipt.transaction_id == row.id)
+            )).first() is not None
+            if row.has_splits or has_receipt or row.notes or row.is_manual_category:
+                row.is_ignored = True  # keep the user's attachments; just hide it
+            else:
+                await db.delete(row)
 
         cursor = sync_resp.next_cursor
         has_more = sync_resp.has_more

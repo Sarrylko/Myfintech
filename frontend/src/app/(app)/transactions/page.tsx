@@ -18,6 +18,8 @@ import {
   monthRange,
 } from "@/lib/transactionFilters";
 import { LoanPaymentSplit, matchLoan, splitLoanPayment } from "@/lib/loanSplit";
+import { comparisonWindows, monthKeyOf, trailingMonthKeys } from "@/lib/periods";
+import IncomeAllocation from "@/components/transactions/IncomeAllocation";
 import {
   categoryGroup,
   categoryMatches,
@@ -1530,7 +1532,9 @@ export default function TransactionsPage() {
   const amountMin = filters.amountMin === "" ? null : parseFloat(filters.amountMin);
   const amountMax = filters.amountMax === "" ? null : parseFloat(filters.amountMax);
 
-  const filtered = useMemo(() => transactions.filter((t) => {
+  // Every filter except the date range — the 12-month chart and the previous-
+  // period comparison reuse it with their own date windows
+  const filteredNoDate = useMemo(() => transactions.filter((t) => {
     if (t.account_id && !countryAccountIds.has(t.account_id)) return false;
     if (!showIgnored && t.is_ignored) return false;
     const rt = txnReportType(t);
@@ -1548,10 +1552,6 @@ export default function TransactionsPage() {
       (t.merchant_name ?? "").toLowerCase().includes(q) ||
       (t.plaid_category ?? "").toLowerCase().includes(q) ||
       (t.notes ?? "").toLowerCase().includes(q);
-    const txnDate = new Date(t.date);
-    const matchDate =
-      (!effectiveFrom || txnDate >= effectiveFrom) &&
-      (!effectiveTo   || txnDate <= effectiveTo);
     if (filters.merchants.length > 0 && !filters.merchants.includes(merchantKey(t))) return false;
     if (filters.people.length > 0 && !filters.people.includes(personOf(t))) return false;
     const amt = parseFloat(t.amount);
@@ -1559,41 +1559,120 @@ export default function TransactionsPage() {
     if (filters.direction === "expense" && amt <= 0) return false;
     if (amountMin !== null && !isNaN(amountMin) && Math.abs(amt) < amountMin) return false;
     if (amountMax !== null && !isNaN(amountMax) && Math.abs(amt) > amountMax) return false;
-    return matchAccount && matchCategory && matchSearch && matchDate;
-  }), [transactions, countryAccountIds, showIgnored, hideTransfers, hideSavings, hideBusiness, txnReportType, selectedAccount, includeKeys, excludeKeys, search, effectiveFrom, effectiveTo, filters.merchants, filters.people, filters.direction, amountMin, amountMax, personOf]);
+    return matchAccount && matchCategory && matchSearch;
+  }), [transactions, countryAccountIds, showIgnored, hideTransfers, hideSavings, hideBusiness, txnReportType, selectedAccount, includeKeys, excludeKeys, search, filters.merchants, filters.people, filters.direction, amountMin, amountMax, personOf]);
+
+  const inWindow = (t: Transaction, from: Date | null, to: Date | null) => {
+    const d = new Date(t.date);
+    return (!from || d >= from) && (!to || d <= to);
+  };
+  const fromMs = effectiveFrom?.getTime() ?? null;
+  const toMs = effectiveTo?.getTime() ?? null;
+  const filtered = useMemo(
+    () => filteredNoDate.filter((t) => inWindow(t, effectiveFrom, effectiveTo)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredNoDate, fromMs, toMs],
+  );
 
   const isCashflow = useCallback((t: Transaction) => txnReportType(t) === "cashflow", [txnReportType]);
 
-  const totalExpenses = useMemo(() => filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending && isCashflow(t) && !t.is_property_expense && !t.is_business).reduce((s, t) => s + spendPart(t), 0), [filtered, isCashflow, spendPart]);
-  const totalIncome = useMemo(() => filtered.filter((t) => parseFloat(t.amount) < 0 && !t.pending && isCashflow(t) && !t.is_rental_income && !t.is_business).reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0), [filtered, isCashflow]);
-  // Net contributions to savings/investments (withdrawals subtract)
-  const totalLoanPrincipal = useMemo(() => filtered.filter((t) => !t.pending && !t.is_business && !t.is_property_expense).reduce((s, t) => s + (loanSplits.get(t.id)?.principal ?? 0), 0), [filtered, loanSplits]);
-  const totalSaved = useMemo(() => filtered.filter((t) => !t.pending && !t.is_business && txnReportType(t) === "savings").reduce((s, t) => s + parseFloat(t.amount), 0) + totalLoanPrincipal, [filtered, txnReportType, totalLoanPrincipal]);
+  /** Income, spending, savings contributions and loan principal for a set of transactions */
+  const summarize = useCallback((txns: Transaction[]) => {
+    let expenses = 0, income = 0, contributions = 0, principal = 0;
+    for (const t of txns) {
+      if (t.pending || t.is_business) continue;
+      const amt = parseFloat(t.amount);
+      const rt = txnReportType(t);
+      if (rt === "cashflow") {
+        if (amt > 0 && !t.is_property_expense) {
+          expenses += spendPart(t);
+          principal += loanSplits.get(t.id)?.principal ?? 0;
+        } else if (amt < 0 && !t.is_rental_income) {
+          income += -amt;
+        }
+      } else if (rt === "savings") {
+        contributions += amt; // withdrawals (negative) subtract
+      }
+    }
+    return { expenses, income, contributions, principal };
+  }, [txnReportType, spendPart, loanSplits]);
+
+  const totals = useMemo(() => summarize(filtered), [filtered, summarize]);
+  const totalExpenses = totals.expenses;
+  const totalIncome = totals.income;
+  const totalLoanPrincipal = totals.principal;
+  const totalSaved = totals.contributions + totals.principal;
   const netCashFlow = totalIncome - totalExpenses;
+  const savingsRate = totalIncome > 0 ? totalSaved / totalIncome : null;
+
+  // ── Same stretch of the previous period, and a month-end projection ─────────
+  const comparison = useMemo(() => {
+    const w = comparisonWindows(effectiveFrom, effectiveTo);
+    if (!w) return null;
+    const prev = summarize(filteredNoDate.filter((t) => inWindow(t, w.prevFrom, w.prevTo)));
+    const prevFull = summarize(filteredNoDate.filter((t) => inWindow(t, w.prevFrom, w.prevFullTo)));
+    const fmtDay = (d: Date) => d.toLocaleDateString(locale, { month: "short", day: "numeric" });
+    // Projection: what's been spent so far + what was still to come last period
+    // (handles lumpy bills like a mortgage on the 1st better than a daily rate)
+    const projectedExpenses = w.inProgress ? totals.expenses + Math.max(0, prevFull.expenses - prev.expenses) : null;
+    return { prev, label: `${fmtDay(w.prevFrom)}–${fmtDay(w.prevTo)}`, projectedExpenses };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredNoDate, summarize, fromMs, toMs, totals, locale]);
+
+  /** "↑12%" style change vs the comparison period; null when not meaningful */
+  const pctChange = (now: number, before: number) =>
+    before > 0 ? Math.round(((now - before) / before) * 100) : null;
+  function changeVsPrev(now: number, before: number, upIsGood: boolean) {
+    const pct = pctChange(now, before);
+    if (pct === null || !comparison) return null;
+    const good = pct === 0 ? null : (pct > 0) === upIsGood;
+    return (
+      <p className="text-[10px] mt-1 tabular-nums text-gray-400 dark:text-gray-500" title={`${fmt(before)} in ${comparison.label}`}>
+        <span className={good === null ? "" : good ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-red-600 dark:text-red-400 font-semibold"}>
+          {pct > 0 ? "↑" : pct < 0 ? "↓" : "→"}{Math.abs(pct)}%
+        </span>{" "}
+        vs {comparison.label}
+      </p>
+    );
+  }
 
   // ── Chart data ──────────────────────────────────────────────────────────────
+  // Always the 12 months ending at the selected range (or today), so a single-
+  // month selection still has context; the selected months are highlighted
   const monthlyTrend = useMemo(() => {
-    const months: Record<string, { key: string; label: string; expenses: number; income: number }> = {};
-    for (const t of filtered) {
-      if (t.pending || !isCashflow(t) || t.is_rental_income || t.is_property_expense || t.is_business) continue;
-      const d = new Date(t.date);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const label = d.toLocaleDateString(locale, { month: "short", year: "2-digit" });
-      if (!months[key]) months[key] = { key, label, expenses: 0, income: 0 };
-      const amt = parseFloat(t.amount);
-      if (amt > 0) months[key].expenses += spendPart(t);
-      else months[key].income += Math.abs(amt);
+    const now = new Date();
+    const anchor = effectiveTo && effectiveTo < now ? effectiveTo : now;
+    const keys = trailingMonthKeys(anchor);
+    const byMonth: Record<string, Transaction[]> = Object.fromEntries(keys.map((k) => [k, []]));
+    for (const t of filteredNoDate) {
+      const k = monthKeyOf(new Date(t.date));
+      if (byMonth[k]) byMonth[k].push(t);
     }
-    return Object.values(months)
-      .sort((a, b) => a.key.localeCompare(b.key))
-      .slice(-12);
-  }, [filtered, isCashflow, spendPart]);
+    const fromKey = effectiveFrom ? monthKeyOf(effectiveFrom) : null;
+    const toKey = effectiveTo ? monthKeyOf(effectiveTo) : null;
+    return keys.map((key) => {
+      const s = summarize(byMonth[key]);
+      const [y, m] = key.split("-").map(Number);
+      const saved = s.contributions + s.principal;
+      return {
+        key,
+        label: new Date(y, m - 1, 1).toLocaleDateString(locale, { month: "short", year: "2-digit" }),
+        expenses: s.expenses,
+        income: s.income,
+        savingsRate: s.income > 0 ? Math.round((saved / s.income) * 100) : null,
+        selected: (!fromKey || key >= fromKey) && (!toKey || key <= toKey),
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredNoDate, summarize, fromMs, toMs, locale]);
 
+  // Averages over months that had any activity
   const monthlyTrendAverages = useMemo(() => {
-    if (monthlyTrend.length === 0) return { income: 0, expenses: 0 };
+    const active = monthlyTrend.filter((m) => m.income > 0 || m.expenses > 0);
+    if (active.length === 0) return { income: 0, expenses: 0 };
     return {
-      income: monthlyTrend.reduce((sum, m) => sum + m.income, 0) / monthlyTrend.length,
-      expenses: monthlyTrend.reduce((sum, m) => sum + m.expenses, 0) / monthlyTrend.length,
+      income: active.reduce((sum, m) => sum + m.income, 0) / active.length,
+      expenses: active.reduce((sum, m) => sum + m.expenses, 0) / active.length,
     };
   }, [monthlyTrend]);
 
@@ -1900,8 +1979,19 @@ export default function TransactionsPage() {
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Expenses</p>
             </div>
-            <p className="text-xl font-bold text-red-600 dark:text-red-400 tabular-nums">-{fmt(totalExpenses)}</p>
-            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Transfers, savings & property expenses excluded</p>
+            <p className="text-xl font-bold text-red-600 dark:text-red-400 tabular-nums" title="Transfers, savings & property expenses excluded">-{fmt(totalExpenses)}</p>
+            {comparison ? (
+              <>
+                {changeVsPrev(totalExpenses, comparison.prev.expenses, false)}
+                {comparison.projectedExpenses !== null && (
+                  <p className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums" title="Spent so far plus what was still to come at this point last period">
+                    On pace for {fmt(comparison.projectedExpenses)}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Transfers, savings & property expenses excluded</p>
+            )}
           </div>
           <div className="bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/40 dark:to-slate-800 rounded-xl border border-emerald-100 dark:border-emerald-900/30 p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -1910,8 +2000,12 @@ export default function TransactionsPage() {
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Income</p>
             </div>
-            <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">+{fmt(totalIncome)}</p>
-            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Transfers excluded</p>
+            <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums" title="Transfers excluded">+{fmt(totalIncome)}</p>
+            {comparison ? (
+              changeVsPrev(totalIncome, comparison.prev.income, true)
+            ) : (
+              <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Transfers excluded</p>
+            )}
           </div>
           <div className={`bg-gradient-to-br ${netCashFlow >= 0 ? "from-blue-50 to-white dark:from-blue-950/40 dark:to-slate-800 border-blue-100 dark:border-blue-900/30" : "from-orange-50 to-white dark:from-orange-950/40 dark:to-slate-800 border-orange-100 dark:border-orange-900/30"} rounded-xl border p-4`}>
             <div className="flex items-center gap-2 mb-2">
@@ -1932,7 +2026,14 @@ export default function TransactionsPage() {
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Saved &amp; Invested</p>
             </div>
-            <p className="text-xl font-bold text-violet-600 dark:text-violet-400 tabular-nums">{totalSaved >= 0 ? "" : "-"}{fmt(Math.abs(totalSaved))}</p>
+            <p className="text-xl font-bold text-violet-600 dark:text-violet-400 tabular-nums">
+              {totalSaved >= 0 ? "" : "-"}{fmt(Math.abs(totalSaved))}
+              {savingsRate !== null && (
+                <span className="text-xs font-semibold text-violet-500 dark:text-violet-300 ml-2" title="Savings rate: saved & invested (incl. loan principal) ÷ income">
+                  {Math.round(savingsRate * 100)}% of income
+                </span>
+              )}
+            </p>
             <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">
               {totalLoanPrincipal > 0 ? `Incl. ${fmt(totalLoanPrincipal)} loan principal (est.)` : "Categories counted as savings"}
             </p>
@@ -1947,6 +2048,16 @@ export default function TransactionsPage() {
             <p className="text-xl font-bold text-gray-900 dark:text-white tabular-nums">{filtered.length.toLocaleString()}</p>
           </div>
         </div>
+      )}
+
+      {filtered.length > 0 && (
+        <IncomeAllocation
+          income={totalIncome}
+          spending={totalExpenses}
+          contributions={totals.contributions}
+          principal={totalLoanPrincipal}
+          fmt={fmt}
+        />
       )}
 
       {/* ── Analytics ────────────────────────────────────────────── */}

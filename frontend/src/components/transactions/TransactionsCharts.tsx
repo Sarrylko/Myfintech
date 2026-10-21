@@ -2,7 +2,7 @@
 
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-  PieChart, Pie, Cell, ReferenceLine,
+  PieChart, Pie, Cell, ReferenceLine, ComposedChart, Line,
 } from "recharts";
 
 interface MonthlyTrendPoint {
@@ -10,6 +10,10 @@ interface MonthlyTrendPoint {
   label: string;
   expenses: number;
   income: number;
+  /** (saved + loan principal) ÷ income, in percent; null without income */
+  savingsRate: number | null;
+  /** Whether the month falls in the selected date range */
+  selected: boolean;
 }
 
 interface NamedAmount {
@@ -68,54 +72,55 @@ export default function TransactionsCharts({
       {/* Row 1: Monthly Cash Flow + Top Categories */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
 
-        {/* Monthly Cash Flow */}
+        {/* Monthly Cash Flow — always the trailing 12 months; selected months highlighted */}
         <div className="lg:col-span-3 bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
             <div>
               <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">Monthly Cash Flow</p>
-              <p className="text-xs text-gray-400 mt-0.5">Income vs expenses over time · click a month to drill in</p>
+              <p className="text-xs text-gray-400 mt-0.5">Last 12 months · click a month to drill in</p>
             </div>
-            <div className="flex items-center gap-3 text-xs text-gray-500">
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-finance-500 inline-block" />Income</span>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" />Expenses</span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-finance-500 inline-block" />Income <span className="text-gray-400 tabular-nums">avg {fmt(monthlyTrendAverages.income)}</span></span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" />Expenses <span className="text-gray-400 tabular-nums">avg {fmt(monthlyTrendAverages.expenses)}</span></span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 bg-violet-500 inline-block" />Savings rate</span>
             </div>
           </div>
-          {monthlyTrend.length === 0 ? (
+          {monthlyTrend.every((m) => m.income === 0 && m.expenses === 0) ? (
             <p className="text-xs text-gray-400 py-8 text-center">No data</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart
-                data={monthlyTrend}
-                barSize={12}
-                barCategoryGap="35%"
-                onClick={(e: ChartClick) => { const d = clickedDatum(e); if (d && onMonthClick) onMonthClick(String(d.key)); }}
-                style={{ cursor: onMonthClick ? "pointer" : undefined }}
-              >
-                <CartesianGrid strokeDasharray="4 4" stroke="#e4e8ed" strokeOpacity={0.5} vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} width={42} tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(v: number, name: string) => [fmt(v), name.charAt(0).toUpperCase() + name.slice(1)]} contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #c8d2db", boxShadow: "0 4px 12px rgba(0,51,102,0.08)" }} cursor={{ fill: "rgba(0,51,102,0.03)" }} />
-                <Bar dataKey="income"   name="income"   fill="#007A33" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="expenses" name="expenses" fill="#f43f5e" radius={[4, 4, 0, 0]} />
-                <ReferenceLine
-                  y={monthlyTrendAverages.income}
-                  stroke="#007A33"
-                  strokeDasharray="5 4"
-                  strokeWidth={1.5}
-                  ifOverflow="extendDomain"
-                  label={{ value: `Avg ${fmt(monthlyTrendAverages.income)}`, position: "insideTopLeft", fontSize: 10, fill: "#007A33" }}
-                />
-                <ReferenceLine
-                  y={monthlyTrendAverages.expenses}
-                  stroke="#f43f5e"
-                  strokeDasharray="5 4"
-                  strokeWidth={1.5}
-                  ifOverflow="extendDomain"
-                  label={{ value: `Avg ${fmt(monthlyTrendAverages.expenses)}`, position: "insideBottomLeft", fontSize: 10, fill: "#f43f5e" }}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
+          ) : (() => {
+            const someSelected = monthlyTrend.some((m) => m.selected) && !monthlyTrend.every((m) => m.selected);
+            const dim = (m: MonthlyTrendPoint) => (someSelected && !m.selected ? 0.3 : 1);
+            return (
+              <ResponsiveContainer width="100%" height={220}>
+                <ComposedChart
+                  data={monthlyTrend}
+                  barSize={12}
+                  barCategoryGap="30%"
+                  onClick={(e: ChartClick) => { const d = clickedDatum(e); if (d && onMonthClick) onMonthClick(String(d.key)); }}
+                  style={{ cursor: onMonthClick ? "pointer" : undefined }}
+                >
+                  <CartesianGrid strokeDasharray="4 4" stroke="#e4e8ed" strokeOpacity={0.5} vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="amt" tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} width={42} tick={{ fontSize: 11, fill: "#7a8fa6" }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="rate" orientation="right" tickFormatter={(v) => `${v}%`} width={38} tick={{ fontSize: 11, fill: "#8b5cf6" }} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    formatter={(v: number, name: string) => name === "savingsRate" ? [`${v}%`, "Savings rate"] : [fmt(v), name.charAt(0).toUpperCase() + name.slice(1)]}
+                    contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #c8d2db", boxShadow: "0 4px 12px rgba(0,51,102,0.08)" }}
+                    cursor={{ fill: "rgba(0,51,102,0.03)" }}
+                  />
+                  <ReferenceLine yAxisId="amt" y={monthlyTrendAverages.income} stroke="#007A33" strokeDasharray="5 4" strokeOpacity={0.6} ifOverflow="extendDomain" />
+                  <ReferenceLine yAxisId="amt" y={monthlyTrendAverages.expenses} stroke="#f43f5e" strokeDasharray="5 4" strokeOpacity={0.6} ifOverflow="extendDomain" />
+                  <Bar yAxisId="amt" dataKey="income" name="income" fill="#007A33" radius={[4, 4, 0, 0]}>
+                    {monthlyTrend.map((m) => <Cell key={m.key} opacity={dim(m)} />)}
+                  </Bar>
+                  <Bar yAxisId="amt" dataKey="expenses" name="expenses" fill="#f43f5e" radius={[4, 4, 0, 0]}>
+                    {monthlyTrend.map((m) => <Cell key={m.key} opacity={dim(m)} />)}
+                  </Bar>
+                  <Line yAxisId="rate" dataKey="savingsRate" name="savingsRate" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 2.5 }} connectNulls />
+                </ComposedChart>
+              </ResponsiveContainer>
+            );
+          })()}
         </div>
 
         {/* Top Spending Categories */}

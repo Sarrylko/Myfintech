@@ -45,7 +45,7 @@ _PLAID_PREFIXES: dict[str, list[str]] = {
     # Plaid uses "Health & Medical > ..." (pharmacy, doctor, etc.)
     "healthcare":        ["healthcare", "health & medical"],
     "utilities":         ["bills & utilities", "utilities"],
-    "subscriptions":     ["service > subscription", "subscription"],
+    "subscriptions":     ["service > subscription", "subscription", "entertainment > subscriptions"],
     # Plaid uses "Kids & Family > ..." and "Community > Education"
     "education":         ["education", "kids & family", "community > education"],
     "personal care":     ["personal care"],
@@ -55,7 +55,7 @@ _PLAID_PREFIXES: dict[str, list[str]] = {
     "gifts & charity":   ["gifts & donations", "charitable"],
     "pets":              ["pets"],
     # Plaid uses "Taxes > Federal Tax", "Taxes > State Tax", "Community > Government..."
-    "taxes":             ["taxes", "community > government"],
+    "taxes":             ["taxes", "community > government", "miscellaneous > government fees"],
     # income categories
     "salary":            ["income > salary", "transfer > payroll", "payroll"],
     "freelance":         ["income > freelance", "income > self"],
