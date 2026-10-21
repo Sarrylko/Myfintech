@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.core.redis import blacklist_token, is_blacklisted
+from app.core.redis import (
+    blacklist_token,
+    clear_login_failures,
+    is_blacklisted,
+    is_locked_out,
+    record_login_failure,
+)
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -85,10 +91,19 @@ async def login(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
+    # Lockout check before hitting the DB — avoids timing oracle
+    if await is_locked_out(payload.email):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Account temporarily locked due to too many failed attempts. Try again in 15 minutes.",
+        )
+
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
     if user is None or not verify_password(payload.password, user.hashed_password):
+        # Always record a failure (even for unknown emails — prevents user enumeration via timing)
+        await record_login_failure(payload.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -100,6 +115,7 @@ async def login(
             detail="Account is deactivated",
         )
 
+    await clear_login_failures(payload.email)
     _set_auth_cookies(response, str(user.id))
     return user
 

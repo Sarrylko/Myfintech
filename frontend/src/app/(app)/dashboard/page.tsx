@@ -696,12 +696,16 @@ export default function Dashboard() {
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
+    // The spend chart compares this month with last month, so load everything
+    // since the 1st of last month (a fixed count cut last month off)
+    const lastMonthStart = new Date(year, month - 2, 1);
+    const sinceLastMonth = `${lastMonthStart.getFullYear()}-${String(lastMonthStart.getMonth() + 1).padStart(2, "0")}-01`;
 
     const [accRes, budRes, ltRes, txRes, propRes, loanRes] = await Promise.allSettled([
       listAccounts(),
       listBudgets(month, year),
       listLongTermBudgets(year),
-      listAllTransactions(100),
+      listAllTransactions(5000, 0, sinceLastMonth),
       listProperties(),
       listAllLoans(),
     ]);
