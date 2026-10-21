@@ -257,7 +257,10 @@ export function AccountsContent() {
     if (!editTarget) return;
     setEditSaving(true); setEditError("");
     try {
-      const updated = await updateAccount(editTarget.id, editForm);
+      // Only manual accounts have an editable balance; linked ones are synced from the bank
+      const payload = { ...editForm };
+      if (!editTarget.is_manual) delete payload.current_balance;
+      const updated = await updateAccount(editTarget.id, payload);
       setAccounts((prev) => prev.map((a) => a.id === updated.id ? updated : a));
       setEditTarget(null);
     } catch (err) {
@@ -668,24 +671,32 @@ export function AccountsContent() {
                     />
                   </div>
                 )}
-                <div className={editTarget.is_manual ? "" : "col-span-2"}>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {editTarget.is_manual ? "Current Balance" : "Balance Override"}
-                    {!editTarget.is_manual && (
-                      <span className="text-xs text-gray-400 ml-1">(optional — overrides Plaid balance)</span>
-                    )}
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                    <input
-                      type="number" min="0" step="any"
-                      value={editForm.current_balance ?? ""}
-                      onChange={(e) => setEditForm((p) => ({ ...p, current_balance: e.target.value ? Number(e.target.value) : undefined }))}
-                      placeholder="0.00"
-                      className="border border-gray-300 rounded-lg pl-7 pr-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    />
+                {editTarget.is_manual ? (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Current Balance</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                      <input
+                        type="number" min="0" step="any"
+                        value={editForm.current_balance ?? ""}
+                        onChange={(e) => setEditForm((p) => ({ ...p, current_balance: e.target.value ? Number(e.target.value) : undefined }))}
+                        placeholder="0.00"
+                        className="border border-gray-300 rounded-lg pl-7 pr-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      />
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  // Linked accounts: the balance comes from the bank on every sync, so it isn't editable
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Balance</label>
+                    <p className="text-sm text-gray-800 tabular-nums">
+                      {editTarget.current_balance !== null
+                        ? new Intl.NumberFormat(locale, { style: "currency", currency: editTarget.currency_code }).format(parseFloat(editTarget.current_balance!))
+                        : "—"}
+                      <span className="text-xs text-gray-400 ml-2">synced from {editTarget.institution_name || "your bank"} — use Refresh to update</span>
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Business entity + scope */}

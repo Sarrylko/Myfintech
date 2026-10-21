@@ -240,6 +240,8 @@ def refresh_prices_for_household(household_id: uuid.UUID, session: Session) -> i
     updated = 0
     now_utc = datetime.now(timezone.utc)
     account_ids: set[uuid.UUID] = set()
+    # Values before repricing, to move linked-account balances by the change only
+    old_values: dict[uuid.UUID, Decimal] = {h.id: h.current_value or Decimal(0) for h in holdings}
 
     # ── Equity: Yahoo Finance ──────────────────────────────────────────────────
     ticker_to_holdings: dict[str, list[Holding]] = {}
@@ -280,16 +282,29 @@ def refresh_prices_for_household(household_id: uuid.UUID, session: Session) -> i
             if coin_id not in crypto_prices:
                 logger.debug("No crypto price available for coingecko_id=%s", coin_id)
 
-    # Sync current_balance on each affected account to sum of its holdings
+    # Update current_balance on each affected account.
+    # Manual accounts: balance is the sum of their holdings.
+    # Linked (Plaid/SnapTrade) accounts: the institution's balance can include
+    # uninvested cash that isn't reported as a holding, so only apply the change
+    # in holdings value — replacing it with the holdings sum would drop the cash.
+    value_change: dict[uuid.UUID, Decimal] = {}
+    for h in holdings:
+        if h.account_id in account_ids:
+            delta = (h.current_value or Decimal(0)) - old_values.get(h.id, Decimal(0))
+            value_change[h.account_id] = value_change.get(h.account_id, Decimal(0)) + delta
     for account_id in account_ids:
         try:
             account = session.get(Account, account_id)
-            if account:
+            if not account:
+                continue
+            if account.plaid_item_id or account.snaptrade_connection_id:
+                if account.current_balance is not None:
+                    account.current_balance += value_change.get(account_id, Decimal(0))
+            else:
                 all_holdings = session.execute(
                     select(Holding).where(Holding.account_id == account_id)
                 ).scalars().all()
-                total = sum(h.current_value or Decimal(0) for h in all_holdings)
-                account.current_balance = total
+                account.current_balance = sum(h.current_value or Decimal(0) for h in all_holdings)
         except Exception as exc:
             logger.warning("Failed to sync balance for account %s: %s", account_id, exc)
 
