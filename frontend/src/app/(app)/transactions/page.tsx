@@ -20,6 +20,9 @@ import {
 import { LoanPaymentSplit, matchLoan, splitLoanPayment } from "@/lib/loanSplit";
 import { comparisonWindows, monthKeyOf, trailingMonthKeys } from "@/lib/periods";
 import IncomeAllocation from "@/components/transactions/IncomeAllocation";
+import InsightCards from "@/components/transactions/InsightCards";
+import RecurringPanel from "@/components/transactions/RecurringPanel";
+import { detectRecurring, findUnusual, isFixedCategory, merchantIdentity, needsLabel } from "@/lib/insights";
 import {
   categoryGroup,
   categoryMatches,
@@ -1619,6 +1622,37 @@ export default function TransactionsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredNoDate, summarize, fromMs, toMs, totals, locale]);
 
+  // ── Insights: recurring charges, fixed vs flexible, unlabeled, unusual ─────
+  /** Settled personal spending (same set as the Expenses total) */
+  const isSpending = useCallback((t: Transaction) =>
+    !t.pending && !t.is_business && !t.is_property_expense &&
+    parseFloat(t.amount) > 0 && txnReportType(t) === "cashflow", [txnReportType]);
+  // Recurring detection looks at all history, not just the selected dates
+  const recurring = useMemo(
+    () => detectRecurring(filteredNoDate.filter(isSpending), spendPart, merchantKey),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredNoDate, isSpending, spendPart],
+  );
+  const recurringIdentities = useMemo(() => new Set(recurring.map((r) => r.identity)), [recurring]);
+  const periodSpending = useMemo(() => filtered.filter(isSpending), [filtered, isSpending]);
+  const fixedFlexible = useMemo(() => {
+    let fixed = 0, flexible = 0;
+    for (const t of periodSpending) {
+      const amount = spendPart(t);
+      if (isFixedCategory(t.plaid_category) || recurringIdentities.has(merchantIdentity(t))) fixed += amount;
+      else flexible += amount;
+    }
+    return { fixed, flexible };
+  }, [periodSpending, spendPart, recurringIdentities]);
+  const unlabeled = useMemo(() => {
+    const list = periodSpending.filter(needsLabel);
+    return { amount: list.reduce((sum, t) => sum + spendPart(t), 0), count: list.length };
+  }, [periodSpending, spendPart]);
+  const unusual = useMemo(
+    () => findUnusual(periodSpending, filteredNoDate.filter(isSpending), spendPart),
+    [periodSpending, filteredNoDate, isSpending, spendPart],
+  );
+
   /** "↑12%" style change vs the comparison period; null when not meaningful */
   const pctChange = (now: number, before: number) =>
     before > 0 ? Math.round(((now - before) / before) * 100) : null;
@@ -2059,6 +2093,20 @@ export default function TransactionsPage() {
           fmt={fmt}
         />
       )}
+      {filtered.length > 0 && (
+        <InsightCards
+          fixed={fixedFlexible.fixed}
+          flexible={fixedFlexible.flexible}
+          unlabeled={unlabeled}
+          totalSpending={totalExpenses}
+          unusual={unusual}
+          fmt={fmt}
+          fmtDate={fmtDate}
+          merchantLabel={merchantKey}
+          onReviewUnlabeled={() => patchFilters({ categories: { Uncategorized: "include", Miscellaneous: "include" } })}
+          onMerchantClick={(m) => patchFilters({ merchants: [m] })}
+        />
+      )}
 
       {/* ── Analytics ────────────────────────────────────────────── */}
       {filtered.length > 0 && monthlyTrend.length > 0 && (
@@ -2095,6 +2143,16 @@ export default function TransactionsPage() {
               activeMerchants={filters.merchants}
               activePeople={filters.people}
             />
+          )}
+          {showCharts && (
+            <div className="mt-4">
+              <RecurringPanel
+                charges={recurring}
+                fmt={fmt}
+                locale={locale}
+                onMerchantClick={(m) => patchFilters({ merchants: [m] })}
+              />
+            </div>
           )}
         </div>
       )}
