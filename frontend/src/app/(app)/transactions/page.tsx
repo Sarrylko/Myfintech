@@ -6,8 +6,18 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
 
 const TransactionsCharts = dynamic(() => import("@/components/transactions/TransactionsCharts"), { ssr: false });
+import CategoryFilter, { CategoryGroupOption, CategoryMode } from "@/components/transactions/CategoryFilter";
+import {
+  categoryGroup,
+  categoryMatches,
+  explicitReportType,
+  implicitReportType,
+} from "@/lib/reportTypes";
 import { useRouter } from "next/navigation";
 import {
+  getCategoryReportTypes,
+  saveCategoryReportTypes,
+  ReportType,
   listAllTransactions,
   listAccounts,
   listCustomCategories,
@@ -64,7 +74,7 @@ const TAXONOMY: { category: string; subcategories: string[] }[] = [
   { category: "Insurance", subcategories: ["Life Insurance", "Disability Insurance", "Umbrella Insurance"] },
   { category: "Business / Work", subcategories: ["Business Expenses", "Professional Fees", "Software", "Office Supplies", "Travel (Work)"] },
   { category: "Taxes", subcategories: ["Federal Tax", "State Tax", "Local Tax", "Estimated Payments"] },
-  { category: "Transfers", subcategories: ["Internal Transfer", "Credit Card Payment", "Account Transfer"] },
+  { category: "Transfers", subcategories: ["Internal Transfer", "Credit Card Payment", "Account Transfer", "Wire Transfer", "Loan Payment"] },
   { category: "Miscellaneous", subcategories: ["Cash Withdrawal", "Uncategorized", "Adjustment"] },
 ];
 
@@ -1283,7 +1293,11 @@ export default function TransactionsPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [selectedAccount, setSelectedAccount] = useState("all");
-  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState<Record<string, CategoryMode>>({});
+  const [reportOverrides, setReportOverrides] = useState<Record<string, ReportType>>({});
+  const [hideTransfers, setHideTransfers] = useState(false);
+  const [hideSavings, setHideSavings] = useState(false);
+  const [hideBusiness, setHideBusiness] = useState(false);
   const [datePreset, setDatePreset] = useState("this_month");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -1316,13 +1330,15 @@ export default function TransactionsPage() {
         if (batch.length < PAGE) break;
         offset += PAGE;
       }
-      const [accts, customCats, householdMembers] = await Promise.all([
+      const [accts, customCats, householdMembers, overrides] = await Promise.all([
         listAccounts(), listCustomCategories(), listHouseholdMembers(),
+        getCategoryReportTypes().catch(() => ({} as Record<string, ReportType>)),
       ]);
       setTransactions(all);
       setAccounts(accts);
       setCustomCategories(customCats);
       setMembers(householdMembers);
+      setReportOverrides(overrides);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load transactions");
     } finally {
@@ -1375,12 +1391,76 @@ export default function TransactionsPage() {
   const effectiveFrom = datePreset === "custom" ? (dateFrom ? new Date(dateFrom + "T00:00:00") : null) : presetFrom;
   const effectiveTo   = datePreset === "custom" ? (dateTo   ? new Date(dateTo   + "T23:59:59") : null) : presetTo;
 
+  // ── Report types: how each transaction counts in totals & charts ───────────
+  const reportTypeOfKey = useCallback(
+    (key: string): ReportType => explicitReportType(key, reportOverrides) ?? implicitReportType(key),
+    [reportOverrides],
+  );
+  const txnReportType = useCallback(
+    (t: Transaction): ReportType =>
+      explicitReportType(t.plaid_category, reportOverrides) ?? (t.is_transfer ? "transfer" : "cashflow"),
+    [reportOverrides],
+  );
+
+  async function handleReportTypeChange(key: string, type: ReportType) {
+    const prev = reportOverrides;
+    const next = { ...prev };
+    delete next[key];
+    // Only store an override when it differs from what the key inherits
+    const inherited = explicitReportType(key, next) ?? implicitReportType(key);
+    if (type !== inherited) next[key] = type;
+    setReportOverrides(next);
+    try {
+      setReportOverrides(await saveCategoryReportTypes(next));
+    } catch (e) {
+      setReportOverrides(prev);
+      setError(e instanceof Error ? e.message : "Failed to save category setting");
+    }
+  }
+
+  const txnCategories = (t: Transaction): string[] =>
+    t.has_splits && t.splits.length > 0
+      ? t.splits.map((s) => s.category || "Uncategorized")
+      : [t.plaid_category || "Uncategorized"];
+
+  const includeKeys = useMemo(() => Object.keys(categoryFilter).filter((k) => categoryFilter[k] === "include"), [categoryFilter]);
+  const excludeKeys = useMemo(() => Object.keys(categoryFilter).filter((k) => categoryFilter[k] === "exclude"), [categoryFilter]);
+
+  // Category groups + subcategories present in this country's transactions
+  const categoryOptions: CategoryGroupOption[] = useMemo(() => {
+    const groups: Record<string, { count: number; items: Record<string, number> }> = {};
+    for (const t of transactions) {
+      if (t.account_id && !countryAccountIds.has(t.account_id)) continue;
+      for (const cat of txnCategories(t)) {
+        const group = categoryGroup(cat) || cat;
+        groups[group] ??= { count: 0, items: {} };
+        groups[group].count += 1;
+        if (cat !== group) groups[group].items[cat] = (groups[group].items[cat] || 0) + 1;
+      }
+    }
+    return Object.entries(groups)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([group, { count, items }]) => ({
+        group,
+        count,
+        items: Object.entries(items)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, n]) => ({ key, label: key.slice(group.length + 3), count: n })),
+      }));
+  }, [transactions, countryAccountIds]);
+
   const filtered = useMemo(() => transactions.filter((t) => {
     if (t.account_id && !countryAccountIds.has(t.account_id)) return false;
     if (!showIgnored && t.is_ignored) return false;
+    const rt = txnReportType(t);
+    if (hideTransfers && rt === "transfer") return false;
+    if (hideSavings && rt === "savings") return false;
+    if (hideBusiness && t.is_business) return false;
     const matchAccount = selectedAccount === "all" || t.account_id === selectedAccount;
-    const matchCategory = selectedCategory === "all" ||
-      (t.plaid_category ?? "").toLowerCase().startsWith(selectedCategory.toLowerCase());
+    const cats = txnCategories(t);
+    const matchCategory =
+      (includeKeys.length === 0 || cats.some((c) => includeKeys.some((k) => categoryMatches(c, k)))) &&
+      (excludeKeys.length === 0 || !cats.every((c) => excludeKeys.some((k) => categoryMatches(c, k))));
     const q = search.toLowerCase();
     const matchSearch = !q ||
       t.name.toLowerCase().includes(q) ||
@@ -1392,17 +1472,21 @@ export default function TransactionsPage() {
       (!effectiveFrom || txnDate >= effectiveFrom) &&
       (!effectiveTo   || txnDate <= effectiveTo);
     return matchAccount && matchCategory && matchSearch && matchDate;
-  }), [transactions, countryAccountIds, showIgnored, selectedAccount, selectedCategory, search, effectiveFrom, effectiveTo]);
+  }), [transactions, countryAccountIds, showIgnored, hideTransfers, hideSavings, hideBusiness, txnReportType, selectedAccount, includeKeys, excludeKeys, search, effectiveFrom, effectiveTo]);
 
-  const totalExpenses = useMemo(() => filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending && !t.is_transfer && !t.is_property_expense && !t.is_business).reduce((s, t) => s + parseFloat(t.amount), 0), [filtered]);
-  const totalIncome = useMemo(() => filtered.filter((t) => parseFloat(t.amount) < 0 && !t.pending && !t.is_transfer && !t.is_rental_income && !t.is_business).reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0), [filtered]);
+  const isCashflow = useCallback((t: Transaction) => txnReportType(t) === "cashflow", [txnReportType]);
+
+  const totalExpenses = useMemo(() => filtered.filter((t) => parseFloat(t.amount) > 0 && !t.pending && isCashflow(t) && !t.is_property_expense && !t.is_business).reduce((s, t) => s + parseFloat(t.amount), 0), [filtered, isCashflow]);
+  const totalIncome = useMemo(() => filtered.filter((t) => parseFloat(t.amount) < 0 && !t.pending && isCashflow(t) && !t.is_rental_income && !t.is_business).reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0), [filtered, isCashflow]);
+  // Net contributions to savings/investments (withdrawals subtract)
+  const totalSaved = useMemo(() => filtered.filter((t) => !t.pending && !t.is_business && txnReportType(t) === "savings").reduce((s, t) => s + parseFloat(t.amount), 0), [filtered, txnReportType]);
   const netCashFlow = totalIncome - totalExpenses;
 
   // ── Chart data ──────────────────────────────────────────────────────────────
   const monthlyTrend = useMemo(() => {
     const months: Record<string, { key: string; label: string; expenses: number; income: number }> = {};
     for (const t of filtered) {
-      if (t.pending || t.is_transfer || t.is_rental_income || t.is_property_expense || t.is_business) continue;
+      if (t.pending || !isCashflow(t) || t.is_rental_income || t.is_property_expense || t.is_business) continue;
       const d = new Date(t.date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const label = d.toLocaleDateString(locale, { month: "short", year: "2-digit" });
@@ -1414,7 +1498,7 @@ export default function TransactionsPage() {
     return Object.values(months)
       .sort((a, b) => a.key.localeCompare(b.key))
       .slice(-12);
-  }, [filtered]);
+  }, [filtered, isCashflow]);
 
   const monthlyTrendAverages = useMemo(() => {
     if (monthlyTrend.length === 0) return { income: 0, expenses: 0 };
@@ -1428,16 +1512,16 @@ export default function TransactionsPage() {
     const spend: Record<string, number> = {};
     for (const t of filtered) {
       const amt = parseFloat(t.amount);
-      if (amt <= 0 || t.pending || t.is_transfer || t.is_business) continue;
+      if (amt <= 0 || t.pending || t.is_business) continue;
       if (t.has_splits && t.splits.length > 0) {
-        // Distribute per split line
+        // Distribute per split line; each line counts by its own category
         for (const s of t.splits) {
           const sAmt = parseFloat(s.amount);
-          if (sAmt <= 0) continue;
+          if (sAmt <= 0 || reportTypeOfKey(s.category || "") !== "cashflow") continue;
           const cat = parseCategory(s.category).group || "Uncategorized";
           spend[cat] = (spend[cat] || 0) + sAmt;
         }
-      } else {
+      } else if (isCashflow(t)) {
         const cat = parseCategory(t.plaid_category).group || "Uncategorized";
         spend[cat] = (spend[cat] || 0) + amt;
       }
@@ -1446,13 +1530,13 @@ export default function TransactionsPage() {
       .sort(([, a], [, b]) => b - a)
       .slice(0, 6)
       .map(([name, amount]) => ({ name, amount }));
-  }, [filtered]);
+  }, [filtered, isCashflow, reportTypeOfKey]);
 
   const merchantSpend = useMemo(() => {
     const spend: Record<string, number> = {};
     for (const t of filtered) {
       const amt = parseFloat(t.amount);
-      if (amt <= 0 || t.pending || t.is_transfer || t.is_business) continue;
+      if (amt <= 0 || t.pending || !isCashflow(t) || t.is_business) continue;
       const merchant = t.merchant_name || t.name || "Unknown";
       spend[merchant] = (spend[merchant] || 0) + amt;
     }
@@ -1461,7 +1545,7 @@ export default function TransactionsPage() {
     const othersTotal = sorted.slice(5).reduce((s, [, a]) => s + a, 0);
     if (othersTotal > 0) top5.push({ name: "Everything Else", amount: othersTotal });
     return top5;
-  }, [filtered]);
+  }, [filtered, isCashflow]);
 
   const personBreakdown = useMemo(() => {
     if (members.length === 0) return [];
@@ -1477,11 +1561,11 @@ export default function TransactionsPage() {
       const ownerId = t.account_id ? accountMap[t.account_id]?.owner_user_id : null;
       const isKnownOwner = !!ownerId && memberIds.has(ownerId);
 
-      if (amt < 0 && !t.is_transfer && !t.is_rental_income && !t.is_business) {
+      if (amt < 0 && isCashflow(t) && !t.is_rental_income && !t.is_business) {
         const income = Math.abs(amt);
         if (isKnownOwner) ownedIncome[ownerId!] = (ownedIncome[ownerId!] || 0) + income;
         else sharedIncome += income;
-      } else if (amt > 0 && !t.is_transfer && !t.is_property_expense && !t.is_business) {
+      } else if (amt > 0 && isCashflow(t) && !t.is_property_expense && !t.is_business) {
         if (isKnownOwner) ownedExpenses[ownerId!] = (ownedExpenses[ownerId!] || 0) + amt;
         else sharedExpenses += amt;
       }
@@ -1503,7 +1587,7 @@ export default function TransactionsPage() {
       })
       .filter((p) => p.income > 0.01 || p.expenses > 0.01)
       .sort((a, b) => b.income - a.income);
-  }, [filtered, accountMap, members]);
+  }, [filtered, accountMap, members, isCashflow]);
 
   const sorted = useMemo(() => [...filtered].sort((a, b) => {
     const mul = sortDir === "asc" ? 1 : -1;
@@ -1516,7 +1600,37 @@ export default function TransactionsPage() {
   const paginatedTxns = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   // Reset to page 1 whenever any filter changes
-  useEffect(() => { setPage(1); }, [search, selectedAccount, selectedCategory, datePreset, dateFrom, dateTo, showIgnored]);
+  useEffect(() => { setPage(1); }, [search, selectedAccount, categoryFilter, datePreset, dateFrom, dateTo, showIgnored, hideTransfers, hideSavings, hideBusiness]);
+
+  // Active filters, shown as removable chips under the filter bar
+  const activeChips: { key: string; label: string; tone: "include" | "exclude" | "neutral"; onRemove: () => void }[] = [];
+  if (search) activeChips.push({ key: "search", label: `Search: "${search}"`, tone: "neutral", onRemove: () => setSearch("") });
+  if (selectedAccount !== "all") {
+    const a = accountMap[selectedAccount];
+    activeChips.push({ key: "account", label: `Account: ${a ? a.name : "…"}`, tone: "neutral", onRemove: () => setSelectedAccount("all") });
+  }
+  for (const [k, mode] of Object.entries(categoryFilter)) {
+    activeChips.push({
+      key: `cat:${k}`,
+      label: `${mode === "include" ? "Only" : "Hide"}: ${k}`,
+      tone: mode,
+      onRemove: () => setCategoryFilter((prev) => { const n = { ...prev }; delete n[k]; return n; }),
+    });
+  }
+  if (hideTransfers) activeChips.push({ key: "hide-transfers", label: "Hide transfers", tone: "exclude", onRemove: () => setHideTransfers(false) });
+  if (hideSavings) activeChips.push({ key: "hide-savings", label: "Hide savings & investing", tone: "exclude", onRemove: () => setHideSavings(false) });
+  if (hideBusiness) activeChips.push({ key: "hide-business", label: "Hide business", tone: "exclude", onRemove: () => setHideBusiness(false) });
+  if (showIgnored) activeChips.push({ key: "ignored", label: "Showing ignored", tone: "neutral", onRemove: () => setShowIgnored(false) });
+
+  function clearAllFilters() {
+    setSearch("");
+    setSelectedAccount("all");
+    setCategoryFilter({});
+    setHideTransfers(false);
+    setHideSavings(false);
+    setHideBusiness(false);
+    setShowIgnored(false);
+  }
 
   async function handleIgnoreTxn(txn: Transaction) {
     try {
@@ -1646,7 +1760,7 @@ export default function TransactionsPage() {
 
       {/* Summary strip */}
       {filtered.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mb-5">
           <div className="bg-gradient-to-br from-red-50 to-white dark:from-red-950/40 dark:to-slate-800 rounded-xl border border-red-100 dark:border-red-900/30 p-4">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-6 h-6 rounded-lg bg-red-100 dark:bg-red-900/50 flex items-center justify-center">
@@ -1655,7 +1769,7 @@ export default function TransactionsPage() {
               <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Expenses</p>
             </div>
             <p className="text-xl font-bold text-red-600 dark:text-red-400 tabular-nums">-{fmt(totalExpenses)}</p>
-            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Transfers & property expenses excluded</p>
+            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Transfers, savings & property expenses excluded</p>
           </div>
           <div className="bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/40 dark:to-slate-800 rounded-xl border border-emerald-100 dark:border-emerald-900/30 p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -1677,6 +1791,17 @@ export default function TransactionsPage() {
             <p className={`text-xl font-bold tabular-nums ${netCashFlow >= 0 ? "text-blue-600 dark:text-blue-400" : "text-orange-600 dark:text-orange-400"}`}>
               {netCashFlow >= 0 ? "+" : "-"}{fmt(Math.abs(netCashFlow))}
             </p>
+            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Income minus spending, before savings</p>
+          </div>
+          <div className="bg-gradient-to-br from-violet-50 to-white dark:from-violet-950/40 dark:to-slate-800 rounded-xl border border-violet-100 dark:border-violet-900/30 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-6 h-6 rounded-lg bg-violet-100 dark:bg-violet-900/50 flex items-center justify-center">
+                <svg className="w-3.5 h-3.5 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Saved &amp; Invested</p>
+            </div>
+            <p className="text-xl font-bold text-violet-600 dark:text-violet-400 tabular-nums">{totalSaved >= 0 ? "" : "-"}{fmt(Math.abs(totalSaved))}</p>
+            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Categories counted as savings</p>
           </div>
           <div className="bg-gradient-to-br from-slate-50 to-white dark:from-slate-700/40 dark:to-slate-800 rounded-xl border border-slate-100 dark:border-slate-700 p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -1747,20 +1872,13 @@ export default function TransactionsPage() {
           </select>
         </div>
         <div className="flex flex-col md:flex-row gap-2.5">
-          <select
-            title="Filter by category"
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 md:w-52 bg-white dark:bg-slate-800 dark:text-gray-200"
-          >
-            <option value="all">All Categories</option>
-            {TAXONOMY.map((t) => (
-              <option key={t.category} value={t.category}>{t.category}</option>
-            ))}
-            {customTaxonomy.map((t) => (
-              <option key={t.category} value={t.category}>{t.category}</option>
-            ))}
-          </select>
+          <CategoryFilter
+            options={categoryOptions}
+            filter={categoryFilter}
+            onFilterChange={setCategoryFilter}
+            reportTypeOf={reportTypeOfKey}
+            onReportTypeChange={handleReportTypeChange}
+          />
           <select
             title="Filter by account"
             value={selectedAccount}
@@ -1801,6 +1919,65 @@ export default function TransactionsPage() {
             {showIgnored ? "Hide Ignored" : "Show Ignored"}
           </button>
         </div>
+
+        {/* Quick toggles */}
+        <div className="flex flex-wrap items-center gap-2 mt-2.5">
+          <span className="text-[11px] text-gray-400 dark:text-gray-500 mr-1">Quick hide:</span>
+          {([
+            ["Transfers", hideTransfers, setHideTransfers],
+            ["Savings & investing", hideSavings, setHideSavings],
+            ["Business", hideBusiness, setHideBusiness],
+          ] as const).map(([label, on, set]) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => set(!on)}
+              aria-pressed={on}
+              className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                on
+                  ? "bg-gray-800 border-gray-800 text-white dark:bg-gray-200 dark:border-gray-200 dark:text-gray-900"
+                  : "border-gray-200 dark:border-slate-600 text-gray-500 dark:text-gray-400 hover:bg-white dark:hover:bg-slate-700"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Active filter chips */}
+        {activeChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-2.5 border-t border-gray-100 dark:border-slate-700">
+            {activeChips.map((chip) => (
+              <span
+                key={chip.key}
+                className={`inline-flex items-center gap-1 text-xs pl-2.5 pr-1 py-0.5 rounded-full border ${
+                  chip.tone === "include"
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-900/30 dark:border-emerald-800 dark:text-emerald-300"
+                    : chip.tone === "exclude"
+                      ? "bg-red-50 border-red-200 text-red-800 dark:bg-red-900/30 dark:border-red-800 dark:text-red-300"
+                      : "bg-white border-gray-200 text-gray-700 dark:bg-slate-800 dark:border-slate-600 dark:text-gray-300"
+                }`}
+              >
+                <span className="max-w-[16rem] truncate">{chip.label}</span>
+                <button
+                  type="button"
+                  onClick={chip.onRemove}
+                  title="Remove filter"
+                  className="w-4 h-4 rounded-full flex items-center justify-center opacity-60 hover:opacity-100"
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 underline underline-offset-2 ml-1"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
       </div>
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>}

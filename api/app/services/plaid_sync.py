@@ -25,6 +25,45 @@ logger = logging.getLogger(__name__)
 
 # ── Plaid client builder ────────────────────────────────────────────────────────
 
+# Plaid's legacy "Transfer > X" subcategories → the app's "Transfers > X"
+# taxonomy (frontend TAXONOMY). Keep in sync with migration ak1kl2mn3op4.
+_TRANSFER_SUBCATEGORIES = {
+    "credit card payment": "Credit Card Payment",
+    "internal account transfer": "Internal Transfer",
+    "wire": "Wire Transfer",
+    "loan payment": "Loan Payment",
+    "debit": "Account Transfer",
+    "credit": "Account Transfer",
+    "deposit": "Account Transfer",
+    "withdrawal": "Account Transfer",
+    "third party": "Account Transfer",
+}
+
+
+def normalize_plaid_category(plaid_cat: str | None, account_type: str | None) -> str | None:
+    """Map a raw Plaid "Group > Sub" category onto the app's taxonomy.
+
+    All transfer-like categories land under "Transfers > …" so the UI shows a
+    single Transfers group. Payroll deposits Plaid labels as transfers are
+    salary, except on loan accounts where they are the loan payment arriving.
+    """
+    if not plaid_cat:
+        return plaid_cat
+    lower = plaid_cat.lower()
+    if lower.startswith("payment > credit"):
+        return "Transfers > Credit Card Payment"
+    if lower.startswith("payment > loan"):
+        return "Transfers > Loan Payment"
+    if lower.startswith("transfer > payroll"):
+        return "Transfers > Loan Payment" if account_type == "loan" else "Income > Salary"
+    if lower.startswith("transfer"):
+        _, _, sub = plaid_cat.partition(" > ")
+        if not sub:
+            return "Transfers"
+        return f"Transfers > {_TRANSFER_SUBCATEGORIES.get(sub.strip().lower(), sub.strip())}"
+    return plaid_cat
+
+
 def build_plaid_client():
     if not settings.plaid_client_id or not settings.plaid_secret:
         raise RuntimeError("Plaid is not configured (missing client_id or secret)")
@@ -306,12 +345,7 @@ async def sync_plaid_item(item: PlaidItem, db: AsyncSession) -> dict:
                 plaid_category_id=pt.category_id,
             )
 
-            if plaid_cat and plaid_cat.lower().startswith("transfer"):
-                txn.plaid_category = plaid_cat
-            elif plaid_cat and plaid_cat.lower().startswith("payment > credit"):
-                txn.plaid_category = "Transfer > Credit Card Payment"
-            elif plaid_cat and plaid_cat.lower().startswith("payment > loan"):
-                txn.plaid_category = "Transfer > Loan Payment"
+            txn.plaid_category = normalize_plaid_category(plaid_cat, acct.type)
 
             matched = False
             if rules:

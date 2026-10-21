@@ -29,7 +29,7 @@ const TAXONOMY: { category: string; subcategories: string[] }[] = [
   { category: "Insurance", subcategories: ["Life Insurance", "Disability Insurance", "Umbrella Insurance"] },
   { category: "Business / Work", subcategories: ["Business Expenses", "Professional Fees", "Software", "Office Supplies", "Travel (Work)"] },
   { category: "Taxes", subcategories: ["Federal Tax", "State Tax", "Local Tax", "Estimated Payments"] },
-  { category: "Transfers", subcategories: ["Internal Transfer", "Credit Card Payment", "Account Transfer"] },
+  { category: "Transfers", subcategories: ["Internal Transfer", "Credit Card Payment", "Account Transfer", "Wire Transfer", "Loan Payment"] },
   { category: "Miscellaneous", subcategories: ["Cash Withdrawal", "Uncategorized", "Adjustment"] },
 ];
 
