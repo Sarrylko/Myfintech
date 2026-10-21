@@ -18,6 +18,9 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    task_time_limit=1800,       # hard kill a hung task after 30 min
+    task_soft_time_limit=1500,  # raise SoftTimeLimitExceeded at 25 min
+    worker_max_tasks_per_child=200,  # recycle worker process to bound memory growth
 )
 
 # ─── Scheduled tasks ──────────────────────────

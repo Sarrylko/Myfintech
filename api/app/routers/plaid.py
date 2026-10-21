@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.security import decrypt_value, encrypt_value
-from app.models.account import Account, PlaidItem
+from app.models.account import Account, PlaidItem, Transaction
+from app.models.investment import Holding, InvestmentTransaction
 from app.models.user import User
 from app.services.plaid_sync import build_plaid_client, sync_plaid_item
 
@@ -254,6 +255,19 @@ async def delete_plaid_item(
                 await db.delete(txn)
             else:
                 txn.account_id = None
+
+        holdings_result = await db.execute(
+            select(Holding).where(Holding.account_id == acct.id)
+        )
+        for holding in holdings_result.scalars().all():
+            await db.delete(holding)
+
+        inv_txns_result = await db.execute(
+            select(InvestmentTransaction).where(InvestmentTransaction.account_id == acct.id)
+        )
+        for inv_txn in inv_txns_result.scalars().all():
+            await db.delete(inv_txn)
+
         await db.delete(acct)
 
     await db.delete(item)

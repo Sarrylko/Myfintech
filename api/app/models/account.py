@@ -117,7 +117,7 @@ class Transaction(Base):
     plaid_category: Mapped[str | None] = mapped_column(String(255))
     plaid_category_id: Mapped[str | None] = mapped_column(String(50))
     custom_category_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("categories.id")
+        UUID(as_uuid=True), ForeignKey("categories.id"), index=True
     )
     is_manual_category: Mapped[bool] = mapped_column(Boolean, default=False)
 

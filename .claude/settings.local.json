@@ -78,7 +78,8 @@
       "Bash(MSYS_NO_PATHCONV=1 docker exec myfintech-api-1 curl -s http://localhost:8000/openapi.json -o /tmp/openapi.json)",
       "Bash(MSYS_NO_PATHCONV=1 docker exec myfintech-api-1 wc -c /tmp/openapi.json)",
       "Bash(MSYS_NO_PATHCONV=1 docker exec myfintech-api-1 grep -o '\"/[a-z0-9/_{}-]*link-token[a-z0-9/_{}-]*\"\\\\|\"/[a-z0-9/_{}-]*reconnect-url[a-z0-9/_{}-]*\"' /tmp/openapi.json)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(MSYS_NO_PATHCONV=1 find /c/Github/MyFinTech/Myfintech/api/alembic/versions -name \"39aa4a1b9b1f*\")"
     ]
   }
 }

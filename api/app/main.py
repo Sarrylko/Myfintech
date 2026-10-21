@@ -9,6 +9,7 @@ from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.core.config import settings
 from app.routers import ai, analytics, auth, accounts, budget, business_documents, business_entities, capital_events, categories, email_watches, financial_documents, goals, health, insurance, investment_transactions, investments, networth, plaid, properties, property_cost_statuses, property_details, property_documents, receipts, recurring, rentals, reports, retirement, rules, salary, snaptrade, users, vehicles
@@ -92,3 +93,9 @@ app.include_router(receipts.router, prefix="/api/v1")
 app.include_router(salary.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1/ai")
 app.include_router(analytics.router, prefix="/api/v1")
+
+# Trust X-Forwarded-For from the Caddy reverse proxy so slowapi's
+# get_remote_address (and request.client.host generally) sees the real
+# client IP instead of Caddy's container IP for every request — otherwise
+# all traffic behind the proxy shares a single rate-limit bucket.
+app = ProxyHeadersMiddleware(app, trusted_hosts="*")

@@ -25,6 +25,8 @@ from app.worker import celery_app
 
 logger = logging.getLogger(__name__)
 
+_engine = create_engine(settings.database_url_sync, pool_pre_ping=True)
+
 _YF_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -306,10 +308,9 @@ def refresh_investment_prices() -> None:
     """Celery task: refresh investment prices for all households where due."""
     market_open = is_market_open()
 
-    engine = create_engine(settings.database_url_sync, pool_pre_ping=True)
     now_utc = datetime.now(timezone.utc)
 
-    with Session(engine) as session:
+    with Session(_engine) as session:
         result = session.execute(
             select(Household).where(Household.price_refresh_enabled.is_(True))
         )
@@ -343,5 +344,3 @@ def refresh_investment_prices() -> None:
                 logger.info("Household %s: updated %d holdings", hh.id, count)
             except Exception as exc:
                 logger.error("Failed to refresh prices for household %s: %s", hh.id, exc)
-
-    engine.dispose()

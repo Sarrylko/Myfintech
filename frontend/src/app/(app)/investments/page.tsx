@@ -7,6 +7,7 @@ import {
   listAccounts,
   listHouseholdMembers,
   listHoldings,
+  listHoldingsBatch,
   createHolding,
   updateHolding,
   deleteHolding,
@@ -1705,17 +1706,43 @@ export default function InvestmentsPage() {
   // Eagerly load holdings for every investment account (not just the expanded
   // one) so the portfolio-wide Today's P&L / Total P&L strip below is always
   // accurate instead of only reflecting whichever accounts happen to be expanded.
+  // Fetched in a single batch call rather than one request per account.
   useEffect(() => {
-    accounts.forEach((a) => {
-      setHoldingsMap((m) => {
-        if (m[a.id] !== undefined) return m;
-        setHoldingsLoadingMap((lm) => ({ ...lm, [a.id]: true }));
-        listHoldings(a.id)
-          .then((h) => setHoldingsMap((cur) => ({ ...cur, [a.id]: h })))
-          .catch(() => setHoldingsMap((cur) => ({ ...cur, [a.id]: [] })))
-          .finally(() => setHoldingsLoadingMap((lm) => ({ ...lm, [a.id]: false })));
-        return m;
+    setHoldingsMap((m) => {
+      const pending = accounts.filter((a) => m[a.id] === undefined);
+      if (pending.length === 0) return m;
+
+      setHoldingsLoadingMap((lm) => {
+        const next = { ...lm };
+        for (const a of pending) next[a.id] = true;
+        return next;
       });
+
+      listHoldingsBatch(pending.map((a) => a.id))
+        .then((holdings) => {
+          const byAccount: Record<string, typeof holdings> = {};
+          for (const a of pending) byAccount[a.id] = [];
+          for (const h of holdings) {
+            if (h.account_id) (byAccount[h.account_id] ??= []).push(h);
+          }
+          setHoldingsMap((cur) => ({ ...cur, ...byAccount }));
+        })
+        .catch(() => {
+          setHoldingsMap((cur) => {
+            const next = { ...cur };
+            for (const a of pending) next[a.id] = [];
+            return next;
+          });
+        })
+        .finally(() => {
+          setHoldingsLoadingMap((lm) => {
+            const next = { ...lm };
+            for (const a of pending) next[a.id] = false;
+            return next;
+          });
+        });
+
+      return m;
     });
   }, [accounts]);
 

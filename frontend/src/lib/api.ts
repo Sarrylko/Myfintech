@@ -1365,6 +1365,12 @@ export async function listHoldings(accountId: string): Promise<Holding[]> {
   return apiFetch<Holding[]>(`/api/v1/accounts/${accountId}/holdings`, {});
 }
 
+export async function listHoldingsBatch(accountIds: string[]): Promise<Holding[]> {
+  if (accountIds.length === 0) return [];
+  const params = accountIds.map((id) => `account_ids=${encodeURIComponent(id)}`).join("&");
+  return apiFetch<Holding[]>(`/api/v1/accounts/holdings?${params}`, {});
+}
+
 export interface HoldingCreate {
   ticker_symbol?: string | null;
   name?: string | null;
@@ -1599,6 +1605,8 @@ export interface CustomCategory {
   name: string;
   parent_id: string | null;
   is_income: boolean;
+  icon: string | null;
+  color: string | null;
   created_at: string;
 }
 

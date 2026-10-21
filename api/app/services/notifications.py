@@ -185,6 +185,16 @@ def check_budget_alerts():
                 )
             ).scalars().all()
 
+            category_ids = {b.category_id for b in budgets if b.category_id}
+            categories_by_id = {}
+            if category_ids:
+                categories_by_id = {
+                    c.id: c
+                    for c in db.execute(
+                        select(Category).where(Category.id.in_(category_ids))
+                    ).scalars().all()
+                }
+
             alerts = []
 
             for budget in budgets:
@@ -221,7 +231,7 @@ def check_budget_alerts():
                 pct = int(spent / budget.amount * 100)
 
                 if pct >= budget.alert_threshold:
-                    category = db.get(Category, budget.category_id)
+                    category = categories_by_id.get(budget.category_id)
                     cat_name = category.name if category else "Budget"
                     emoji = "🔴" if pct >= 100 else "🟡"
                     alerts.append(
@@ -674,10 +684,17 @@ def check_account_health():
                 )
             ).scalars().all()
 
+            plaid_accts_by_item: dict[uuid.UUID, list[tuple[str, str | None]]] = {}
+            if plaid_items:
+                item_ids = [item.id for item in plaid_items]
+                for pid, name, mask in db.execute(
+                    select(Account.plaid_item_id, Account.name, Account.mask)
+                    .where(Account.plaid_item_id.in_(item_ids))
+                ).all():
+                    plaid_accts_by_item.setdefault(pid, []).append((name, mask))
+
             for item in plaid_items:
-                accts = db.execute(
-                    select(Account.name, Account.mask).where(Account.plaid_item_id == item.id)
-                ).all()
+                accts = plaid_accts_by_item.get(item.id, [])
                 acct_detail = ", ".join(
                     f"{n} (…{m})" if m else n for n, m in accts if n
                 )
@@ -697,10 +714,17 @@ def check_account_health():
                 )
             ).scalars().all()
 
+            snap_accts_by_conn: dict[uuid.UUID, list[tuple[str, str | None]]] = {}
+            if snap_conns:
+                conn_ids = [conn.id for conn in snap_conns]
+                for cid, name, mask in db.execute(
+                    select(Account.snaptrade_connection_id, Account.name, Account.mask)
+                    .where(Account.snaptrade_connection_id.in_(conn_ids))
+                ).all():
+                    snap_accts_by_conn.setdefault(cid, []).append((name, mask))
+
             for conn in snap_conns:
-                accts = db.execute(
-                    select(Account.name, Account.mask).where(Account.snaptrade_connection_id == conn.id)
-                ).all()
+                accts = snap_accts_by_conn.get(conn.id, [])
                 acct_detail = ", ".join(
                     f"{n} (…{m})" if m else n for n, m in accts if n
                 )

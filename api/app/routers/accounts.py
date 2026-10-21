@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -241,32 +241,17 @@ async def delete_account(
         raise HTTPException(status_code=404, detail="Account not found")
 
     # Always delete holdings and investment transactions (no orphan option for these)
-    holdings_result = await db.execute(
-        select(Holding).where(Holding.account_id == account_id)
-    )
-    for holding in holdings_result.scalars().all():
-        await db.delete(holding)
-
-    inv_txns_result = await db.execute(
-        select(InvestmentTransaction).where(InvestmentTransaction.account_id == account_id)
-    )
-    for inv_txn in inv_txns_result.scalars().all():
-        await db.delete(inv_txn)
+    await db.execute(sa_delete(Holding).where(Holding.account_id == account_id))
+    await db.execute(sa_delete(InvestmentTransaction).where(InvestmentTransaction.account_id == account_id))
 
     if delete_transactions:
-        # Delete all transactions for this account
-        txns_result = await db.execute(
-            select(Transaction).where(Transaction.account_id == account_id)
-        )
-        for txn in txns_result.scalars().all():
-            await db.delete(txn)
+        # Delete all transactions for this account (splits/receipts cascade at the DB level)
+        await db.execute(sa_delete(Transaction).where(Transaction.account_id == account_id))
     else:
         # Unlink transactions (set account_id to NULL so they remain accessible)
-        txns_result = await db.execute(
-            select(Transaction).where(Transaction.account_id == account_id)
+        await db.execute(
+            sa_update(Transaction).where(Transaction.account_id == account_id).values(account_id=None)
         )
-        for txn in txns_result.scalars().all():
-            txn.account_id = None
 
     await db.delete(account)
     await db.commit()
@@ -505,53 +490,31 @@ async def deduplicate_transactions(
     db: AsyncSession = Depends(get_db),
 ):
     """Remove duplicate transactions (same date, merchant_name, amount, account).
-    Falls back to name when merchant_name is null. Keeps the oldest entry."""
-    from sqlalchemy import func, and_, delete, coalesce
+    Falls back to name when merchant_name is null. Keeps the lowest-id entry."""
+    from sqlalchemy import func, delete, coalesce
 
-    q = select(
-        Transaction.date,
-        coalesce(Transaction.merchant_name, Transaction.name).label("merchant_key"),
-        Transaction.amount,
-        Transaction.account_id,
-        func.count().label("cnt"),
-        func.min(Transaction.id).label("keep_id"),
-    ).where(Transaction.household_id == user.household_id)
+    rn = func.row_number().over(
+        partition_by=(
+            Transaction.date,
+            coalesce(Transaction.merchant_name, Transaction.name),
+            Transaction.amount,
+            Transaction.account_id,
+        ),
+        order_by=Transaction.id,
+    ).label("rn")
 
+    q = select(Transaction.id, rn).where(Transaction.household_id == user.household_id)
     if account_id:
         q = q.where(Transaction.account_id == account_id)
+    subq = q.subquery()
 
-    q = q.group_by(
-        Transaction.date,
-        coalesce(Transaction.merchant_name, Transaction.name),
-        Transaction.amount,
-        Transaction.account_id,
-    ).having(func.count() > 1)
+    dup_result = await db.execute(select(subq.c.id).where(subq.c.rn > 1))
+    dup_ids = [r[0] for r in dup_result.all()]
 
-    result = await db.execute(q)
-    rows = result.all()
+    if dup_ids:
+        await db.execute(delete(Transaction).where(Transaction.id.in_(dup_ids)))
 
-    removed = 0
-    for row in rows:
-        dup_result = await db.execute(
-            select(Transaction.id).where(
-                and_(
-                    Transaction.date == row.date,
-                    coalesce(Transaction.merchant_name, Transaction.name) == row.merchant_key,
-                    Transaction.amount == row.amount,
-                    Transaction.account_id == row.account_id,
-                    Transaction.household_id == user.household_id,
-                    Transaction.id != row.keep_id,
-                )
-            )
-        )
-        dup_ids = [r[0] for r in dup_result.all()]
-        if dup_ids:
-            await db.execute(
-                delete(Transaction).where(Transaction.id.in_(dup_ids))
-            )
-            removed += len(dup_ids)
-
-    return {"removed": removed}
+    return {"removed": len(dup_ids)}
 
 
 @router.delete("/investment-transactions/deduplicate", status_code=200)
@@ -561,56 +524,34 @@ async def deduplicate_investment_transactions(
     db: AsyncSession = Depends(get_db),
 ):
     """Remove duplicate investment transactions (same date, ticker, type, amount, account).
-    Keeps the oldest entry."""
-    from sqlalchemy import func, and_, delete
+    Keeps the lowest-id entry."""
+    from sqlalchemy import func, delete
 
-    q = select(
-        InvestmentTransaction.date,
-        InvestmentTransaction.ticker_symbol,
-        InvestmentTransaction.type,
-        InvestmentTransaction.amount,
-        InvestmentTransaction.account_id,
-        func.count().label("cnt"),
-        func.min(InvestmentTransaction.id).label("keep_id"),
-    ).where(InvestmentTransaction.household_id == user.household_id)
+    rn = func.row_number().over(
+        partition_by=(
+            InvestmentTransaction.date,
+            InvestmentTransaction.ticker_symbol,
+            InvestmentTransaction.type,
+            InvestmentTransaction.amount,
+            InvestmentTransaction.account_id,
+        ),
+        order_by=InvestmentTransaction.id,
+    ).label("rn")
 
+    q = select(InvestmentTransaction.id, rn).where(
+        InvestmentTransaction.household_id == user.household_id
+    )
     if account_id:
         q = q.where(InvestmentTransaction.account_id == account_id)
+    subq = q.subquery()
 
-    q = q.group_by(
-        InvestmentTransaction.date,
-        InvestmentTransaction.ticker_symbol,
-        InvestmentTransaction.type,
-        InvestmentTransaction.amount,
-        InvestmentTransaction.account_id,
-    ).having(func.count() > 1)
+    dup_result = await db.execute(select(subq.c.id).where(subq.c.rn > 1))
+    dup_ids = [r[0] for r in dup_result.all()]
 
-    result = await db.execute(q)
-    rows = result.all()
+    if dup_ids:
+        await db.execute(delete(InvestmentTransaction).where(InvestmentTransaction.id.in_(dup_ids)))
 
-    removed = 0
-    for row in rows:
-        dup_result = await db.execute(
-            select(InvestmentTransaction.id).where(
-                and_(
-                    InvestmentTransaction.date == row.date,
-                    InvestmentTransaction.ticker_symbol == row.ticker_symbol,
-                    InvestmentTransaction.type == row.type,
-                    InvestmentTransaction.amount == row.amount,
-                    InvestmentTransaction.account_id == row.account_id,
-                    InvestmentTransaction.household_id == user.household_id,
-                    InvestmentTransaction.id != row.keep_id,
-                )
-            )
-        )
-        dup_ids = [r[0] for r in dup_result.all()]
-        if dup_ids:
-            await db.execute(
-                delete(InvestmentTransaction).where(InvestmentTransaction.id.in_(dup_ids))
-            )
-            removed += len(dup_ids)
-
-    return {"removed": removed}
+    return {"removed": len(dup_ids)}
 
 
 @router.get("/{account_id}/holdings", response_model=list[HoldingResponse])
@@ -632,6 +573,27 @@ async def list_holdings(
     result = await db.execute(
         select(Holding)
         .where(Holding.account_id == account_id)
+        .order_by(Holding.current_value.desc())
+    )
+    return result.scalars().all()
+
+
+@router.get("/holdings", response_model=list[HoldingResponse])
+async def list_holdings_batch(
+    account_ids: list[uuid.UUID] = Query(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return holdings for multiple investment accounts in a single query (household-scoped)."""
+    if not account_ids:
+        return []
+    result = await db.execute(
+        select(Holding)
+        .join(Account, Account.id == Holding.account_id)
+        .where(
+            Holding.account_id.in_(account_ids),
+            Account.household_id == user.household_id,
+        )
         .order_by(Holding.current_value.desc())
     )
     return result.scalars().all()
@@ -805,18 +767,20 @@ async def link_transaction_to_rental(
         )
 
     # Verify all leases belong to this household
-    for link in payload:
-        lease_result = await db.execute(
-            select(_Lease)
-            .join(_Unit, _Lease.unit_id == _Unit.id)
-            .join(_Property, _Unit.property_id == _Property.id)
-            .where(
-                _Lease.id == link.lease_id,
-                _Property.household_id == user.household_id,
-            )
+    requested_lease_ids = {link.lease_id for link in payload}
+    lease_result = await db.execute(
+        select(_Lease.id)
+        .join(_Unit, _Lease.unit_id == _Unit.id)
+        .join(_Property, _Unit.property_id == _Property.id)
+        .where(
+            _Lease.id.in_(requested_lease_ids),
+            _Property.household_id == user.household_id,
         )
-        if lease_result.scalar_one_or_none() is None:
-            raise HTTPException(status_code=404, detail=f"Lease {link.lease_id} not found")
+    )
+    found_lease_ids = {row[0] for row in lease_result.all()}
+    missing = requested_lease_ids - found_lease_ids
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Lease {next(iter(missing))} not found")
 
     # Remove existing payment records for this transaction (atomic replace)
     existing_payments = await db.execute(
@@ -930,15 +894,17 @@ async def link_transaction_to_property_expense(
         )
 
     # Verify all properties belong to this household
-    for link in payload:
-        prop_result = await db.execute(
-            select(_Property).where(
-                _Property.id == link.property_id,
-                _Property.household_id == user.household_id,
-            )
+    requested_property_ids = {link.property_id for link in payload}
+    prop_result = await db.execute(
+        select(_Property.id).where(
+            _Property.id.in_(requested_property_ids),
+            _Property.household_id == user.household_id,
         )
-        if prop_result.scalar_one_or_none() is None:
-            raise HTTPException(status_code=404, detail=f"Property {link.property_id} not found")
+    )
+    found_property_ids = {row[0] for row in prop_result.all()}
+    missing = requested_property_ids - found_property_ids
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Property {next(iter(missing))} not found")
 
     # Remove existing maintenance expense records for this transaction (atomic replace)
     existing_expenses = await db.execute(

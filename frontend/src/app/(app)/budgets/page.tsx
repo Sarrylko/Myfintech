@@ -223,8 +223,8 @@ function BudgetRow({
         {/* Amounts */}
         <div className="text-right w-40 shrink-0">
           <p className="text-sm font-semibold text-gray-900">
-            {fmt(budget.actual_spent)}{" "}
-            <span className="font-normal text-gray-400">/ {fmt(budget.amount)}</span>
+            {fmt(parseFloat(budget.actual_spent))}{" "}
+            <span className="font-normal text-gray-400">/ {fmt(parseFloat(budget.amount))}</span>
           </p>
           <p className={`text-xs ${isOver ? "text-red-600 font-medium" : "text-gray-400"}`}>
             {isOver ? `${fmt(Math.abs(remaining))} over budget` : `${fmt(remaining)} remaining`}
