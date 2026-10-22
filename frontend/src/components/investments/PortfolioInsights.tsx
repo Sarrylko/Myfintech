@@ -88,7 +88,7 @@ export function classifyHolding(h: Holding, account: Account): AssetBucket {
 }
 
 /** Balance-only account (no positions) — classify from the account itself. */
-function classifyAccount(a: Account): AssetBucket {
+export function classifyAccount(a: Account): AssetBucket {
   if (isCryptoAccount(a)) return "crypto";
   const text = `${a.name} ${a.institution_name ?? ""}`.toLowerCase();
   if (text.includes("treasurydirect") || RE_BONDS.test(text)) return "bonds";
@@ -98,7 +98,7 @@ function classifyAccount(a: Account): AssetBucket {
 
 /** A single stock or coin, as opposed to a diversified fund — only those count
  * as concentration risk. */
-function isSinglePosition(h: Holding, bucket: AssetBucket): boolean {
+export function isSinglePosition(h: Holding, bucket: AssetBucket): boolean {
   if (bucket === "crypto") return true;
   if (bucket !== "us_stocks" && bucket !== "intl_stocks" && bucket !== "real_estate") return false;
   const cls = (h.asset_class ?? "").toLowerCase();

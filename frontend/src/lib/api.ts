@@ -1956,6 +1956,83 @@ export async function getDividendSummary(accountIds: string[]): Promise<Dividend
   return apiFetch<DividendSummary>(`/api/v1/investments/dividends${params ? `?${params}` : ""}`, {});
 }
 
+export type TaxTreatment = "taxable" | "tax_deferred" | "tax_free" | "crypto";
+export type TaxTerm = "short" | "long" | "unknown" | "mixed" | null;
+
+export interface RealizedBucket {
+  gains: string;
+  losses: string;
+  net: string;
+}
+
+export interface RealizedSale {
+  date: string;
+  account_id: string;
+  account_name: string | null;
+  ticker: string;
+  name: string;
+  quantity: string;
+  proceeds: string;
+  matched_proceeds: string;
+  cost_basis: string | null;
+  gain: string | null;
+  short_term: string;
+  long_term: string;
+  unknown_term: string;
+  term: TaxTerm;
+  basis_source: "lots" | "estimated" | null;
+  missing_basis_proceeds: string | null;
+  possible_wash_sale: boolean;
+}
+
+export interface HarvestCandidate {
+  account_id: string;
+  account_name: string | null;
+  treatment: TaxTreatment;
+  ticker: string | null;
+  name: string | null;
+  quantity: string;
+  value: string;
+  cost_basis: string;
+  loss: string;
+  loss_pct: number;
+  term: TaxTerm;
+  recent_buy: { date: string; account_name: string | null; clear_on: string } | null;
+}
+
+export interface TaxSummary {
+  year: number;
+  as_of: string;
+  history_start: string | null;
+  accounts: { id: string; name: string; treatment: TaxTreatment }[];
+  realized: {
+    short_term: RealizedBucket;
+    long_term: RealizedBucket;
+    unknown_term: RealizedBucket;
+    net: string;
+    proceeds: string;
+    estimated_count: number;
+    missing_basis_count: number;
+    missing_basis_proceeds: string;
+    sales: RealizedSale[];
+  };
+  harvest: { total_loss: string; candidates: HarvestCandidate[] };
+  fees: {
+    commissions: string;
+    account_fees: string;
+    margin_interest: string;
+    total: string;
+    trades_with_fees: number;
+    by_account: { account_name: string | null; amount: string }[];
+  };
+}
+
+export async function getTaxSummary(accountIds: string[], year?: number): Promise<TaxSummary> {
+  const parts = accountIds.map((id) => `account_ids=${encodeURIComponent(id)}`);
+  if (year) parts.push(`year=${year}`);
+  return apiFetch<TaxSummary>(`/api/v1/investments/tax${parts.length ? `?${parts.join("&")}` : ""}`, {});
+}
+
 export async function refreshInvestmentPrices(): Promise<RefreshResult> {
   return apiFetch<RefreshResult>("/api/v1/investments/refresh-prices", { method: "POST",
   });

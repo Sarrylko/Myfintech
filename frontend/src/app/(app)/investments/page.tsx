@@ -40,6 +40,7 @@ import {
 import { useCurrency } from "@/lib/currency";
 import PortfolioInsights from "@/components/investments/PortfolioInsights";
 import DividendIncome from "@/components/investments/DividendIncome";
+import TaxDrag from "@/components/investments/TaxDrag";
 
 // ─── Subtype classification ───────────────────────────────────────────────────
 
@@ -2043,6 +2044,9 @@ export default function InvestmentsPage() {
 
       {/* Dividends received, forward income and upcoming payments */}
       {!loading && <DividendIncome accounts={filtered} fmt={fmt} />}
+
+      {/* Tax location, realized gains, harvest candidates and fees (US tax rules) */}
+      {!loading && activeCountryCode === "US" && <TaxDrag accounts={filtered} holdingsMap={holdingsMap} fmt={fmt} />}
 
       {/* Price refresh status bar */}
       <div className="flex flex-wrap items-center gap-3 mb-5 bg-white rounded-xl shadow border border-gray-100 px-4 py-3">

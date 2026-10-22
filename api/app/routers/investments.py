@@ -278,6 +278,21 @@ async def dividend_summary(
     return await build_dividend_summary(db, user.household_id, account_ids)
 
 
+@router.get("/tax")
+async def tax_summary(
+    account_ids: list[uuid.UUID] | None = Query(None),
+    year: int | None = Query(None, ge=2000, le=2100),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Each account's tax treatment, realized gains for the year split short
+    vs long term, tax-loss harvesting candidates and fees paid, for the given
+    investment accounts (all of the household's when none are given)."""
+    from app.services.tax import build_tax_summary
+
+    return await build_tax_summary(db, user.household_id, account_ids, year)
+
+
 @router.patch("/settings", response_model=InvestmentRefreshSettings)
 async def update_refresh_settings(
     payload: InvestmentRefreshSettings,
