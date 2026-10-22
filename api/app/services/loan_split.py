@@ -50,13 +50,44 @@ def _months_between(start: date, end: date) -> int:
     return (end.year - start.year) * 12 + (end.month - start.month)
 
 
+def _payments_after(anchor: date, paid_on: date) -> int:
+    """Monthly payments made after `anchor` up to and including `paid_on` (<= 0 if before)."""
+    return _months_between(anchor, paid_on) + (1 if paid_on.day > anchor.day else 0)
+
+
+def _interest_from_balance(balance: float, anchor: date, paid_on: date, r: float, payment: float) -> float:
+    """Interest on a payment, amortizing from a balance known on `anchor`.
+
+    Each payment: balance_after = balance_before * (1 + r) - payment.  Payments
+    after the anchor roll the balance forward; earlier ones roll it back.
+    """
+    n = _payments_after(anchor, paid_on)
+    before = balance
+    if n >= 1:
+        for _ in range(n - 1):
+            before = before * (1 + r) - payment
+    else:
+        for _ in range(1 - n):
+            before = (before + payment) / (1 + r)
+    return max(0.0, before * r)
+
+
 def _estimated_interest(loan: Loan, paid_on: date) -> float | None:
-    """Interest portion per the amortization schedule (no prepayments assumed),
-    falling back to one month of interest on the current balance."""
+    """Interest portion of a payment.
+
+    From the current balance when its date is known (exact, prepayments
+    included), else per the original amortization schedule (no prepayments
+    assumed), else one month of interest on the current balance.
+    """
     rate = float(loan.interest_rate or 0)
     if rate <= 0:
         return None
     r = rate / 100 / 12
+    balance = float(loan.current_balance or 0)
+    escrow = float(loan.escrow_amount or 0) if loan.escrow_included else 0.0
+    payment = float(loan.monthly_payment or 0) - escrow  # principal + interest
+    if loan.balance_as_of and balance > 0 and payment > 0:
+        return _interest_from_balance(balance, loan.balance_as_of, paid_on, r, payment)
     principal0 = float(loan.original_amount or 0)
     term = loan.term_months or 0
     if loan.origination_date and principal0 > 0 and term > 0:
@@ -65,7 +96,6 @@ def _estimated_interest(loan: Loan, paid_on: date) -> float | None:
         scheduled = principal0 * r / (1 - (1 + r) ** -term)
         balance_before = principal0 * growth - scheduled * (growth - 1) / r
         return max(0.0, balance_before * r)
-    balance = float(loan.current_balance or 0)
     return balance * r if balance > 0 else None
 
 

@@ -296,6 +296,7 @@ async def update_account(
         linked_loans = await db.execute(select(Loan).where(Loan.account_id == account_id))
         for loan in linked_loans.scalars().all():
             loan.current_balance = data["current_balance"]
+            loan.balance_as_of = date.today()
 
     await db.flush()
     await db.refresh(account)

@@ -28,6 +28,8 @@ class Loan(Base):
     )  # mortgage | heloc | second_mortgage | other
     original_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     current_balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    # Date current_balance was last set; payments are amortized from it
+    balance_as_of: Mapped[date | None] = mapped_column(Date)
     interest_rate: Mapped[Decimal | None] = mapped_column(
         Numeric(6, 4)
     )  # e.g. 6.8750 = 6.875%

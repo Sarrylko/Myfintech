@@ -1092,6 +1092,8 @@ export interface Loan {
   loan_type: string;
   original_amount: string | null;
   current_balance: string | null;
+  /** Date current_balance was last set */
+  balance_as_of?: string | null;
   interest_rate: string | null;
   monthly_payment: string | null;
   payment_due_day: number | null;

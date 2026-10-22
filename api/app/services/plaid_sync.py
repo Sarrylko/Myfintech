@@ -6,7 +6,7 @@ both the FastAPI router (async) and the Celery beat task (via asyncio.run).
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import create_engine, select
@@ -135,6 +135,7 @@ async def sync_plaid_item(item: PlaidItem, db: AsyncSession) -> dict:
                 linked_loans = await db.execute(select(Loan).where(Loan.account_id == acct.id))
                 for loan in linked_loans.scalars().all():
                     loan.current_balance = curr_bal
+                    loan.balance_as_of = date.today()
         else:
             type_str = pa.type.value if hasattr(pa.type, "value") else str(pa.type)
             sub_str = pa.subtype.value if pa.subtype and hasattr(pa.subtype, "value") else (str(pa.subtype) if pa.subtype else None)

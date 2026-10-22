@@ -51,6 +51,7 @@ class LoanResponse(BaseModel):
     loan_type: str
     original_amount: Decimal | None
     current_balance: Decimal | None
+    balance_as_of: date | None = None
     interest_rate: Decimal | None
     monthly_payment: Decimal | None
     payment_due_day: int | None

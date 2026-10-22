@@ -47,6 +47,12 @@ function estimatedInterest(loan: Loan, paidOn: Date): number | null {
   const rate = parseFloat(loan.interest_rate ?? "");
   if (!(rate > 0)) return null;
   const r = rate / 100 / 12;
+  const balance = parseFloat(loan.current_balance ?? "");
+  const escrow = loan.escrow_included ? parseFloat(loan.escrow_amount ?? "") || 0 : 0;
+  const payment = (parseFloat(loan.monthly_payment ?? "") || 0) - escrow; // principal + interest
+  if (loan.balance_as_of && balance > 0 && payment > 0) {
+    return interestFromBalance(balance, parseDay(loan.balance_as_of), paidOn, r, payment);
+  }
   const principal0 = parseFloat(loan.original_amount ?? "");
   const term = loan.term_months ?? 0;
   if (loan.origination_date && principal0 > 0 && term > 0) {
@@ -56,8 +62,31 @@ function estimatedInterest(loan: Loan, paidOn: Date): number | null {
     const balanceBefore = principal0 * growth - (scheduled * (growth - 1)) / r;
     return Math.max(0, balanceBefore * r);
   }
-  const balance = parseFloat(loan.current_balance ?? "");
   return balance > 0 ? balance * r : null;
+}
+
+/** "2026-10-21" as UTC midnight, matching how transaction dates arrive */
+function parseDay(iso: string): Date {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+/**
+ * Interest on a payment, amortizing from a balance known on `anchor`.
+ * Each payment: after = before * (1 + r) - payment. Payments after the anchor
+ * roll the balance forward; earlier ones roll it back. Compared in UTC so the
+ * viewer's time zone can't shift a date across the anchor day.
+ */
+function interestFromBalance(balance: number, anchor: Date, paidOn: Date, r: number, payment: number): number {
+  const months = (paidOn.getUTCFullYear() - anchor.getUTCFullYear()) * 12 + (paidOn.getUTCMonth() - anchor.getUTCMonth());
+  const n = months + (paidOn.getUTCDate() > anchor.getUTCDate() ? 1 : 0);
+  let before = balance;
+  if (n >= 1) {
+    for (let i = 0; i < n - 1; i++) before = before * (1 + r) - payment;
+  } else {
+    for (let i = 0; i < 1 - n; i++) before = (before + payment) / (1 + r);
+  }
+  return Math.max(0, before * r);
 }
 
 export function splitLoanPayment(t: Transaction, loan: Loan): LoanPaymentSplit | null {

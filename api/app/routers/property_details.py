@@ -89,6 +89,8 @@ async def create_loan(
 ):
     await _get_property(property_id, user, db)
     loan = Loan(property_id=property_id, **payload.model_dump())
+    if loan.current_balance is not None:
+        loan.balance_as_of = date.today()
     db.add(loan)
     await db.flush()
     await db.refresh(loan)
@@ -110,8 +112,11 @@ async def update_loan(
     loan = result.scalar_one_or_none()
     if not loan:
         raise HTTPException(status_code=404, detail="Loan not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    for field, value in data.items():
         setattr(loan, field, value)
+    if data.get("current_balance") is not None:
+        loan.balance_as_of = date.today()
     await db.flush()
     await db.refresh(loan)
     return loan
