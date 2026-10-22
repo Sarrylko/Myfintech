@@ -39,6 +39,7 @@ import {
 } from "@/lib/api";
 import { useCurrency } from "@/lib/currency";
 import PortfolioInsights from "@/components/investments/PortfolioInsights";
+import DividendIncome from "@/components/investments/DividendIncome";
 
 // ─── Subtype classification ───────────────────────────────────────────────────
 
@@ -2039,6 +2040,9 @@ export default function InvestmentsPage() {
 
       {/* Allocation, top holdings and concentration — across the accounts shown */}
       {!loading && <PortfolioInsights accounts={filtered} holdingsMap={holdingsMap} fmt={fmt} pnlMode={pnlMode} />}
+
+      {/* Dividends received, forward income and upcoming payments */}
+      {!loading && <DividendIncome accounts={filtered} fmt={fmt} />}
 
       {/* Price refresh status bar */}
       <div className="flex flex-wrap items-center gap-3 mb-5 bg-white rounded-xl shadow border border-gray-100 px-4 py-3">

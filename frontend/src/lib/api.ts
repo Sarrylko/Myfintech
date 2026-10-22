@@ -1911,6 +1911,51 @@ export async function getMarketStatus(): Promise<MarketStatus> {
   return apiFetch<MarketStatus>("/api/v1/investments/market-status", {});
 }
 
+export interface DividendPayer {
+  key: string;
+  ticker: string | null;
+  name: string;
+  received_ttm: string;
+  payments_ttm: number;
+  forward_annual: string | null;
+  forward_source: "market" | "history" | null;
+  value: string | null;
+  yield: number | null;
+  yield_on_cost: number | null;
+  held: boolean;
+}
+
+export interface UpcomingDividend {
+  date: string;
+  ticker: string | null;
+  name: string;
+  per_share: string;
+  amount: string;
+}
+
+export interface DividendSummary {
+  as_of: string;
+  monthly: { month: string; amount: string }[];
+  ttm_received: string;
+  prior_ttm_received: string;
+  yoy_growth: number | null;
+  history_start: string | null;
+  forward_annual: string;
+  portfolio_value: string;
+  yield_on_value: number | null;
+  yield_on_cost: number | null;
+  symbols_looked_up: number;
+  symbols_with_market_data: number;
+  mutual_funds_held: number;
+  top_payers: DividendPayer[];
+  upcoming: UpcomingDividend[];
+}
+
+export async function getDividendSummary(accountIds: string[]): Promise<DividendSummary> {
+  const params = accountIds.map((id) => `account_ids=${encodeURIComponent(id)}`).join("&");
+  return apiFetch<DividendSummary>(`/api/v1/investments/dividends${params ? `?${params}` : ""}`, {});
+}
+
 export async function refreshInvestmentPrices(): Promise<RefreshResult> {
   return apiFetch<RefreshResult>("/api/v1/investments/refresh-prices", { method: "POST",
   });

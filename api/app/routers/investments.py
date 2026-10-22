@@ -1,9 +1,10 @@
 """Investment price refresh settings and manual trigger endpoints."""
 
 import asyncio
+import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -261,6 +262,20 @@ async def crypto_search(
         return []
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _sync_crypto_lookup, q)
+
+
+@router.get("/dividends")
+async def dividend_summary(
+    account_ids: list[uuid.UUID] | None = Query(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dividends received by month, forward income and yields, top payers and
+    an estimated upcoming-payments calendar for the given investment accounts
+    (all of the household's when none are given)."""
+    from app.services.dividends import build_dividend_summary
+
+    return await build_dividend_summary(db, user.household_id, account_ids)
 
 
 @router.patch("/settings", response_model=InvestmentRefreshSettings)
