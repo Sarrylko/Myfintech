@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -66,6 +66,35 @@ class InvestmentTransaction(Base):
     fees: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
     currency_code: Mapped[str] = mapped_column(String(3), default="USD")
     notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class InvestmentValueSnapshot(Base):
+    """One row per investment account per day, written by the daily net worth
+    snapshot task. The value history behind contributions-vs-growth and
+    time-weighted returns; external cash flows are read from
+    investment_transactions at query time, since Plaid delivers them late."""
+    __tablename__ = "investment_value_snapshots"
+    __table_args__ = (
+        UniqueConstraint("account_id", "snapshot_date", name="uq_investment_value_snapshots_account_date"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("households.id"), index=True
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), index=True
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, index=True)
+    market_value: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    # Sum of holdings' cost basis; NULL when no holding has one
+    cost_basis: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    currency_code: Mapped[str] = mapped_column(String(3), default="USD")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
