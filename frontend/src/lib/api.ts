@@ -1957,7 +1957,40 @@ export async function getDividendSummary(accountIds: string[]): Promise<Dividend
   return apiFetch<DividendSummary>(`/api/v1/investments/dividends${params ? `?${params}` : ""}`, {});
 }
 
-export type TaxTreatment = "taxable" | "tax_deferred" | "tax_free" | "crypto";
+export interface InvestmentHistoryPoint {
+  date: string;
+  value: string;
+  cost_basis: string | null;
+  net_flow: string;                    // deposits minus withdrawals since the previous point
+  accounts: Record<string, string>;    // account id → value
+}
+
+export interface InvestmentHistory {
+  as_of: string;
+  history_start: string | null;
+  series: InvestmentHistoryPoint[];
+  securities: { account_id: string; ticker_symbol: string | null; name: string | null; asset_class: string | null }[];
+  positions: { date: string; values: [number, string][] }[];   // [index into securities, value]
+  summary: {
+    start_value: string;
+    end_value: string;
+    contributions: string;
+    growth: string;
+    time_weighted_return: number | null;
+    all_time_high: string;
+    all_time_high_date: string;
+    drawdown: number;
+    days: number;
+  } | null;
+}
+
+export async function getInvestmentHistory(accountIds: string[], days?: number): Promise<InvestmentHistory> {
+  const params = accountIds.map((id) => `account_ids=${encodeURIComponent(id)}`);
+  if (days) params.push(`days=${days}`);
+  return apiFetch<InvestmentHistory>(`/api/v1/investments/history${params.length ? `?${params.join("&")}` : ""}`, {});
+}
+
+export type TaxTreatment ="taxable" | "tax_deferred" | "tax_free" | "crypto";
 export type TaxTerm = "short" | "long" | "unknown" | "mixed" | null;
 
 export interface RealizedBucket {

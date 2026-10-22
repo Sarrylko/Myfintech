@@ -39,6 +39,7 @@ import {
 } from "@/lib/api";
 import { useCurrency } from "@/lib/currency";
 import PortfolioInsights from "@/components/investments/PortfolioInsights";
+import PortfolioHistory from "@/components/investments/PortfolioHistory";
 import DividendIncome from "@/components/investments/DividendIncome";
 import TaxDrag from "@/components/investments/TaxDrag";
 import OwnershipStructure, { daysSinceUpdate, isStale, STALE_DAYS } from "@/components/investments/OwnershipStructure";
@@ -2052,6 +2053,9 @@ export default function InvestmentsPage() {
           </div>
         );
       })()}
+
+      {/* Value over time, contributions vs. growth and drawdown */}
+      {!loading && <PortfolioHistory accounts={filtered} fmt={fmt} />}
 
       {/* Allocation, top holdings and concentration — across the accounts shown */}
       {!loading && <PortfolioInsights accounts={filtered} holdingsMap={holdingsMap} fmt={fmt} pnlMode={pnlMode} />}

@@ -293,6 +293,22 @@ async def tax_summary(
     return await build_tax_summary(db, user.household_id, account_ids, year)
 
 
+@router.get("/history")
+async def investment_history(
+    account_ids: list[uuid.UUID] | None = Query(None),
+    days: int | None = Query(None, ge=1, le=3650),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Daily portfolio value by account, contributions vs. growth, time-weighted
+    return and drawdown, plus the positions behind each day, for the given
+    investment accounts (all of the household's when none are given) over the
+    last `days` days (all recorded history when omitted)."""
+    from app.services.investment_history import build_investment_history
+
+    return await build_investment_history(db, user.household_id, account_ids, days)
+
+
 @router.patch("/settings", response_model=InvestmentRefreshSettings)
 async def update_refresh_settings(
     payload: InvestmentRefreshSettings,
