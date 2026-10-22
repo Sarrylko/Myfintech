@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +31,15 @@ class BusinessEntity(Base):
     ein: Mapped[str | None] = mapped_column(String(20))  # XX-XXXXXXX format
     description: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    # How the IRS taxes it, when entity_type doesn't say (an LLC can be any):
+    # schedule_c | partnership | s_corp | c_corp; NULL derives from entity_type
+    tax_classification: Mapped[str | None] = mapped_column(String(20))
+    owner_salary: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))   # S-corp owner W-2
+    home_office_sqft: Mapped[int | None] = mapped_column(Integer)
+    health_insurance_premiums: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    retirement_plan: Mapped[str | None] = mapped_column(String(20))  # none | sep | solo_401k | simple
+    retirement_contribution: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))  # employer part, this year
+    accountable_plan: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
