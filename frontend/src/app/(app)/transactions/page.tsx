@@ -1601,6 +1601,10 @@ export default function TransactionsPage() {
   }, [txnReportType, spendPart, loanSplits]);
 
   const totals = useMemo(() => summarize(filtered), [filtered, summarize]);
+  // Category, merchant, search, direction or amount filters cut income out of the set,
+  // so income-based figures (net flow, savings rate, where income went) stop meaning anything
+  const narrowed = includeKeys.length > 0 || excludeKeys.length > 0 || filters.merchants.length > 0 ||
+    search.trim() !== "" || filters.direction !== "all" || amountMin !== null || amountMax !== null;
   const totalExpenses = totals.expenses;
   const totalIncome = totals.income;
   const totalLoanPrincipal = totals.principal;
@@ -2005,7 +2009,7 @@ export default function TransactionsPage() {
 
       {/* Summary strip */}
       {filtered.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mb-5">
+        <div className={`grid grid-cols-2 md:grid-cols-3 ${narrowed ? "" : "xl:grid-cols-5"} gap-3 mb-5`}>
           <div className="bg-gradient-to-br from-red-50 to-white dark:from-red-950/40 dark:to-slate-800 rounded-xl border border-red-100 dark:border-red-900/30 p-4">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-6 h-6 rounded-lg bg-red-100 dark:bg-red-900/50 flex items-center justify-center">
@@ -2027,6 +2031,7 @@ export default function TransactionsPage() {
               <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Transfers, savings & property expenses excluded</p>
             )}
           </div>
+          {!narrowed && (<>
           <div className="bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/40 dark:to-slate-800 rounded-xl border border-emerald-100 dark:border-emerald-900/30 p-4">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-6 h-6 rounded-lg bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
@@ -2053,6 +2058,7 @@ export default function TransactionsPage() {
             </p>
             <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Income minus spending, before savings</p>
           </div>
+          </>)}
           <div className="bg-gradient-to-br from-violet-50 to-white dark:from-violet-950/40 dark:to-slate-800 rounded-xl border border-violet-100 dark:border-violet-900/30 p-4">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-6 h-6 rounded-lg bg-violet-100 dark:bg-violet-900/50 flex items-center justify-center">
@@ -2062,7 +2068,7 @@ export default function TransactionsPage() {
             </div>
             <p className="text-xl font-bold text-violet-600 dark:text-violet-400 tabular-nums">
               {totalSaved >= 0 ? "" : "-"}{fmt(Math.abs(totalSaved))}
-              {savingsRate !== null && (
+              {savingsRate !== null && !narrowed && (
                 <span className="text-xs font-semibold text-violet-500 dark:text-violet-300 ml-2" title="Savings rate: saved & invested (incl. loan principal) ÷ income">
                   {Math.round(savingsRate * 100)}% of income
                 </span>
@@ -2080,11 +2086,14 @@ export default function TransactionsPage() {
               <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold uppercase tracking-wide">Transactions</p>
             </div>
             <p className="text-xl font-bold text-gray-900 dark:text-white tabular-nums">{filtered.length.toLocaleString()}</p>
+            {narrowed && (
+              <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">Filtered view · income and net flow hidden</p>
+            )}
           </div>
         </div>
       )}
 
-      {filtered.length > 0 && (
+      {filtered.length > 0 && !narrowed && (
         <IncomeAllocation
           income={totalIncome}
           spending={totalExpenses}
