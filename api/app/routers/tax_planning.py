@@ -19,7 +19,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -112,7 +112,11 @@ async def get_profile(
     p = await load_profile(db, hid, year)
     defaults = await profile_defaults(db, hid, year)
     props = (await db.execute(
-        select(Property).where(Property.household_id == hid, Property.is_primary_residence == False)  # noqa: E712
+        select(Property).where(
+            Property.household_id == hid,
+            Property.is_primary_residence == False,  # noqa: E712
+            or_(Property.country.is_(None), Property.country == "US"),  # Schedule E is US-only
+        )
         .order_by(Property.address)
     )).scalars().all()
     entities = (await db.execute(
