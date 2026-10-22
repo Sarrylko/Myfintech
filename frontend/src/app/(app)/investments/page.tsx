@@ -38,6 +38,7 @@ import {
   CSVImportResult,
 } from "@/lib/api";
 import { useCurrency } from "@/lib/currency";
+import PortfolioInsights from "@/components/investments/PortfolioInsights";
 
 // ─── Subtype classification ───────────────────────────────────────────────────
 
@@ -1497,7 +1498,7 @@ function InstitutionLogoOrFallback({ name }: { name: string | null | undefined }
 // ─── Account Row ─────────────────────────────────────────────────────────────
 
 function AccountRow({
-  account, ownerName, expanded, onToggle, holdings, holdingsLoading, onHoldingChanged, isCryptoAccount,
+  account, ownerName, expanded, onToggle, holdings, holdingsLoading, onHoldingChanged, isCryptoAccount, pnlMode,
 }: {
   account: Account;
   ownerName?: string;
@@ -1507,6 +1508,7 @@ function AccountRow({
   holdingsLoading: boolean;
   onHoldingChanged: (accountId: string) => void;
   isCryptoAccount?: boolean;
+  pnlMode: "dollar" | "percent";
 }) {
   const { fmt: fmtRaw } = useCurrency();
   const fmt = (val: string | number | null | undefined, decimals = 0): string => {
@@ -1514,6 +1516,15 @@ function AccountRow({
     return fmtRaw(Number(val), { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
   };
   const [activeTab, setActiveTab] = useState<"positions" | "activity">("positions");
+
+  // Unrealized gain over the positions that have a cost basis
+  const withCost = holdings.filter((h) => h.cost_basis && Number(h.cost_basis) > 0);
+  const costTotal = withCost.reduce((s, h) => s + Number(h.cost_basis), 0);
+  const gain = withCost.reduce((s, h) => s + Number(h.current_value ?? 0), 0) - costTotal;
+  const gainPct = costTotal > 0 ? (gain / costTotal) * 100 : null;
+  const gainLabel = gainPct === null ? null
+    : `${gain >= 0 ? "+" : "−"}${pnlMode === "dollar" ? fmt(Math.abs(gain)) : `${Math.abs(gainPct).toFixed(1)}%`}`;
+  const gainPartial = withCost.length > 0 && withCost.length < holdings.filter((h) => Number(h.current_value ?? 0) !== 0).length;
   return (
     <div className="border-b border-gray-50 last:border-0">
       <button
@@ -1542,7 +1553,20 @@ function AccountRow({
         <div className="flex items-center gap-3 shrink-0 ml-4">
           <div className="text-right">
             <p className="text-sm font-semibold text-gray-900">{fmt(account.current_balance)}</p>
-            {account.is_manual && <p className="text-xs text-gray-400">manual</p>}
+            {(gainLabel || account.is_manual) && (
+              <p className="text-xs text-gray-400 tabular-nums">
+                {gainLabel && (
+                  <span
+                    className={gain >= 0 ? "text-emerald-600" : "text-red-600"}
+                    title={`Unrealized gain${gainPartial ? " — some positions have no cost basis and are excluded" : ""}`}
+                  >
+                    {gainLabel}{gainPartial && "*"}
+                  </span>
+                )}
+                {gainLabel && account.is_manual && " · "}
+                {account.is_manual && "manual"}
+              </p>
+            )}
           </div>
           <svg
             className={`w-4 h-4 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`}
@@ -1601,7 +1625,7 @@ function AccountRow({
 
 function Segment({
   title, subtitle, accounts, accentClass, emptyText, memberMap,
-  expandedId, onToggle, holdingsMap, holdingsLoadingMap, onHoldingChanged, isCryptoSegment,
+  expandedId, onToggle, holdingsMap, holdingsLoadingMap, onHoldingChanged, isCryptoSegment, pnlMode,
 }: {
   title: string;
   subtitle: string;
@@ -1615,6 +1639,7 @@ function Segment({
   holdingsLoadingMap: Record<string, boolean>;
   onHoldingChanged: (accountId: string) => void;
   isCryptoSegment?: boolean;
+  pnlMode: "dollar" | "percent";
 }) {
   const { fmt: fmtRaw } = useCurrency();
   const fmt = (val: string | number | null | undefined, decimals = 0): string => {
@@ -1649,6 +1674,7 @@ function Segment({
               holdingsLoading={holdingsLoadingMap[a.id] ?? false}
               onHoldingChanged={onHoldingChanged}
               isCryptoAccount={isCryptoSegment}
+              pnlMode={pnlMode}
             />
           ))}
         </div>
@@ -1902,12 +1928,12 @@ export default function InvestmentsPage() {
 
       {/* Portfolio-wide P&L strip — computed from loaded holdings */}
       {!loading && (() => {
-        const allHoldings = Object.values(holdingsMap).flat();
+        const allHoldings = filtered.flatMap((a) => holdingsMap[a.id] ?? []);
         const withPrev = allHoldings.filter((h) => h.previous_close && Number(h.previous_close) > 0 && Number(h.quantity) > 0);
         const withCost = allHoldings.filter((h) => h.cost_basis && Number(h.cost_basis) > 0);
         if (withPrev.length === 0 && withCost.length === 0) {
-          const allLoaded = accounts.every((a) => holdingsMap[a.id] !== undefined);
-          if (accounts.length > 0 && !allLoaded) {
+          const allLoaded = filtered.every((a) => holdingsMap[a.id] !== undefined);
+          if (filtered.length > 0 && !allLoaded) {
             return (
               <div className="flex items-center gap-2 mb-5 bg-white rounded-xl border border-gray-100 shadow px-5 py-4 text-xs text-gray-400">
                 Loading portfolio P&amp;L…
@@ -2011,6 +2037,9 @@ export default function InvestmentsPage() {
         );
       })()}
 
+      {/* Allocation, top holdings and concentration — across the accounts shown */}
+      {!loading && <PortfolioInsights accounts={filtered} holdingsMap={holdingsMap} fmt={fmt} pnlMode={pnlMode} />}
+
       {/* Price refresh status bar */}
       <div className="flex flex-wrap items-center gap-3 mb-5 bg-white rounded-xl shadow border border-gray-100 px-4 py-3">
         {/* Market status badge */}
@@ -2094,6 +2123,7 @@ export default function InvestmentsPage() {
             holdingsMap={holdingsMap}
             holdingsLoadingMap={holdingsLoadingMap}
             onHoldingChanged={refetchHoldings}
+            pnlMode={pnlMode}
           />
           <Segment
             title="Retirement & Tax-Advantaged"
@@ -2107,6 +2137,7 @@ export default function InvestmentsPage() {
             holdingsMap={holdingsMap}
             holdingsLoadingMap={holdingsLoadingMap}
             onHoldingChanged={refetchHoldings}
+            pnlMode={pnlMode}
           />
           <Segment
             title="Crypto & Digital Assets"
@@ -2120,6 +2151,7 @@ export default function InvestmentsPage() {
             holdingsMap={holdingsMap}
             holdingsLoadingMap={holdingsLoadingMap}
             onHoldingChanged={refetchHoldings}
+            pnlMode={pnlMode}
             isCryptoSegment={true}
           />
         </div>

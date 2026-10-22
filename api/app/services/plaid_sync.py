@@ -105,6 +105,26 @@ def _map_plaid_investment_type(ptype, psubtype) -> str:
     return "other"
 
 
+def _plaid_asset_class(sec) -> str | None:
+    """Map a Plaid security's type to our holding asset_class
+    (equity, etf, mutual_fund, fixed_income, cash, crypto, derivative, other).
+    The investments page classifies allocation from this; crypto also routes
+    the holding to CoinGecko pricing."""
+    if sec is None:
+        return None
+    if getattr(sec, "is_cash_equivalent", False):
+        return "cash"
+    raw = getattr(sec, "type", None)
+    t = (raw.value if hasattr(raw, "value") else str(raw or "")).lower().strip()
+    if not t:
+        return None
+    return {
+        "cryptocurrency": "crypto",
+        "fixed income": "fixed_income",
+        "mutual fund": "mutual_fund",
+    }.get(t, t.replace(" ", "_"))[:20]
+
+
 async def sync_plaid_item(item: PlaidItem, db: AsyncSession) -> dict:
     """Pull accounts, holdings, and new transactions from Plaid and upsert into DB."""
     from plaid.model.accounts_get_request import AccountsGetRequest
@@ -196,6 +216,7 @@ async def sync_plaid_item(item: PlaidItem, db: AsyncSession) -> dict:
                 quantity=Decimal(str(ph.quantity)),
                 cost_basis=Decimal(str(ph.cost_basis)) if ph.cost_basis is not None else None,
                 current_value=Decimal(str(ph.institution_value)) if ph.institution_value is not None else None,
+                asset_class=_plaid_asset_class(sec),
                 as_of_date=datetime.now(timezone.utc),
             ))
     except Exception:
