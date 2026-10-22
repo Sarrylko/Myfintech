@@ -98,3 +98,34 @@ class InvestmentValueSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
+
+
+class HoldingValueSnapshot(Base):
+    """One row per holding per day, written alongside InvestmentValueSnapshot.
+    Keeps the raw security fields rather than an allocation bucket, because
+    buckets are classified in the frontend from asset_class, ticker and name;
+    storing the inputs lets history be reclassified when that logic changes.
+    No holding_id: SnapTrade re-creates holdings on every sync, so a position
+    is followed across days by account_id + ticker_symbol (or name)."""
+    __tablename__ = "holding_value_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("households.id"), index=True
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), index=True
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, index=True)
+    ticker_symbol: Mapped[str | None] = mapped_column(String(20))
+    name: Mapped[str | None] = mapped_column(String(255))
+    asset_class: Mapped[str | None] = mapped_column(String(20))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    market_value: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    cost_basis: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    currency_code: Mapped[str] = mapped_column(String(3), default="USD")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
