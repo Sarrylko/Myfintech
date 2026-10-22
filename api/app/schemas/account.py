@@ -27,6 +27,7 @@ class AccountResponse(BaseModel):
     mask: str | None
     current_balance: Decimal | None
     available_balance: Decimal | None
+    balance_updated_at: datetime | None = None
     currency_code: str
     country: str = "US"
     is_hidden: bool

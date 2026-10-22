@@ -41,6 +41,7 @@ import { useCurrency } from "@/lib/currency";
 import PortfolioInsights from "@/components/investments/PortfolioInsights";
 import DividendIncome from "@/components/investments/DividendIncome";
 import TaxDrag from "@/components/investments/TaxDrag";
+import OwnershipStructure, { daysSinceUpdate, isStale, STALE_DAYS } from "@/components/investments/OwnershipStructure";
 
 // ─── Subtype classification ───────────────────────────────────────────────────
 
@@ -1551,6 +1552,19 @@ function AccountRow({
               {ownerName}
             </span>
           )}
+          {isStale(account) && (
+            <span
+              className="shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700"
+              title={(() => {
+                const d = daysSinceUpdate(account);
+                return d === null
+                  ? "No update recorded"
+                  : `Last ${account.is_manual ? "edited" : "synced"} ${d} days ago (over ${STALE_DAYS})`;
+              })()}
+            >
+              Stale
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 shrink-0 ml-4">
           <div className="text-right">
@@ -2047,6 +2061,9 @@ export default function InvestmentsPage() {
 
       {/* Tax location, realized gains, harvest candidates and fees (US tax rules) */}
       {!loading && activeCountryCode === "US" && <TaxDrag accounts={filtered} holdingsMap={holdingsMap} fmt={fmt} />}
+
+      {/* Ownership, institutions, liquidity tiers and data freshness */}
+      {!loading && <OwnershipStructure accounts={filtered} holdingsMap={holdingsMap} members={members} fmt={fmt} us={activeCountryCode === "US"} />}
 
       {/* Price refresh status bar */}
       <div className="flex flex-wrap items-center gap-3 mb-5 bg-white rounded-xl shadow border border-gray-100 px-4 py-3">

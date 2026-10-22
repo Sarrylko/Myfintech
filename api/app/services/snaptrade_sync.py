@@ -104,6 +104,7 @@ async def sync_snaptrade_connection(
         acct = result.scalar_one_or_none()
         if acct:
             acct.current_balance = total_val
+            acct.balance_updated_at = datetime.now(timezone.utc)
             acct.name = acct_name
         else:
             acct = Account(
@@ -115,6 +116,7 @@ async def sync_snaptrade_connection(
                 type="investment",
                 subtype="brokerage",
                 current_balance=total_val,
+                balance_updated_at=datetime.now(timezone.utc),
                 is_manual=False,
                 is_hidden=False,
             )

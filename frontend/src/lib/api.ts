@@ -299,6 +299,7 @@ export interface Account {
   mask: string | null;
   current_balance: string | null;
   available_balance: string | null;
+  balance_updated_at: string | null;  // last sync or manual edit; price refreshes don't count
   currency_code: string;
   country: string;
   is_hidden: boolean;

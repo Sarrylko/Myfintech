@@ -70,6 +70,9 @@ class Account(Base):
     mask: Mapped[str | None] = mapped_column(String(10))   # last 4 digits
     current_balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     available_balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    # When the balance or holdings last came from a sync or a manual edit.
+    # Price refreshes don't touch it, so it shows how stale a manual account is.
+    balance_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     currency_code: Mapped[str] = mapped_column(String(3), default="USD")
     is_hidden: Mapped[bool] = mapped_column(Boolean, default=False)
     is_manual: Mapped[bool] = mapped_column(Boolean, default=False)
