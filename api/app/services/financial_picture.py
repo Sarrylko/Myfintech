@@ -182,9 +182,10 @@ From live DB: active lease income, account balances as income indicators.
 Note discrepancies between documented and live data.
 
 ## Tax Summary
+If SECTION B has a TAX PROJECTION, use its computed figures as-is (do not recompute them): explain the
+projected tax, the balance due or refund, the safe-harbor status and the top opportunities.
 From documents: taxes paid/withheld, refunds, deductions (1098 mortgage interest, etc.).
-From live DB: current mortgage balances generating deductible interest.
-Estimate effective tax rate if determinable.
+Otherwise estimate the effective tax rate if determinable.
 
 ## Investment & Portfolio Analysis
 From documents: brokerage statements, 1099-DIV, 1099-B, 401k statements.
@@ -216,7 +217,7 @@ KPI: Current Net Worth (live) = $X,XXX
 KPI: Investment Portfolio Value (live) = $X,XXX
 KPI: Total Real Estate Equity (live) = $X,XXX
 KPI: Total Debt Outstanding (live) = $X,XXX
-KPI: Effective Tax Rate (documented) = X.X%
+KPI: Effective Tax Rate (projected if available, else documented) = X.X%
 KPI: Documents on File = {doc_count}
 Add any other relevant KPIs you can calculate.
 
@@ -314,3 +315,31 @@ def generate_all_financial_pictures():
             success += 1
 
     log.info("Financial picture generation complete: %d/%d households succeeded", success, len(household_ids))
+
+
+def tax_projection_section(result: dict, opportunities: list[dict]) -> str:
+    """The Tax Center's computed projection as prompt text, so the model
+    explains real figures instead of estimating its own."""
+    tax, inc, ded = result["tax"], result["income"], result["deductions"]
+    lines = [
+        f"\nTAX PROJECTION (computed by the app for {result['year']}, filing status {result['filing_status']}):",
+        f"  Total income ${inc['total']:,.0f} | AGI ${result['agi']:,.0f} | Taxable income ${result['taxable_income']:,.0f}",
+        f"  Wages ${inc['wages']:,.0f} | Interest ${inc['interest']:,.0f} | Dividends ${inc['ordinary_dividends']:,.0f} | "
+        f"Capital gain/loss ${inc['capital_gain_or_loss']:,.0f} | Business ${inc['business']:,.0f} | "
+        f"Rental ${inc['rental']:,.0f} (before passive limits ${inc['rental_before_limits']:,.0f})",
+        f"  Deduction: {'itemized' if ded['itemizing'] else 'standard'} ${max(ded['itemized'], ded['standard']):,.0f}"
+        f" | QBI ${ded['qbi']:,.0f}",
+        f"  Federal tax ${tax['federal_total']:,.0f} (SE ${tax['self_employment']:,.0f}, NIIT ${tax['niit']:,.0f}) | "
+        f"State ${tax['state']:,.0f} | Total ${tax['total']:,.0f}",
+        f"  Effective federal rate {result['rates']['effective_rate']:.1%} | Marginal {result['rates']['marginal_rate']:.0%}",
+        f"  Paid so far ${result['payments']['federal_total']:,.0f} | Projected federal balance "
+        f"{'due' if result['balance']['federal'] > 0 else 'refund'} ${abs(result['balance']['federal']):,.0f} | "
+        f"Safe harbor {'met' if result['safe_harbor']['met'] else 'short by $' + format(result['safe_harbor']['shortfall'], ',.0f')}",
+    ]
+    if opportunities:
+        lines.append("  Top planning opportunities (app-computed savings):")
+        for o in opportunities[:6]:
+            amt = f"saves ~${o['est_savings']:,.0f}" if o.get("est_savings") else (
+                f"costs ${o['tax_cost']:,.0f} now" if o.get("tax_cost") else "unpriced")
+            lines.append(f"    • {o['title']} — {amt}")
+    return "\n".join(lines)

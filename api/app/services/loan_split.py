@@ -99,6 +99,25 @@ def _estimated_interest(loan: Loan, paid_on: date) -> float | None:
     return balance * r if balance > 0 else None
 
 
+def interest_in_year(loan: Loan, year: int, through: date | None = None) -> float | None:
+    """Estimated interest paid on a loan's monthly payments in `year`
+    (up to `through`, if given). None when the loan has no rate."""
+    if not float(loan.interest_rate or 0):
+        return None
+    day = min((loan.origination_date.day if loan.origination_date else 1), 28)
+    total = 0.0
+    for month in range(1, 13):
+        paid_on = date(year, month, day)
+        if through and paid_on > through:
+            break
+        if loan.origination_date and paid_on <= loan.origination_date:
+            continue
+        if loan.maturity_date and paid_on > loan.maturity_date:
+            break
+        total += _estimated_interest(loan, paid_on) or 0.0
+    return total
+
+
 def split_loan_payment(amount: Decimal, paid_on: date, loan: Loan) -> LoanPaymentSplit | None:
     estimate = _estimated_interest(loan, paid_on)
     if estimate is None:

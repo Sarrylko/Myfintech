@@ -299,6 +299,7 @@ export interface Account {
   mask: string | null;
   current_balance: string | null;
   available_balance: string | null;
+  balance_updated_at: string | null;  // last sync or manual edit; price refreshes don't count
   currency_code: string;
   country: string;
   is_hidden: boolean;
@@ -1911,6 +1912,161 @@ export async function getMarketStatus(): Promise<MarketStatus> {
   return apiFetch<MarketStatus>("/api/v1/investments/market-status", {});
 }
 
+export interface DividendPayer {
+  key: string;
+  ticker: string | null;
+  name: string;
+  received_ttm: string;
+  payments_ttm: number;
+  forward_annual: string | null;
+  forward_source: "market" | "history" | null;
+  value: string | null;
+  yield: number | null;
+  yield_on_cost: number | null;
+  held: boolean;
+}
+
+export interface UpcomingDividend {
+  date: string;
+  ticker: string | null;
+  name: string;
+  per_share: string;
+  amount: string;
+}
+
+export interface DividendSummary {
+  as_of: string;
+  monthly: { month: string; amount: string }[];
+  ttm_received: string;
+  prior_ttm_received: string;
+  yoy_growth: number | null;
+  history_start: string | null;
+  forward_annual: string;
+  portfolio_value: string;
+  yield_on_value: number | null;
+  yield_on_cost: number | null;
+  symbols_looked_up: number;
+  symbols_with_market_data: number;
+  mutual_funds_held: number;
+  top_payers: DividendPayer[];
+  upcoming: UpcomingDividend[];
+}
+
+export async function getDividendSummary(accountIds: string[]): Promise<DividendSummary> {
+  const params = accountIds.map((id) => `account_ids=${encodeURIComponent(id)}`).join("&");
+  return apiFetch<DividendSummary>(`/api/v1/investments/dividends${params ? `?${params}` : ""}`, {});
+}
+
+export interface InvestmentHistoryPoint {
+  date: string;
+  value: string;
+  cost_basis: string | null;
+  net_flow: string;                    // deposits minus withdrawals since the previous point
+  accounts: Record<string, string>;    // account id → value
+}
+
+export interface InvestmentHistory {
+  as_of: string;
+  history_start: string | null;
+  series: InvestmentHistoryPoint[];
+  securities: { account_id: string; ticker_symbol: string | null; name: string | null; asset_class: string | null }[];
+  positions: { date: string; values: [number, string][] }[];   // [index into securities, value]
+  summary: {
+    start_value: string;
+    end_value: string;
+    contributions: string;
+    growth: string;
+    time_weighted_return: number | null;
+    all_time_high: string;
+    all_time_high_date: string;
+    drawdown: number;
+    days: number;
+  } | null;
+}
+
+export async function getInvestmentHistory(accountIds: string[], days?: number): Promise<InvestmentHistory> {
+  const params = accountIds.map((id) => `account_ids=${encodeURIComponent(id)}`);
+  if (days) params.push(`days=${days}`);
+  return apiFetch<InvestmentHistory>(`/api/v1/investments/history${params.length ? `?${params.join("&")}` : ""}`, {});
+}
+
+export type TaxTreatment ="taxable" | "tax_deferred" | "tax_free" | "crypto";
+export type TaxTerm = "short" | "long" | "unknown" | "mixed" | null;
+
+export interface RealizedBucket {
+  gains: string;
+  losses: string;
+  net: string;
+}
+
+export interface RealizedSale {
+  date: string;
+  account_id: string;
+  account_name: string | null;
+  ticker: string;
+  name: string;
+  quantity: string;
+  proceeds: string;
+  matched_proceeds: string;
+  cost_basis: string | null;
+  gain: string | null;
+  short_term: string;
+  long_term: string;
+  unknown_term: string;
+  term: TaxTerm;
+  basis_source: "lots" | "estimated" | null;
+  missing_basis_proceeds: string | null;
+  possible_wash_sale: boolean;
+}
+
+export interface HarvestCandidate {
+  account_id: string;
+  account_name: string | null;
+  treatment: TaxTreatment;
+  ticker: string | null;
+  name: string | null;
+  quantity: string;
+  value: string;
+  cost_basis: string;
+  loss: string;
+  loss_pct: number;
+  term: TaxTerm;
+  recent_buy: { date: string; account_name: string | null; clear_on: string } | null;
+}
+
+export interface TaxSummary {
+  year: number;
+  as_of: string;
+  history_start: string | null;
+  accounts: { id: string; name: string; treatment: TaxTreatment }[];
+  realized: {
+    short_term: RealizedBucket;
+    long_term: RealizedBucket;
+    unknown_term: RealizedBucket;
+    net: string;
+    proceeds: string;
+    estimated_count: number;
+    missing_basis_count: number;
+    missing_basis_proceeds: string;
+    sales: RealizedSale[];
+  };
+  harvest: { total_loss: string; candidates: HarvestCandidate[] };
+  fees: {
+    commissions: string;
+    account_fees: string;
+    margin_interest: string;
+    total: string;
+    trades_with_fees: number;
+    by_account: { account_name: string | null; amount: string }[];
+  };
+}
+
+export async function getTaxSummary(accountIds: string[], year?: number): Promise<TaxSummary> {
+  const parts = accountIds.map((id) => `account_ids=${encodeURIComponent(id)}`);
+  if (year) parts.push(`year=${year}`);
+  return apiFetch<TaxSummary>(`/api/v1/investments/tax${parts.length ? `?${parts.join("&")}` : ""}`, {});
+}
+
 export async function refreshInvestmentPrices(): Promise<RefreshResult> {
   return apiFetch<RefreshResult>("/api/v1/investments/refresh-prices", { method: "POST",
   });
@@ -3080,5 +3236,310 @@ export async function upsertSalaryWithholding(data: SalaryWithholdingUpsert): Pr
 
 export async function deleteSalaryWithholding(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/salary/withholdings/${id}`, { method: "DELETE" });
+}
+
+// ─── Tax planning (Tax Center) ────────────────────────────────────────────────
+// Money fields are decimal strings; rates are numbers (0.22 = 22%).
+
+export type FilingStatus = "single" | "mfj" | "mfs" | "hoh";
+export type TaxClassification = "schedule_c" | "partnership" | "s_corp" | "c_corp";
+export type TaxScope = "personal" | "business" | "rental";
+
+export interface TaxProfile {
+  year: number;
+  exists: boolean;
+  filing_status: FilingStatus;
+  state: string | null;
+  taxpayer_birthdate: string | null;
+  spouse_birthdate: string | null;
+  dependents_under_17: number;
+  other_dependents: number;
+  real_estate_professional: boolean;
+  active_participation: boolean;
+  prior_year_agi: string | null;
+  prior_year_tax: string | null;
+  expected_bonus: string | null;
+  other_ordinary_income: string | null;
+  capital_loss_carryover: string | null;
+  above_line_adjustments: string | null;
+  mortgage_interest_override: string | null;
+  property_tax_override: string | null;
+  charitable_cash: string | null;
+  charitable_noncash: string | null;
+  medical_expenses: string | null;
+  other_itemized: string | null;
+  estimated_payments_federal: string | null;
+  estimated_payments_state: string | null;
+  suspended_passive_loss: string | null;
+}
+
+export interface TaxPropertyInputs {
+  id: string;
+  address: string;
+  purchase_price: string | null;
+  purchase_date: string | null;
+  land_value: string | null;
+  placed_in_service_date: string | null;
+  personal_use_days: number | null;
+}
+
+export interface TaxEntityInputs {
+  id: string;
+  name: string;
+  entity_type: string;
+  tax_classification: TaxClassification | null;
+  owner_salary: string | null;
+  home_office_sqft: number | null;
+  health_insurance_premiums: string | null;
+  retirement_plan: "none" | "sep" | "solo_401k" | "simple" | null;
+  retirement_contribution: string | null;
+  accountable_plan: boolean;
+}
+
+export interface TaxProfileResponse {
+  profile: TaxProfile;
+  properties: TaxPropertyInputs[];
+  entities: TaxEntityInputs[];
+  states: string[];
+}
+
+export type TaxProfileUpdate = Partial<Omit<TaxProfile, "year" | "exists">>;
+
+export interface TaxBusinessRow {
+  id: string;
+  name: string;
+  classification: TaxClassification;
+  net_profit: string;
+  home_office: string;
+  owner_share: number;
+  household_income: string;
+  se_earnings: string;
+  se_tax: string;
+  qbi_income: string;
+}
+
+type TaxIncomeKey =
+  | "wages" | "other_ordinary" | "roth_conversion" | "interest" | "ordinary_dividends" | "qualified_dividends"
+  | "short_term_gains" | "long_term_gains" | "capital_gain_or_loss" | "capital_loss_carryover_out" | "business"
+  | "rental" | "rental_before_limits" | "suspended_passive_used" | "suspended_passive_out" | "total";
+
+export interface TaxProjectionResult {
+  year: number;
+  table_year: number;
+  filing_status: FilingStatus;
+  income: Record<TaxIncomeKey, string>;
+  adjustments: Record<"other" | "half_se_tax" | "se_health_insurance" | "business_retirement" | "total", string>;
+  agi: string;
+  deductions: {
+    standard: string; itemized: string; itemizing: boolean; salt_paid: string; salt_cap: string; salt: string;
+    mortgage_interest: string; charitable: string; medical: string; other: string; nonitemizer_charity: string;
+    senior: string; qbi: string; taxable_before_qbi: string; total: string;
+  };
+  taxable_income: string;
+  tax: {
+    ordinary: string; capital_gains: string; regular: string; credits: string; niit: string;
+    additional_medicare: string; self_employment: string; other: string; federal_total: string;
+    state: string; state_rate: number; total: string;
+  };
+  payments: Record<
+    "federal_withheld" | "federal_estimated" | "federal_total" | "state_withheld" | "state_estimated" | "state_total",
+    string
+  >;
+  balance: { federal: string; state: string };
+  safe_harbor: {
+    required: string; basis: string; paid: string; shortfall: string; met: boolean;
+    quarterly: { due: string; suggested: string }[];
+  };
+  rates: { effective_rate: number; marginal_rate: number; next_rate: number | null; ltcg_rate: number };
+  bracket: {
+    floor: string | number; ceiling: string | number | null; room: string | null; ordinary_taxable: string;
+    ltcg_0_top: string | number; ltcg_15_top: string | number; room_in_0_ltcg: string;
+    brackets: { rate: number; ceiling: string | number | null }[];
+  };
+  businesses: TaxBusinessRow[];
+  assumptions: string[];
+}
+
+export interface TaxRentalRow {
+  property_id: string;
+  address: string;
+  purchase_date: string | null;
+  purchase_price: string;
+  gross_rents: string;
+  mgmt_fees: string;
+  insurance: string;
+  property_tax: string;
+  hoa: string;
+  repairs: string;
+  other_fixed: string;
+  total_opex: string;
+  noi: string;
+  capex: string;
+  loan_balance: string;
+  mortgage_interest: string;
+  interest_estimated: boolean;
+  depreciation: string;
+  depreciable_basis: string;
+  land_value: string;
+  land_estimated: boolean;
+  placed_in_service: string | null;
+  personal_use_days: number | null;
+  net_income: string;
+}
+
+export interface TaxBusinessContext {
+  id: string;
+  name: string;
+  entity_type: string | null;
+  classification: TaxClassification;
+  classification_derived: boolean;
+  owner_share: number;
+  owner_salary?: string | null;
+  income_ytd: string;
+  expenses_ytd: string;
+  projected_income: string;
+  projected_expenses: string;
+  expense_categories: { category: string; amount: string }[];
+}
+
+export interface TaxGap {
+  id: string;
+  message: string;
+  where: "inputs" | "salary" | "investments" | "rentals" | "business";
+}
+
+export interface TaxProjectionResponse {
+  projection: TaxProjectionResult;
+  inputs: {
+    filing_status: FilingStatus;
+    state: string | null;
+    taxpayer_age: number | null;
+    spouse_age: number | null;
+    earners: {
+      name: string; wages: string; federal_withheld: string; state_withheld: string;
+      k401_traditional: string; k401_roth: string; hsa_payroll: string;
+    }[];
+  };
+  context: {
+    as_of: string;
+    gaps: TaxGap[];
+    sources: {
+      year_fraction: number;
+      w2_year: number | null;
+      mortgage_interest: string;
+      property_tax: string;
+      estimated_payments: {
+        federal: string;
+        state: string;
+        transactions: { date: string; amount: string; name: string; kind: "federal" | "state" }[];
+      };
+    };
+    rentals: TaxRentalRow[];
+    businesses: TaxBusinessContext[];
+    investments: {
+      realized: Record<"short_term" | "long_term" | "unknown_term", { gains: string; losses: string; net: string }> & {
+        net: string; proceeds: string;
+      };
+      history_start: string | null;
+      unrealized_gain: string;
+      tax_deferred_balance: string;
+    };
+    profile_exists: boolean;
+  };
+}
+
+export interface TaxOpportunity {
+  id: string;
+  title: string;
+  scope: TaxScope;
+  why: string;
+  action: string;
+  deadline: string | null;
+  confidence: "high" | "medium" | "low";
+  est_savings: string | null;
+  tax_cost: string | null;
+  scenario: Record<string, number> | null;
+  status: "open" | "dismissed" | "done";
+}
+
+export interface TaxOpportunitiesResponse {
+  year: number;
+  total_est_savings: string;
+  opportunities: TaxOpportunity[];
+}
+
+export interface TaxScenarioFigures {
+  agi: string; taxable_income: string; federal: string; state: string; total: string;
+  balance_federal: string; marginal_rate: number; effective_rate: number;
+}
+
+export interface TaxScenarioResponse {
+  fields: string[];
+  base: TaxScenarioFigures;
+  scenario: TaxScenarioFigures;
+  delta: Record<"agi" | "taxable_income" | "federal" | "state" | "total" | "balance_federal", string>;
+}
+
+export interface TaxChecklistItem {
+  category: string;
+  label: string;
+  year: number;
+  optional: boolean;
+  received: boolean;
+}
+
+export interface TaxChecklistResponse {
+  year: number;
+  items: TaxChecklistItem[];
+  received: number;
+  required: number;
+  required_received: number;
+}
+
+export async function getTaxProfile(year: number): Promise<TaxProfileResponse> {
+  return apiFetch<TaxProfileResponse>(`/api/v1/tax/profile?year=${year}`, {});
+}
+
+export async function updateTaxProfile(year: number, data: TaxProfileUpdate): Promise<TaxProfile> {
+  return apiFetch<TaxProfile>(`/api/v1/tax/profile?year=${year}`, { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function updatePropertyTaxInputs(
+  id: string,
+  data: Partial<Pick<TaxPropertyInputs, "land_value" | "placed_in_service_date" | "personal_use_days">>,
+): Promise<void> {
+  await apiFetch(`/api/v1/tax/properties/${id}`, { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function updateEntityTaxInputs(
+  id: string, data: Partial<Omit<TaxEntityInputs, "id" | "name" | "entity_type">>,
+): Promise<void> {
+  await apiFetch(`/api/v1/tax/entities/${id}`, { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function getTaxProjection(year: number): Promise<TaxProjectionResponse> {
+  return apiFetch<TaxProjectionResponse>(`/api/v1/tax/projection?year=${year}`, {});
+}
+
+export async function getTaxOpportunities(year: number): Promise<TaxOpportunitiesResponse> {
+  return apiFetch<TaxOpportunitiesResponse>(`/api/v1/tax/opportunities?year=${year}`, {});
+}
+
+export async function setTaxOpportunityStatus(
+  year: number, id: string, status: TaxOpportunity["status"],
+): Promise<void> {
+  await apiFetch(`/api/v1/tax/opportunities/${encodeURIComponent(id)}?year=${year}`, {
+    method: "PUT", body: JSON.stringify({ status }),
+  });
+}
+
+export async function runTaxScenario(year: number, changes: Record<string, number>): Promise<TaxScenarioResponse> {
+  return apiFetch<TaxScenarioResponse>(`/api/v1/tax/scenario?year=${year}`, {
+    method: "POST", body: JSON.stringify({ changes }),
+  });
+}
+
+export async function getTaxChecklist(year: number): Promise<TaxChecklistResponse> {
+  return apiFetch<TaxChecklistResponse>(`/api/v1/tax/checklist?year=${year}`, {});
 }
 

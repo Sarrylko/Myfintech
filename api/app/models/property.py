@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,6 +46,10 @@ class Property(Base):
         nullable=True,
         index=True,
     )
+    # Rental depreciation: land isn't depreciable; NULL land_value assumes 20%
+    land_value: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    placed_in_service_date: Mapped[date | None] = mapped_column(Date)  # NULL: purchase date
+    personal_use_days: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

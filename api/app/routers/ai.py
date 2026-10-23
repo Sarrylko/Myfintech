@@ -34,7 +34,10 @@ from app.models.property import Property
 from app.models.property_details import Loan
 from app.models.rental import Lease, Unit
 from app.models.user import User
-from app.services.financial_picture import CACHE_TTL, _build_prompt, cache_key
+from app.services.financial_picture import CACHE_TTL, _build_prompt, cache_key, tax_projection_section
+from app.services.tax_calc import compute
+from app.services.tax_opportunities import build_opportunities
+from app.services.tax_projection import gather_inputs
 
 router = APIRouter(tags=["ai"])
 log = logging.getLogger(__name__)
@@ -201,6 +204,13 @@ async def generate_financial_picture(
                 f"\nACTIVE LEASES: {len(active_leases)} leases, "
                 f"${monthly_rent:,.2f}/mo (${monthly_rent * 12:,.2f}/yr)"
             )
+
+    try:
+        tax_inputs, tax_ctx = await gather_inputs(db, current_user.household_id, resolved_year)
+        tax_result = compute(tax_inputs)
+        live_lines.append(tax_projection_section(tax_result, build_opportunities(tax_inputs, tax_result, tax_ctx)))
+    except Exception:
+        log.exception("Tax projection for the financial picture failed")
 
     live_snapshot = "\n".join(live_lines) if live_lines else "No live database records found."
     year_context = f"for tax year {resolved_year}"

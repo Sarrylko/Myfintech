@@ -34,6 +34,7 @@ from app.models.property_details import Loan, PropertyCost
 from app.models.rental import Lease, Unit
 from app.models.retirement import RetirementProfile
 from app.models.user import User
+from app.services import tax_tables
 from app.schemas.retirement import (
     IncomeSource,
     RetirementAccountInfo,
@@ -62,46 +63,15 @@ RETIREMENT_SUBTYPES = TAX_DEFERRED_SUBTYPES | TAX_EXEMPT_SUBTYPES
 
 SAFE_WITHDRAWAL_RATE = 0.04
 
-# ── 2024 Federal income tax brackets ────────────────────────────────────────
-_BRACKETS_MFJ: list[tuple[float, float]] = [
-    (23_200,   0.10),
-    (94_300,   0.12),
-    (201_050,  0.22),
-    (383_900,  0.24),
-    (487_450,  0.32),
-    (731_200,  0.35),
-    (float("inf"), 0.37),
-]
-_BRACKETS_SINGLE: list[tuple[float, float]] = [
-    (11_600,   0.10),
-    (47_150,   0.12),
-    (100_525,  0.22),
-    (191_950,  0.24),
-    (243_725,  0.32),
-    (365_600,  0.35),
-    (float("inf"), 0.37),
-]
-_STANDARD_DEDUCTION_MFJ = 29_200.0
-_STANDARD_DEDUCTION_SINGLE = 14_600.0
-_EXTRA_DEDUCTION_65 = 1_550.0
-
-# Default state tax rate used when state is unknown
-_STATE_TAX_RATE_DEFAULT = 0.05
-
-# Per-state income tax rates (2024, top marginal / flat rate)
-_STATE_TAX_RATES: dict[str, float] = {
-    "AL": 0.050, "AK": 0.000, "AZ": 0.025, "AR": 0.047, "CA": 0.093,
-    "CO": 0.044, "CT": 0.065, "DE": 0.066, "FL": 0.000, "GA": 0.055,
-    "HI": 0.110, "ID": 0.058, "IL": 0.0495, "IN": 0.0305, "IA": 0.060,
-    "KS": 0.057, "KY": 0.045, "LA": 0.042, "ME": 0.075, "MD": 0.0575,
-    "MA": 0.050, "MI": 0.0425, "MN": 0.0985, "MS": 0.047, "MO": 0.048,
-    "MT": 0.069, "NE": 0.0684, "NV": 0.000, "NH": 0.000, "NJ": 0.1075,
-    "NM": 0.059, "NY": 0.0685, "NC": 0.045, "ND": 0.025, "OH": 0.035,
-    "OK": 0.0475, "OR": 0.099, "PA": 0.0307, "RI": 0.0599, "SC": 0.065,
-    "SD": 0.000, "TN": 0.000, "TX": 0.000, "UT": 0.0485, "VT": 0.0875,
-    "VA": 0.0575, "WA": 0.000, "WV": 0.065, "WI": 0.0765, "WY": 0.000,
-    "DC": 0.0895,
-}
+# Federal brackets and state rates are shared with the Tax Center (services/tax_tables)
+_TAX_YEAR = tax_tables.table_for(tax_tables.LATEST_YEAR)
+_BRACKETS_MFJ = _TAX_YEAR.brackets["mfj"]
+_BRACKETS_SINGLE = _TAX_YEAR.brackets["single"]
+_STANDARD_DEDUCTION_MFJ = float(_TAX_YEAR.standard_deduction["mfj"])
+_STANDARD_DEDUCTION_SINGLE = float(_TAX_YEAR.standard_deduction["single"])
+_EXTRA_DEDUCTION_65 = float(_TAX_YEAR.additional_65["mfj"])
+_STATE_TAX_RATE_DEFAULT = tax_tables.STATE_TAX_RATE_DEFAULT
+_STATE_TAX_RATES = tax_tables.STATE_TAX_RATES
 
 # States that exempt Social Security income from state income tax (41 states + DC)
 _SS_EXEMPT_STATES: frozenset[str] = frozenset({
@@ -157,17 +127,7 @@ _HEALTHCARE_EXPENSE_FRACTION = 0.15
 # ─── Tax helpers ────────────────────────────────────────────────────────────
 
 def _federal_tax(taxable_income: float, married: bool) -> float:
-    brackets = _BRACKETS_MFJ if married else _BRACKETS_SINGLE
-    tax = 0.0
-    prev = 0.0
-    income = max(0.0, taxable_income)
-    for cap, rate in brackets:
-        if income <= prev:
-            break
-        taxable_slice = min(income, cap) - prev
-        tax += taxable_slice * rate
-        prev = cap
-    return tax
+    return tax_tables.bracket_tax(taxable_income, _BRACKETS_MFJ if married else _BRACKETS_SINGLE)
 
 
 def _ss_taxable_fraction(ss_income: float, other_income: float, married: bool) -> float:
@@ -193,7 +153,7 @@ def _calc_taxes(
     spouse_age: int | None,
     state_abbr: str | None = None,
 ) -> float:
-    """Estimate total income taxes (federal + state) using 2024 brackets."""
+    """Estimate total income taxes (federal + state) using the latest brackets."""
     std_deduction = _STANDARD_DEDUCTION_MFJ if married else _STANDARD_DEDUCTION_SINGLE
     if age >= 65:
         std_deduction += _EXTRA_DEDUCTION_65

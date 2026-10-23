@@ -87,6 +87,7 @@ async def create_manual_account(
         mask=payload.mask,
         current_balance=payload.current_balance,
         available_balance=payload.current_balance,
+        balance_updated_at=datetime.now(timezone.utc),
         currency_code=payload.currency_code,
         country=payload.country,
         is_manual=True,
@@ -202,6 +203,29 @@ async def get_sync_health(
     return out
 
 
+# Declared before GET /{account_id}, which would otherwise capture "holdings"
+# as an account id and reject it with a 422.
+@router.get("/holdings", response_model=list[HoldingResponse])
+async def list_holdings_batch(
+    account_ids: list[uuid.UUID] = Query(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return holdings for multiple investment accounts in a single query (household-scoped)."""
+    if not account_ids:
+        return []
+    result = await db.execute(
+        select(Holding)
+        .join(Account, Account.id == Holding.account_id)
+        .where(
+            Holding.account_id.in_(account_ids),
+            Account.household_id == user.household_id,
+        )
+        .order_by(Holding.current_value.desc())
+    )
+    return result.scalars().all()
+
+
 @router.get("/{account_id}", response_model=AccountResponse)
 async def get_account(
     account_id: uuid.UUID,
@@ -297,6 +321,8 @@ async def update_account(
         for loan in linked_loans.scalars().all():
             loan.current_balance = data["current_balance"]
             loan.balance_as_of = date.today()
+    if "current_balance" in data:
+        account.balance_updated_at = datetime.now(timezone.utc)
 
     await db.flush()
     await db.refresh(account)
@@ -574,27 +600,6 @@ async def list_holdings(
     result = await db.execute(
         select(Holding)
         .where(Holding.account_id == account_id)
-        .order_by(Holding.current_value.desc())
-    )
-    return result.scalars().all()
-
-
-@router.get("/holdings", response_model=list[HoldingResponse])
-async def list_holdings_batch(
-    account_ids: list[uuid.UUID] = Query(...),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return holdings for multiple investment accounts in a single query (household-scoped)."""
-    if not account_ids:
-        return []
-    result = await db.execute(
-        select(Holding)
-        .join(Account, Account.id == Holding.account_id)
-        .where(
-            Holding.account_id.in_(account_ids),
-            Account.household_id == user.household_id,
-        )
         .order_by(Holding.current_value.desc())
     )
     return result.scalars().all()
@@ -1028,7 +1033,8 @@ async def unlink_transaction_from_property_expense(
 # ─── Holdings CRUD (manual accounts only) ────────────────────────────────────
 
 async def _sync_account_balance(account_id: uuid.UUID, db: AsyncSession) -> None:
-    """Recompute current_balance for a manual account from its holdings total."""
+    """Recompute current_balance for a manual account from its holdings total.
+    Runs after a holdings edit, so it also marks the account as updated."""
     result = await db.execute(
         select(Holding).where(Holding.account_id == account_id)
     )
@@ -1038,6 +1044,7 @@ async def _sync_account_balance(account_id: uuid.UUID, db: AsyncSession) -> None
     acct = await db.get(Account, account_id)
     if acct and acct.is_manual:
         acct.current_balance = total
+        acct.balance_updated_at = datetime.now(timezone.utc)
 
 
 async def _consolidate_ticker_holdings(

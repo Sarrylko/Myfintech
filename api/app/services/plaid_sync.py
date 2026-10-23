@@ -149,6 +149,7 @@ async def sync_plaid_item(item: PlaidItem, db: AsyncSession) -> dict:
         if acct:
             acct.current_balance = curr_bal
             acct.available_balance = avail_bal
+            acct.balance_updated_at = datetime.now(timezone.utc)
             if not acct.institution_name:
                 acct.institution_name = item.institution_name
             if curr_bal is not None:
@@ -171,6 +172,7 @@ async def sync_plaid_item(item: PlaidItem, db: AsyncSession) -> dict:
                 mask=pa.mask,
                 current_balance=curr_bal,
                 available_balance=avail_bal,
+                balance_updated_at=datetime.now(timezone.utc),
                 currency_code=pa.balances.iso_currency_code or "USD",
             )
             db.add(acct)

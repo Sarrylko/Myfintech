@@ -16,12 +16,12 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.account import Account
-from app.models.investment import Holding, InvestmentValueSnapshot
+from app.models.investment import Holding, HoldingValueSnapshot, InvestmentValueSnapshot
 from app.models.networth import NetWorthSnapshot
 from app.models.property import Property
 from app.models.property_details import Loan
@@ -148,6 +148,30 @@ def _upsert_investment_snapshots(db: Session, household_id: uuid.UUID) -> int:
                 currency_code=acc.currency_code,
             ))
         written += 1
+
+    # Positions behind those values, so allocation history can be rebuilt.
+    # Replaced as a set: holding ids aren't stable across SnapTrade syncs.
+    db.execute(
+        delete(HoldingValueSnapshot).where(
+            HoldingValueSnapshot.household_id == household_id,
+            HoldingValueSnapshot.snapshot_date == today,
+        )
+    )
+    for h in holdings:
+        if h.current_value is None:
+            continue
+        db.add(HoldingValueSnapshot(
+            household_id=household_id,
+            account_id=h.account_id,
+            snapshot_date=today,
+            ticker_symbol=h.ticker_symbol,
+            name=h.name,
+            asset_class=h.asset_class,
+            quantity=h.quantity,
+            market_value=h.current_value,
+            cost_basis=h.cost_basis,
+            currency_code=h.currency_code,
+        ))
 
     db.commit()
     return written
