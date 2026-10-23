@@ -40,6 +40,9 @@ _YF_HEADERS = {
 _CACHE_PREFIX = "divhist:v1:"
 _CACHE_TTL = 24 * 3600
 _CACHE_TTL_EMPTY = 6 * 3600
+_CACHE_TTL_FAILED = 30 * 60
+# How long a request waits on uncached Yahoo lookups
+_LOOKUP_BUDGET_S = 4
 _MAX_LOOKUPS = 150
 _SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,11}$")
 _MUTUAL_FUND_RE = re.compile(r"^[A-Z]{4}X$")
@@ -51,6 +54,8 @@ _CALENDAR_DAYS = 90
 _MONTHS = 24
 
 _pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="divhist")
+# Strong refs to lookups that outlived their request, so they aren't collected
+_background: set[asyncio.Task] = set()
 
 
 def _fetch_dividend_history(sym: str) -> list[tuple[str, float]] | None:
@@ -85,37 +90,49 @@ def _fetch_dividend_history(sym: str) -> list[tuple[str, float]] | None:
         return None
 
 
+async def _lookup_and_cache(sym: str) -> list | None:
+    events = await asyncio.get_running_loop().run_in_executor(_pool, _fetch_dividend_history, sym)
+    # A failure (rate limit, timeout) is remembered briefly as null so a Yahoo
+    # outage doesn't put every page load back behind the same timeouts
+    if events is None:
+        ttl = _CACHE_TTL_FAILED
+    else:
+        ttl = _CACHE_TTL if events else _CACHE_TTL_EMPTY
+    try:
+        await get_redis().setex(_CACHE_PREFIX + sym, ttl, json.dumps(events))
+    except Exception:
+        pass
+    return events
+
+
 async def _dividend_histories(symbols: list[str]) -> dict[str, list[tuple[date, Decimal]]]:
-    redis = get_redis()
     found: dict[str, list] = {}
+    try:
+        cached = await get_redis().mget([_CACHE_PREFIX + s for s in symbols])
+    except Exception:
+        cached = [None] * len(symbols)
     missing: list[str] = []
-    for sym in symbols:
-        try:
-            cached = await redis.get(_CACHE_PREFIX + sym)
-        except Exception:
-            cached = None
-        if cached is not None:
-            found[sym] = json.loads(cached)
-        else:
+    for sym, raw in zip(symbols, cached):
+        if raw is None:
             missing.append(sym)
+        elif (events := json.loads(raw)) is not None:
+            found[sym] = events
 
     if missing:
-        loop = asyncio.get_running_loop()
-        fetched = await asyncio.gather(
-            *(loop.run_in_executor(_pool, _fetch_dividend_history, s) for s in missing)
-        )
-        for sym, events in zip(missing, fetched):
-            if events is None:
-                continue  # transient failure: don't cache, don't guess
-            found[sym] = events
-            try:
-                await redis.setex(
-                    _CACHE_PREFIX + sym,
-                    _CACHE_TTL if events else _CACHE_TTL_EMPTY,
-                    json.dumps(events),
-                )
-            except Exception:
-                pass
+        tasks = {asyncio.create_task(_lookup_and_cache(s)): s for s in missing}
+        # Lookups still running at the deadline carry on in the background and
+        # land in the cache for the next request; this one does without them
+        done, pending = await asyncio.wait(tasks, timeout=_LOOKUP_BUDGET_S)
+        for t in pending:
+            _background.add(t)
+            t.add_done_callback(_background.discard)
+        if pending:
+            logger.info("dividend lookups: %d of %d still pending after %ss",
+                        len(pending), len(missing), _LOOKUP_BUDGET_S)
+        for t in done:
+            events = t.result() if not t.exception() else None
+            if events is not None:
+                found[tasks[t]] = events
 
     return {
         sym: [(date.fromisoformat(d), Decimal(str(a))) for d, a in events]

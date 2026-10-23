@@ -44,7 +44,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      target: ${ENVIRONMENT:-development}
+      # production = prebuilt `next build` bundle (rebuild the image to ship
+      # frontend changes); development = `next dev` with src hot-reload
+      target: ${FRONTEND_TARGET:-${ENVIRONMENT:-development}}
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME}
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}

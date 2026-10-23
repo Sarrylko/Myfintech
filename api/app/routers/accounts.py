@@ -203,6 +203,29 @@ async def get_sync_health(
     return out
 
 
+# Declared before GET /{account_id}, which would otherwise capture "holdings"
+# as an account id and reject it with a 422.
+@router.get("/holdings", response_model=list[HoldingResponse])
+async def list_holdings_batch(
+    account_ids: list[uuid.UUID] = Query(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return holdings for multiple investment accounts in a single query (household-scoped)."""
+    if not account_ids:
+        return []
+    result = await db.execute(
+        select(Holding)
+        .join(Account, Account.id == Holding.account_id)
+        .where(
+            Holding.account_id.in_(account_ids),
+            Account.household_id == user.household_id,
+        )
+        .order_by(Holding.current_value.desc())
+    )
+    return result.scalars().all()
+
+
 @router.get("/{account_id}", response_model=AccountResponse)
 async def get_account(
     account_id: uuid.UUID,
@@ -577,27 +600,6 @@ async def list_holdings(
     result = await db.execute(
         select(Holding)
         .where(Holding.account_id == account_id)
-        .order_by(Holding.current_value.desc())
-    )
-    return result.scalars().all()
-
-
-@router.get("/holdings", response_model=list[HoldingResponse])
-async def list_holdings_batch(
-    account_ids: list[uuid.UUID] = Query(...),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return holdings for multiple investment accounts in a single query (household-scoped)."""
-    if not account_ids:
-        return []
-    result = await db.execute(
-        select(Holding)
-        .join(Account, Account.id == Holding.account_id)
-        .where(
-            Holding.account_id.in_(account_ids),
-            Account.household_id == user.household_id,
-        )
         .order_by(Holding.current_value.desc())
     )
     return result.scalars().all()

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_log_level: str = "info"
+    # Logs every SQL statement; costly on busy pages, so opt-in only
+    sql_echo: bool = False
 
     # ─── Auth ─────────────────────────────────────
     api_secret_key: str = "CHANGE_ME"
